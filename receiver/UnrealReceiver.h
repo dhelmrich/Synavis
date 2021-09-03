@@ -3,9 +3,10 @@
 #include <rtc/rtc.hpp>
 #include <json.hpp>
 
-enum class ConnectionState
+enum class EConnectionState
 {
   STARTUP = 0,
+  SIGNUP,
   OFFERED,
   CONNECTED,
   VIDEO,
@@ -13,7 +14,7 @@ enum class ConnectionState
   ERROR,
 };
 
-enum class ClientMessageType
+enum class EClientMessageType
 {
 	QualityControlOwnership = 0,
 	Response,
@@ -29,16 +30,17 @@ class UnrealReceiver
 {
 public:
   using json = nlohmann::json;
-  UnrealReceiver()=default;
+  UnrealReceiver();
   ~UnrealReceiver();
   void RegisterWithSignalling();
+  void Offer();
   void UseConfig(std::string filename);
-  inline const ConnectionState& State(){return this->state_;};
+  inline const EConnectionState& State(){return this->state_;};
 protected:
 private:
-  ConnectionState state_{ConnectionState::STARTUP};
+  EConnectionState state_{EConnectionState::STARTUP};
   rtc::Configuration rtcconfig_;
-  rtc::PeerConnection pc_{rtcconfig_};
+  rtc::PeerConnection pc_;
   std::shared_ptr<rtc::DataChannel> dc_;
   rtc::WebSocket ss_;
   json config_;
