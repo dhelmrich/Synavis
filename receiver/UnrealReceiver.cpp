@@ -1,22 +1,105 @@
 #include "UnrealReceiver.h"
-#include<fstream>
+#include <fstream>
 #include <chrono>
 #include <thread>
 #include <sstream>
-
-
+#include <algorithm>
 
 UnrealReceiver::UnrealReceiver()
 {
-  
-  rtc::Description::Video media("video", rtc::Description::Direction::SendRecv);
-  media.addH264Codec(96);
-  pc_.addTrack(media);
+  media_ = rtc::Description::Video("video", rtc::Description::Direction::RecvOnly);
+  media_.addH264Codec(96);
+  //media_.addVideoCodec(96,"mpeg");
+  media_.setBitrate(6000);
+  track_ = pc_.addTrack(media_);
+  sess_ = std::make_shared<rtc::RtcpReceivingSession>();
+  track_->setMediaHandler(sess_);
+  track_->onMessage([this](rtc::message_variant message) {
+    if (std::holds_alternative<std::string>(message))
+    {
+      std::cout << "String message from data channel received: \n"
+                << std::get<std::string>(message) << std::endl;
+    }
+    else
+    {
+      auto typedata = static_cast<EClientMessageType>(std::get<rtc::binary>(message)[0]);
+      std::vector<std::byte> buffer = std::get<rtc::binary>(message);
+      if (ReceivingFreezeFrame)
+      {
+
+        // this is a workaround, because the compiler is not able to
+        // std::vector::insert the rtc::binary into itself, presumably
+        // because namespace wrapping and using directives.
+        //TRANSFORM(std::byte,message, JPGFrame);
+        JPGFrame.insert(JPGFrame.end(), buffer.begin(),buffer.end());
+        if (ReceivedFrame())
+        {
+          std::cout << "I have finished receiving the freezeframe" << std::endl;
+          ReceivingFreezeFrame = false;
+        }
+      }
+      else if(typedata == EClientMessageType::QualityControlOwnership)
+      {
+
+      }
+      else if (typedata == EClientMessageType::FreezeFrame)
+      {
+        std::cout << "I have started receiving the freeze frame" << std::endl;
+        AnnouncedSize = (std::size_t)*(reinterpret_cast<int32_t*>(buffer[1]));
+        JPGFrame = buffer;
+        if (buffer.size() - 5 >= AnnouncedSize)
+        {
+          std::cout << "FF was received in one go!" << std::endl;
+        }
+        else
+        {
+          std::cout << "FF needs more packages!" << std::endl;
+          ReceivingFreezeFrame = true;
+        }
+      }
+      else if (typedata == EClientMessageType::Command)
+      {
+        std::cout << "Command!" << std::endl;
+      }
+      else if (typedata == EClientMessageType::UnfreezeFrame)
+      {
+        std::cout << "UnfreezeFrame!" << std::endl;
+      }
+      else if (typedata == EClientMessageType::VideoEncoderAvgQP)
+      {
+        std::cout << "VideoEncoderAvgQP!" << std::endl;
+      }
+      else if (typedata == EClientMessageType::LatencyTest)
+      {
+        std::cout << "LatencyTest!" << std::endl;
+      }
+      else if (typedata == EClientMessageType::InitialSettings)
+      {
+        std::cout << "InitialSettings!" << std::endl;
+      }
+      else if (typedata == EClientMessageType::Response)
+      {
+        std::cout << "Response!" << std::endl;
+      }
+      else
+      {
+        std::cout << "Other message with " << buffer.size() << " bytes and typebyte " << (uint32_t)typedata << "." << std::endl;
+      }
+    }
+    });
   vdc_ = pc_.createDataChannel("video");
   vdc_->onOpen([this]()
   {
     std::cout << "Received an open event on the data channel!" << std::endl;
     std::cout << "I have an amount of " << vdc_->availableAmount() << std::endl;
+    std::cout << "I will request the initial settings." << std::endl;
+    rtc::message_ptr outmessage;
+
+
+    sess_->send(rtc::make_message({(std::byte)(EClientMessageType::InitialSettings)}));
+
+    track_->send(rtc::binary({ (std::byte)(EClientMessageType::QualityControlOwnership) }));
+
     state_ = EConnectionState::VIDEO;
   });
   vdc_->onMessage([this](auto data)
@@ -43,14 +126,9 @@ UnrealReceiver::UnrealReceiver()
     {
       state_ = EConnectionState::CONNECTED;
     }
-    });
+  });
   pc_.onTrack([this](auto track) {
     std::cout << "PC received a track" << std::endl;
-    sess_ = std::make_shared<rtc::RtcpReceivingSession>();
-    track->setMediaHandler(sess_);
-    track->onMessage([this](auto message){
-      std::cout << "Received a message in track" << std::endl;
-    });
   });
   pc_.onLocalCandidate([this](auto candidate)
   {
@@ -65,6 +143,12 @@ UnrealReceiver::UnrealReceiver()
   {
     state_ = EConnectionState::CLOSED;
   });
+  
+  vdc_->onError([this](auto e){
+    std::cout << "Video stream received an error message:\n" << e << std::endl;
+    state_ = EConnectionState::ERROR;
+  });
+
 }
 
 UnrealReceiver::~UnrealReceiver()
@@ -120,9 +204,10 @@ void UnrealReceiver::RegisterWithSignalling()
       // 
     }
   });
-  ss_.onClosed([]()
+  ss_.onClosed([this]()
   {
     std::cout << "Websocket closed" << std::endl;
+    state_ = EConnectionState::CLOSED;
   });
   ss_.open(addresstest);
   while(!ss_.isOpen())

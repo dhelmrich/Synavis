@@ -2,7 +2,7 @@
 // FORWARD DEFINITIONS
 #include <rtc/rtc.hpp>
 #include <json.hpp>
-
+#include <vector>
 enum class EConnectionState
 {
   STARTUP = 0,
@@ -16,7 +16,7 @@ enum class EConnectionState
 
 enum class EClientMessageType
 {
-	QualityControlOwnership = 0,
+	QualityControlOwnership = 0u,
 	Response,
 	Command,
 	FreezeFrame,
@@ -44,8 +44,16 @@ private:
   rtc::PeerConnection pc_;
   std::shared_ptr<rtc::DataChannel> vdc_;
   std::shared_ptr<rtc::RtcpReceivingSession> sess_;
+  std::shared_ptr<rtc::Track> track_;
+  rtc::Description::Video media_;
   rtc::WebSocket ss_;
   json config_;
   unsigned int MessagesReceived{0};
   unsigned int IceCandidatesReceived{0};
+
+  // Freeze Frame Definitions
+  bool ReceivingFreezeFrame = false;
+  std::vector<std::byte> JPGFrame;
+  std::size_t AnnouncedSize;
+  inline bool ReceivedFrame() { return JPGFrame.size() > AnnouncedSize; }
 };
