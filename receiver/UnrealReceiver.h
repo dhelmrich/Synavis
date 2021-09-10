@@ -3,6 +3,8 @@
 #include <rtc/rtc.hpp>
 #include <json.hpp>
 #include <vector>
+#include <fstream>
+
 enum class EConnectionState
 {
   STARTUP = 0,
@@ -54,6 +56,10 @@ private:
   // Freeze Frame Definitions
   bool ReceivingFreezeFrame = false;
   std::vector<std::byte> JPGFrame;
+
+  std::vector<std::byte> Storage;
+  std::ofstream OutputFile;
+
   std::size_t AnnouncedSize;
   inline bool ReceivedFrame() { return JPGFrame.size() > AnnouncedSize; }
 };

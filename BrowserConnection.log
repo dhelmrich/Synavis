@@ -1,0 +1,357 @@
+15:50:12.471
+GEThttp://localhost:8080/
+[HTTP/1.1 200 OK 2ms]
+
+15:50:12.502
+GEThttp://localhost:8080/player.css
+[HTTP/1.1 200 OK 2ms]
+
+15:50:12.503
+GEThttp://localhost:8080/scripts/webRtcPlayer.js
+[HTTP/1.1 200 OK 3ms]
+
+15:50:12.503
+GEThttps://webrtc.github.io/adapter/adapter-latest.js
+[HTTP/2 200 OK 19ms]
+
+15:50:12.504
+GEThttp://localhost:8080/scripts/app.js
+[HTTP/1.1 200 OK 3ms]
+
+15:50:12.801
+GEThttp://localhost:8080/images/favicon-96x96.png
+[HTTP/1.1 200 OK 2ms]
+
+15:50:12.802
+GEThttp://localhost:8080/images/favicon-16x16.png
+[HTTP/1.1 200 OK 2ms]
+
+15:50:20.144
+GETws://localhost:8080/
+[HTTP/1.1 101 Switching Protocols 1ms]
+
+15:50:20.150 <- SS: {"type":"config","peerConnectionOptions":{}} app.js:1621:11
+15:50:20.151 Microphone access is not enabled. Pass ?useMic in the url to enable it. webRtcPlayer.js:59:21
+15:50:20.158 Creating offer app.js:309:11
+15:50:20.176 Created datachannel (cirrus) webRtcPlayer.js:220:25
+15:50:20.178 <- SS: {"type":"playerCount","count":1} app.js:1621:11
+15:50:20.184 -> SS: offer:
+{"type":"offer","sdp":"v=0\r\no=mozilla...THIS_IS_SDPARTA-91.0.2 7025315764185526121 0 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\na=fingerprint:sha-256 8C:6C:FD:3D:D1:22:9A:DD:61:8B:22:4D:6E:23:12:CA:56:83:C7:15:14:03:AD:50:AA:B3:4C:2F:3F:AB:0D:E1\r\na=group:BUNDLE 0 1 2\r\na=ice-options:trickle\r\na=msid-semantic:WMS *\r\nm=video 9 UDP/TLS/RTP/SAVPF 120 124 121 125 126 127 97 98\r\nc=IN IP4 0.0.0.0\r\na=recvonly\r\na=extmap:3 urn:ietf:params:rtp-hdrext:sdes:mid\r\na=extmap:4 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time\r\na=extmap:5 urn:ietf:params:rtp-hdrext:toffset\r\na=extmap:6/recvonly http://www.webrtc.org/experiments/rtp-hdrext/playout-delay\r\na=extmap:7 http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01\r\na=fmtp:126 profile-level-id=42e01f;level-asymmetry-allowed=1;packetization-mode=1\r\na=fmtp:97 profile-level-id=42e01f;level-asymmetry-allowed=1\r\na=fmtp:120 max-fs=12288;max-fr=60\r\na=fmtp:124 apt=120\r\na=fmtp:121 max-fs=12288;max-fr=60\r\na=fmtp:125 apt=121\r\na=fmtp:127 apt=126\r\na=fmtp:98 apt=97\r\na=ice-pwd:b6eca1ccb2993eb5b83bf5accaf2e199\r\na=ice-ufrag:190afab4\r\na=mid:0\r\na=rtcp-fb:120 nack\r\na=rtcp-fb:120 nack pli\r\na=rtcp-fb:120 ccm fir\r\na=rtcp-fb:120 goog-remb\r\na=rtcp-fb:120 transport-cc\r\na=rtcp-fb:121 nack\r\na=rtcp-fb:121 nack pli\r\na=rtcp-fb:121 ccm fir\r\na=rtcp-fb:121 goog-remb\r\na=rtcp-fb:121 transport-cc\r\na=rtcp-fb:126 nack\r\na=rtcp-fb:126 nack pli\r\na=rtcp-fb:126 ccm fir\r\na=rtcp-fb:126 goog-remb\r\na=rtcp-fb:126 transport-cc\r\na=rtcp-fb:97 nack\r\na=rtcp-fb:97 nack pli\r\na=rtcp-fb:97 ccm fir\r\na=rtcp-fb:97 goog-remb\r\na=rtcp-fb:97 transport-cc\r\na=rtcp-mux\r\na=rtcp-rsize\r\na=rtpmap:120 VP8/90000\r\na=rtpmap:124 rtx/90000\r\na=rtpmap:121 VP9/90000\r\na=rtpmap:125 rtx/90000\r\na=rtpmap:126 H264/90000\r\na=rtpmap:127 rtx/90000\r\na=rtpmap:97 H264/90000\r\na=rtpmap:98 rtx/90000\r\na=setup:actpass\r\na=ssrc:2434101706 cname:{c064df6c-7be6-4a6b-a1f2-80f3e25eb348}\r\nm=audio 9 UDP/TLS/RTP/SAVPF 109 9 0 8 101\r\nc=IN IP4 0.0.0.0\r\na=recvonly\r\na=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level\r\na=extmap:2/recvonly urn:ietf:params:rtp-hdrext:csrc-audio-level\r\na=extmap:3 urn:ietf:params:rtp-hdrext:sdes:mid\r\na=fmtp:109 maxplaybackrate=48000;stereo=1;useinbandfec=1;stereo=1;sprop-maxcapturerate=48000\r\na=fmtp:101 0-15\r\na=ice-pwd:b6eca1ccb2993eb5b83bf5accaf2e199\r\na=ice-ufrag:190afab4\r\na=mid:1\r\na=rtcp-mux\r\na=rtpmap:109 opus/48000/2\r\na=rtpmap:9 G722/8000/1\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:101 telephone-event/8000/1\r\na=setup:actpass\r\na=ssrc:2543479629 cname:{c064df6c-7be6-4a6b-a1f2-80f3e25eb348}\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na=sendrecv\r\na=ice-pwd:b6eca1ccb2993eb5b83bf5accaf2e199\r\na=ice-ufrag:190afab4\r\na=mid:2\r\na=setup:actpass\r\na=sctp-port:5000\r\na=max-message-size:1073741823\r\n"} app.js:355:12
+15:50:20.185 signaling state change: 
+signalingstatechange { target: RTCPeerConnection, isTrusted: true, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, composed: false, … }
+webRtcPlayer.js:164:21
+15:50:20.187 ice gathering state change: 
+icegatheringstatechange { target: RTCPeerConnection, isTrusted: true, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, composed: false, … }
+webRtcPlayer.js:172:21
+15:50:20.188 ICE candidate 
+icecandidate { target: RTCPeerConnection, isTrusted: true, candidate: RTCIceCandidate, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, … }
+webRtcPlayer.js:250:12
+15:50:20.190 -> SS: iceCandidate
+{
+    "candidate": "candidate:0 1 UDP 2122187007 835f8d1b-b5ae-4942-994f-abdfcb334c36.local 57702 typ host",
+    "sdpMid": "0",
+    "sdpMLineIndex": 0,
+    "usernameFragment": "190afab4"
+} app.js:362:12
+15:50:20.190 ICE candidate 
+icecandidate { target: RTCPeerConnection, isTrusted: true, candidate: RTCIceCandidate, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, … }
+webRtcPlayer.js:250:12
+15:50:20.191 -> SS: iceCandidate
+{
+    "candidate": "candidate:1 1 UDP 2122252543 fdb0e96d-38d7-4f10-90a2-e02072566326.local 57703 typ host",
+    "sdpMid": "0",
+    "sdpMLineIndex": 0,
+    "usernameFragment": "190afab4"
+} app.js:362:12
+15:50:20.191 ICE candidate 
+icecandidate { target: RTCPeerConnection, isTrusted: true, candidate: RTCIceCandidate, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, … }
+webRtcPlayer.js:250:12
+15:50:20.192 -> SS: iceCandidate
+{
+    "candidate": "candidate:2 1 TCP 2105458943 835f8d1b-b5ae-4942-994f-abdfcb334c36.local 9 typ host tcptype active",
+    "sdpMid": "0",
+    "sdpMLineIndex": 0,
+    "usernameFragment": "190afab4"
+} app.js:362:12
+15:50:20.192 ICE candidate 
+icecandidate { target: RTCPeerConnection, isTrusted: true, candidate: RTCIceCandidate, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, … }
+webRtcPlayer.js:250:12
+15:50:20.193 -> SS: iceCandidate
+{
+    "candidate": "candidate:3 1 TCP 2105524479 fdb0e96d-38d7-4f10-90a2-e02072566326.local 9 typ host tcptype active",
+    "sdpMid": "0",
+    "sdpMLineIndex": 0,
+    "usernameFragment": "190afab4"
+} app.js:362:12
+15:50:20.194 ICE candidate 
+icecandidate { target: RTCPeerConnection, isTrusted: true, candidate: RTCIceCandidate, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, … }
+webRtcPlayer.js:250:12
+15:50:20.194 -> SS: iceCandidate
+{
+    "candidate": "candidate:0 2 UDP 2122187006 835f8d1b-b5ae-4942-994f-abdfcb334c36.local 57704 typ host",
+    "sdpMid": "0",
+    "sdpMLineIndex": 0,
+    "usernameFragment": "190afab4"
+} app.js:362:12
+15:50:20.195 ICE candidate 
+icecandidate { target: RTCPeerConnection, isTrusted: true, candidate: RTCIceCandidate, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, … }
+webRtcPlayer.js:250:12
+15:50:20.195 -> SS: iceCandidate
+{
+    "candidate": "candidate:1 2 UDP 2122252542 fdb0e96d-38d7-4f10-90a2-e02072566326.local 57705 typ host",
+    "sdpMid": "0",
+    "sdpMLineIndex": 0,
+    "usernameFragment": "190afab4"
+} app.js:362:12
+15:50:20.196 ICE candidate 
+icecandidate { target: RTCPeerConnection, isTrusted: true, candidate: RTCIceCandidate, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, … }
+webRtcPlayer.js:250:12
+15:50:20.196 -> SS: iceCandidate
+{
+    "candidate": "candidate:2 2 TCP 2105458942 835f8d1b-b5ae-4942-994f-abdfcb334c36.local 9 typ host tcptype active",
+    "sdpMid": "0",
+    "sdpMLineIndex": 0,
+    "usernameFragment": "190afab4"
+} app.js:362:12
+15:50:20.197 ICE candidate 
+icecandidate { target: RTCPeerConnection, isTrusted: true, candidate: RTCIceCandidate, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, … }
+webRtcPlayer.js:250:12
+15:50:20.198 -> SS: iceCandidate
+{
+    "candidate": "candidate:3 2 TCP 2105524478 fdb0e96d-38d7-4f10-90a2-e02072566326.local 9 typ host tcptype active",
+    "sdpMid": "0",
+    "sdpMLineIndex": 0,
+    "usernameFragment": "190afab4"
+} app.js:362:12
+15:50:20.198 ICE candidate 
+icecandidate { target: RTCPeerConnection, isTrusted: true, candidate: RTCIceCandidate, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, … }
+webRtcPlayer.js:250:12
+15:50:20.199 ICE candidate 
+icecandidate { target: RTCPeerConnection, isTrusted: true, candidate: RTCIceCandidate, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, … }
+webRtcPlayer.js:250:12
+15:50:20.200 -> SS: iceCandidate
+{
+    "candidate": "candidate:0 1 UDP 2122187007 835f8d1b-b5ae-4942-994f-abdfcb334c36.local 57706 typ host",
+    "sdpMid": "1",
+    "sdpMLineIndex": 1,
+    "usernameFragment": "190afab4"
+} app.js:362:12
+15:50:20.200 ICE candidate 
+icecandidate { target: RTCPeerConnection, isTrusted: true, candidate: RTCIceCandidate, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, … }
+webRtcPlayer.js:250:12
+15:50:20.201 -> SS: iceCandidate
+{
+    "candidate": "candidate:1 1 UDP 2122252543 fdb0e96d-38d7-4f10-90a2-e02072566326.local 57707 typ host",
+    "sdpMid": "1",
+    "sdpMLineIndex": 1,
+    "usernameFragment": "190afab4"
+} app.js:362:12
+15:50:20.201 ICE candidate 
+icecandidate { target: RTCPeerConnection, isTrusted: true, candidate: RTCIceCandidate, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, … }
+webRtcPlayer.js:250:12
+15:50:20.202 -> SS: iceCandidate
+{
+    "candidate": "candidate:2 1 TCP 2105458943 835f8d1b-b5ae-4942-994f-abdfcb334c36.local 9 typ host tcptype active",
+    "sdpMid": "1",
+    "sdpMLineIndex": 1,
+    "usernameFragment": "190afab4"
+} app.js:362:12
+15:50:20.202 ICE candidate 
+icecandidate { target: RTCPeerConnection, isTrusted: true, candidate: RTCIceCandidate, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, … }
+webRtcPlayer.js:250:12
+15:50:20.203 -> SS: iceCandidate
+{
+    "candidate": "candidate:3 1 TCP 2105524479 fdb0e96d-38d7-4f10-90a2-e02072566326.local 9 typ host tcptype active",
+    "sdpMid": "1",
+    "sdpMLineIndex": 1,
+    "usernameFragment": "190afab4"
+} app.js:362:12
+15:50:20.203 ICE candidate 
+icecandidate { target: RTCPeerConnection, isTrusted: true, candidate: RTCIceCandidate, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, … }
+webRtcPlayer.js:250:12
+15:50:20.203 -> SS: iceCandidate
+{
+    "candidate": "candidate:0 2 UDP 2122187006 835f8d1b-b5ae-4942-994f-abdfcb334c36.local 57708 typ host",
+    "sdpMid": "1",
+    "sdpMLineIndex": 1,
+    "usernameFragment": "190afab4"
+} app.js:362:12
+15:50:20.204 ICE candidate 
+icecandidate { target: RTCPeerConnection, isTrusted: true, candidate: RTCIceCandidate, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, … }
+webRtcPlayer.js:250:12
+15:50:20.204 -> SS: iceCandidate
+{
+    "candidate": "candidate:1 2 UDP 2122252542 fdb0e96d-38d7-4f10-90a2-e02072566326.local 57709 typ host",
+    "sdpMid": "1",
+    "sdpMLineIndex": 1,
+    "usernameFragment": "190afab4"
+} app.js:362:12
+15:50:20.204 ICE candidate 
+icecandidate { target: RTCPeerConnection, isTrusted: true, candidate: RTCIceCandidate, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, … }
+webRtcPlayer.js:250:12
+15:50:20.205 -> SS: iceCandidate
+{
+    "candidate": "candidate:2 2 TCP 2105458942 835f8d1b-b5ae-4942-994f-abdfcb334c36.local 9 typ host tcptype active",
+    "sdpMid": "1",
+    "sdpMLineIndex": 1,
+    "usernameFragment": "190afab4"
+} app.js:362:12
+15:50:20.205 ICE candidate 
+icecandidate { target: RTCPeerConnection, isTrusted: true, candidate: RTCIceCandidate, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, … }
+webRtcPlayer.js:250:12
+15:50:20.206 -> SS: iceCandidate
+{
+    "candidate": "candidate:3 2 TCP 2105524478 fdb0e96d-38d7-4f10-90a2-e02072566326.local 9 typ host tcptype active",
+    "sdpMid": "1",
+    "sdpMLineIndex": 1,
+    "usernameFragment": "190afab4"
+} app.js:362:12
+15:50:20.206 ICE candidate 
+icecandidate { target: RTCPeerConnection, isTrusted: true, candidate: RTCIceCandidate, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, … }
+webRtcPlayer.js:250:12
+15:50:20.207 ICE candidate 
+icecandidate { target: RTCPeerConnection, isTrusted: true, candidate: RTCIceCandidate, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, … }
+webRtcPlayer.js:250:12
+15:50:20.208 -> SS: iceCandidate
+{
+    "candidate": "candidate:0 1 UDP 2122187007 835f8d1b-b5ae-4942-994f-abdfcb334c36.local 57710 typ host",
+    "sdpMid": "2",
+    "sdpMLineIndex": 2,
+    "usernameFragment": "190afab4"
+} app.js:362:12
+15:50:20.208 ICE candidate 
+icecandidate { target: RTCPeerConnection, isTrusted: true, candidate: RTCIceCandidate, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, … }
+webRtcPlayer.js:250:12
+15:50:20.208 -> SS: iceCandidate
+{
+    "candidate": "candidate:1 1 UDP 2122252543 fdb0e96d-38d7-4f10-90a2-e02072566326.local 57711 typ host",
+    "sdpMid": "2",
+    "sdpMLineIndex": 2,
+    "usernameFragment": "190afab4"
+} app.js:362:12
+15:50:20.209 ICE candidate 
+icecandidate { target: RTCPeerConnection, isTrusted: true, candidate: RTCIceCandidate, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, … }
+webRtcPlayer.js:250:12
+15:50:20.209 -> SS: iceCandidate
+{
+    "candidate": "candidate:2 1 TCP 2105458943 835f8d1b-b5ae-4942-994f-abdfcb334c36.local 9 typ host tcptype active",
+    "sdpMid": "2",
+    "sdpMLineIndex": 2,
+    "usernameFragment": "190afab4"
+} app.js:362:12
+15:50:20.210 ICE candidate 
+icecandidate { target: RTCPeerConnection, isTrusted: true, candidate: RTCIceCandidate, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, … }
+webRtcPlayer.js:250:12
+15:50:20.210 -> SS: iceCandidate
+{
+    "candidate": "candidate:3 1 TCP 2105524479 fdb0e96d-38d7-4f10-90a2-e02072566326.local 9 typ host tcptype active",
+    "sdpMid": "2",
+    "sdpMLineIndex": 2,
+    "usernameFragment": "190afab4"
+} app.js:362:12
+15:50:20.210 ICE candidate 
+icecandidate { target: RTCPeerConnection, isTrusted: true, candidate: RTCIceCandidate, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, … }
+webRtcPlayer.js:250:12
+15:50:20.211 ice gathering state change: 
+icegatheringstatechange { target: RTCPeerConnection, isTrusted: true, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, composed: false, … }
+webRtcPlayer.js:172:21
+15:50:20.211 ICE candidate 
+icecandidate { target: RTCPeerConnection, isTrusted: true, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, composed: false, … }
+webRtcPlayer.js:250:12
+15:50:20.302 <- SS: {"type":"answer","sdp":"v=0\r\no=- 1880036693517364079 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0 1 2\r\na=msid-semantic: WMS pixelstreaming_audio_stream_id pixelstreaming_video_stream_id\r\nm=video 9 UDP/TLS/RTP/SAVPF 126 127\r\nc=IN IP4 0.0.0.0\r\na=rtcp:9 IN IP4 0.0.0.0\r\na=ice-ufrag:Idf2\r\na=ice-pwd:gTZm0dCk4uCUDBI47DE5MoAm\r\na=ice-options:trickle\r\na=fingerprint:sha-256 61:57:B4:30:9A:5A:41:DB:C5:CE:E9:75:61:18:7C:5A:D2:90:02:6C:35:6F:72:C3:D3:A7:A2:75:31:B5:3B:AB\r\na=setup:active\r\na=mid:0\r\na=extmap:5 urn:ietf:params:rtp-hdrext:toffset\r\na=extmap:4 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time\r\na=extmap:7 http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01\r\na=extmap:6 http://www.webrtc.org/experiments/rtp-hdrext/playout-delay\r\na=extmap:3 urn:ietf:params:rtp-hdrext:sdes:mid\r\na=sendonly\r\na=msid:pixelstreaming_video_stream_id pixelstreaming_video_track_label\r\na=rtcp-mux\r\na=rtcp-rsize\r\na=rtpmap:126 H264/90000\r\na=rtcp-fb:126 goog-remb\r\na=rtcp-fb:126 transport-cc\r\na=rtcp-fb:126 ccm fir\r\na=rtcp-fb:126 nack\r\na=rtcp-fb:126 nack pli\r\na=fmtp:126 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\na=rtpmap:127 rtx/90000\r\na=fmtp:127 apt=126\r\na=ssrc-group:FID 1287333296 421186448\r\na=ssrc:1287333296 cname:hGvJQPvrYTxLYf8/\r\na=ssrc:1287333296 msid:pixelstreaming_video_stream_id pixelstreaming_video_track_label\r\na=ssrc:1287333296 mslabel:pixelstreaming_video_stream_id\r\na=ssrc:1287333296 label:pixelstreaming_video_track_label\r\na=ssrc:421186448 cname:hGvJQPvrYTxLYf8/\r\na=ssrc:421186448 msid:pixelstreaming_video_stream_id pixelstreaming_video_track_label\r\na=ssrc:421186448 mslabel:pixelstreaming_video_stream_id\r\na=ssrc:421186448 label:pixelstreaming_video_track_label\r\nm=audio 9 UDP/TLS/RTP/SAVPF 109\r\nc=IN IP4 0.0.0.0\r\na=rtcp:9 IN IP4 0.0.0.0\r\na=ice-ufrag:Idf2\r\na=ice-pwd:gTZm0dCk4uCUDBI47DE5MoAm\r\na=ice-options:trickle\r\na=fingerprint:sha-256 61:57:B4:30:9A:5A:41:DB:C5:CE:E9:75:61:18:7C:5A:D2:90:02:6C:35:6F:72:C3:D3:A7:A2:75:31:B5:3B:AB\r\na=setup:active\r\na=mid:1\r\na=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level\r\na=extmap:3 urn:ietf:params:rtp-hdrext:sdes:mid\r\na=sendonly\r\na=msid:pixelstreaming_audio_stream_id pixelstreaming_audio_track_label\r\na=rtcp-mux\r\na=rtpmap:109 opus/48000/2\r\na=fmtp:109 minptime=10;useinbandfec=1\r\na=ssrc:2821807623 cname:hGvJQPvrYTxLYf8/\r\na=ssrc:2821807623 msid:pixelstreaming_audio_stream_id pixelstreaming_audio_track_label\r\na=ssrc:2821807623 mslabel:pixelstreaming_audio_stream_id\r\na=ssrc:2821807623 label:pixelstreaming_audio_track_label\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\nb=AS:30\r\na=ice-ufrag:Idf2\r\na=ice-pwd:gTZm0dCk4uCUDBI47DE5MoAm\r\na=ice-options:trickle\r\na=fingerprint:sha-256 61:57:B4:30:9A:5A:41:DB:C5:CE:E9:75:61:18:7C:5A:D2:90:02:6C:35:6F:72:C3:D3:A7:A2:75:31:B5:3B:AB\r\na=setup:active\r\na=mid:2\r\na=sctp-port:5000\r\na=max-message-size:262144\r\n"} app.js:1621:11
+15:50:20.303 Received answer: webRtcPlayer.js:465:21
+15:50:20.303
+Object { type: "answer", sdp: "v=0\r\no=- 1880036693517364079 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0 1 2\r\na=msid-semantic: WMS pixelstreaming_audio_stream_id pixelstreaming_video_stream_id\r\nm=video 9 UDP/TLS/RTP/SAVPF 126 127\r\nc=IN IP4 0.0.0.0\r\na=rtcp:9 IN IP4 0.0.0.0\r\na=ice-ufrag:Idf2\r\na=ice-pwd:gTZm0dCk4uCUDBI47DE5MoAm\r\na=ice-options:trickle\r\na=fingerprint:sha-256 61:57:B4:30:9A:5A:41:DB:C5:CE:E9:75:61:18:7C:5A:D2:90:02:6C:35:6F:72:C3:D3:A7:A2:75:31:B5:3B:AB\r\na=setup:active\r\na=mid:0\r\na=extmap:5 urn:ietf:params:rtp-hdrext:toffset\r\na=extmap:4 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time\r\na=extmap:7 http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01\r\na=extmap:6 http://www.webrtc.org/experiments/rtp-hdrext/playout-delay\r\na=extmap:3 urn:ietf:params:rtp-hdrext:sdes:mid\r\na=sendonly\r\na=msid:pixelstreaming_video_stream_id pixelstreaming_video_track_label\r\na=rtcp-mux\r\na=rtcp-rsize\r\na=rtpmap:126 H264/90000\r\na=rtcp-fb:126 goog-remb\r\na=rtcp-fb:126 transport-cc\r\na=rtcp-fb:126 ccm fir\r\na=rtcp-fb:126 nack\r\na=rtcp-fb:126 nack pli\r\na=fmtp:126 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\na=rtpmap:127 rtx/90000\r\na=fmtp:127 apt=126\r\na=ssrc-group:FID 1287333296 421186448\r\na=ssrc:1287333296 cname:hGvJQPvrYTxLYf8/\r\na=ssrc:1287333296 msid:pixelstreaming_video_stream_id pixelstreaming_video_track_label\r\na=ssrc:1287333296 mslabel:pixelstreaming_video_stream_id\r\na=ssrc:1287333296 label:pixelstreaming_video_track_label\r\na=ssrc:421186448 cname:hGvJQPvrYTxLYf8/\r\na=ssrc:421186448 msid:pixelstreaming_video_stream_id pixelstreaming_video_track_label\r\na=ssrc:421186448 mslabel:pixelstreaming_video_stream_id\r\na=ssrc:421186448 label:pixelstreaming_video_track_label\r\nm=audio 9 UDP/TLS/RTP/SAVPF 109\r\nc=IN IP4 0.0.0.0\r\na=rtcp:9 IN IP4 0.0.0.0\r\na=ice-ufrag:Idf2\r\na=ice-pwd:gTZm0dCk4uCUDBI47DE5MoAm\r\na=ice-options:trickle\r\na=fingerprint:sha-256 61:57:B4:30:9A:5A:41:DB:C5:CE:E9:75:61:18:7C:5A:D2:90:02:6C:35:6F:72:C3:D3:A7:A2:75:31:B5:3B:AB\r\na=setup:active\r\na=mid:1\r\na=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level\r\na=extmap:3 urn:ietf:params:rtp-hdrext:sdes:mid\r\na=sendonly\r\na=msid:pixelstreaming_audio_stream_id pixelstreaming_audio_track_label\r\na=rtcp-mux\r\na=rtpmap:109 opus/48000/2\r\na=fmtp:109 minptime=10;useinbandfec=1\r\na=ssrc:2821807623 cname:hGvJQPvrYTxLYf8/\r\na=ssrc:2821807623 msid:pixelstreaming_audio_stream_id pixelstreaming_audio_track_label\r\na=ssrc:2821807623 mslabel:pixelstreaming_audio_stream_id\r\na=ssrc:2821807623 label:pixelstreaming_audio_track_label\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\nb=AS:30\r\na=ice-ufrag:Idf2\r\na=ice-pwd:gTZm0dCk4uCUDBI47DE5MoAm\r\na=ice-options:trickle\r\na=fingerprint:sha-256 61:57:B4:30:9A:5A:41:DB:C5:CE:E9:75:61:18:7C:5A:D2:90:02:6C:35:6F:72:C3:D3:A7:A2:75:31:B5:3B:AB\r\na=setup:active\r\na=mid:2\r\na=sctp-port:5000\r\na=max-message-size:262144\r\n" }
+webRtcPlayer.js:466:21
+15:50:20.451 signaling state change: 
+signalingstatechange { target: RTCPeerConnection, isTrusted: true, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, composed: false, … }
+webRtcPlayer.js:164:21
+15:50:20.452 handleOnTrack 
+Array [ MediaStream ]
+webRtcPlayer.js:176:21
+15:50:20.452 Got track - video id={f87ddaa9-5624-4c6c-9a3c-5b4ab4090cb7} readyState=live webRtcPlayer.js:180:13
+15:50:20.452 Set video source from video track ontrack. webRtcPlayer.js:191:13
+15:50:20.452 handleOnTrack 
+Array [ MediaStream ]
+webRtcPlayer.js:176:21
+15:50:20.452 Got track - audio id={b3378cea-51d6-4277-8d3d-aa572cf635b6} readyState=live webRtcPlayer.js:180:13
+15:50:20.453 Created new audio element to play seperate audio stream. webRtcPlayer.js:212:25
+15:50:20.455 <- SS: {"type":"iceCandidate","candidate":{"sdpMid":"0","sdpMLineIndex":0,"candidate":"candidate:218517741 1 udp 2122262783 2003:d0:8f33:900:41e3:1805:dc8b:3abc 58550 typ host generation 0 ufrag Idf2 network-id 2"}} app.js:1621:11
+15:50:20.455 ICE candidate:  
+Object { sdpMid: "0", sdpMLineIndex: 0, candidate: "candidate:218517741 1 udp 2122262783 2003:d0:8f33:900:41e3:1805:dc8b:3abc 58550 typ host generation 0 ufrag Idf2 network-id 2" }
+webRtcPlayer.js:438:21
+15:50:20.456 <- SS: {"type":"iceCandidate","candidate":{"sdpMid":"0","sdpMLineIndex":0,"candidate":"candidate:3671428999 1 udp 2122197247 2003:d0:8f33:900:711c:5f54:8474:e7b8 58551 typ host generation 0 ufrag Idf2 network-id 3"}} app.js:1621:11
+15:50:20.457 ICE candidate:  
+Object { sdpMid: "0", sdpMLineIndex: 0, candidate: "candidate:3671428999 1 udp 2122197247 2003:d0:8f33:900:711c:5f54:8474:e7b8 58551 typ host generation 0 ufrag Idf2 network-id 3" }
+webRtcPlayer.js:438:21
+15:50:20.457 <- SS: {"type":"iceCandidate","candidate":{"sdpMid":"0","sdpMLineIndex":0,"candidate":"candidate:3453381005 1 udp 2122129151 192.168.178.44 58552 typ host generation 0 ufrag Idf2 network-id 1"}} app.js:1621:11
+15:50:20.458 ICE candidate:  
+Object { sdpMid: "0", sdpMLineIndex: 0, candidate: "candidate:3453381005 1 udp 2122129151 192.168.178.44 58552 typ host generation 0 ufrag Idf2 network-id 1" }
+webRtcPlayer.js:438:21
+15:50:20.458 <- SS: {"type":"iceCandidate","candidate":{"sdpMid":"0","sdpMLineIndex":0,"candidate":"candidate:1132833821 1 tcp 1518283007 2003:d0:8f33:900:41e3:1805:dc8b:3abc 25114 typ host tcptype passive generation 0 ufrag Idf2 network-id 2"}} app.js:1621:11
+15:50:20.459 ICE candidate:  
+Object { sdpMid: "0", sdpMLineIndex: 0, candidate: "candidate:1132833821 1 tcp 1518283007 2003:d0:8f33:900:41e3:1805:dc8b:3abc 25114 typ host tcptype passive generation 0 ufrag Idf2 network-id 2" }
+webRtcPlayer.js:438:21
+15:50:20.459 ICE candidate successfully added 2 webRtcPlayer.js:441:25
+15:50:20.460 ice connection state change: 
+iceconnectionstatechange { target: RTCPeerConnection, isTrusted: true, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, composed: false, … }
+webRtcPlayer.js:168:21
+15:50:20.461 ice connection state change: 
+iceconnectionstatechange { target: RTCPeerConnection, isTrusted: true, srcElement: RTCPeerConnection, currentTarget: RTCPeerConnection, eventPhase: 2, bubbles: false, cancelable: false, returnValue: true, defaultPrevented: false, composed: false, … }
+webRtcPlayer.js:168:21
+15:50:20.461 ICE candidate successfully added 2 webRtcPlayer.js:441:25
+15:50:20.467 data channel (cirrus) connect webRtcPlayer.js:226:27
+15:50:20.478 <- SS: {"type":"iceCandidate","candidate":{"sdpMid":"0","sdpMLineIndex":0,"candidate":"candidate:2488693623 1 tcp 1518217471 2003:d0:8f33:900:711c:5f54:8474:e7b8 25115 typ host tcptype passive generation 0 ufrag Idf2 network-id 3"}} app.js:1621:11
+15:50:20.478 ICE candidate:  
+Object { sdpMid: "0", sdpMLineIndex: 0, candidate: "candidate:2488693623 1 tcp 1518217471 2003:d0:8f33:900:711c:5f54:8474:e7b8 25115 typ host tcptype passive generation 0 ufrag Idf2 network-id 3" }
+webRtcPlayer.js:438:21
+15:50:20.479 ICE candidate successfully added webRtcPlayer.js:441:25
+15:50:20.482
+GEThttp://localhost:8080/images/Play.png
+[HTTP/1.1 200 OK 2ms]
+
+15:50:20.524 <- SS: {"type":"iceCandidate","candidate":{"sdpMid":"0","sdpMLineIndex":0,"candidate":"candidate:2203424125 1 tcp 1518149375 192.168.178.44 25116 typ host tcptype passive generation 0 ufrag Idf2 network-id 1"}} app.js:1621:11
+15:50:20.525 ICE candidate:  
+Object { sdpMid: "0", sdpMLineIndex: 0, candidate: "candidate:2203424125 1 tcp 1518149375 192.168.178.44 25116 typ host tcptype passive generation 0 ufrag Idf2 network-id 1" }
+webRtcPlayer.js:438:21
+15:50:20.526 ICE candidate successfully added webRtcPlayer.js:441:25
+15:50:21.276 received VideoEncoderAvgQP 4 app.js:456:12
+15:50:21.459 ----------------------------- Stats start ----------------------------- webRtcPlayer.js:302:25
+15:50:22.308 received VideoEncoderAvgQP 6 app.js:456:12
+15:50:22.470 ----------------------------- Stats start ----------------------------- webRtcPlayer.js:302:25
+15:50:23.342 received VideoEncoderAvgQP 8 app.js:456:12
+15:50:23.473 ----------------------------- Stats start ----------------------------- webRtcPlayer.js:302:25
+15:50:23.708 Received quality controller message, will control quality: true app.js:423:12
+15:50:24.342 received VideoEncoderAvgQP 9 app.js:456:12
+15:50:24.478 ----------------------------- Stats start ----------------------------- webRtcPlayer.js:302:25
+15:50:25.375 received VideoEncoderAvgQP 10 app.js:456:12
+15:50:25.485 ----------------------------- Stats start ----------------------------- webRtcPlayer.js:302:25
+15:50:26.408 received VideoEncoderAvgQP 10 app.js:456:12
+15:50:26.490 ----------------------------- Stats start ----------------------------- webRtcPlayer.js:302:25
+15:50:27.442 received VideoEncoderAvgQP 10 app.js:456:12
+15:50:27.498 ----------------------------- Stats start ----------------------------- webRtcPlayer.js:302:25
+15:50:28.475 received VideoEncoderAvgQP 10 app.js:456:12
+15:50:28.503 ----------------------------- Stats start ----------------------------- webRtcPlayer.js:302:25
+15:50:29.509 received VideoEncoderAvgQP 11 app.js:456:12
+15:50:29.511 ----------------------------- Stats start ----------------------------- 2 webRtcPlayer.js:302:25
+15:50:30.542 received VideoEncoderAvgQP 11 app.js:456:12
+15:50:31.169 Pointer locked app.js:1275:12
+15:50:31.528 ----------------------------- Stats start ----------------------------- webRtcPlayer.js:302:25
+15:50:31.575 received VideoEncoderAvgQP 11 app.js:456:12
+15:50:32.529 ----------------------------- Stats start ----------------------------- webRtcPlayer.js:302:25
+15:50:32.609 received VideoEncoderAvgQP 11 app.js:456:12
+15:50:33.530 ----------------------------- Stats start ----------------------------- webRtcPlayer.js:302:25
+15:50:33.559 The pointer lock status is now unlocked app.js:1278:12
+15:50:33.642 received VideoEncoderAvgQP 11 app.js:456:12
+15:50:34.532 ----------------------------- Stats start ----------------------------- webRtcPlayer.js:302:25
+15:50:34.675 received VideoEncoderAvgQP 11 app.js:456:12
+15:50:35.545 ----------------------------- Stats start ----------------------------- webRtcPlayer.js:302:25
+15:50:35.708 received VideoEncoderAvgQP 11 app.js:456:12
+15:50:36.553 ----------------------------- Stats start ----------------------------- webRtcPlayer.js:302:25
+15:50:36.742 received VideoEncoderAvgQP 10 app.js:456:12
+15:50:37.559 ----------------------------- Stats start ----------------------------- webRtcPlayer.js:302:25
+15:50:37.775 received VideoEncoderAvgQP 10 app.js:456:12
+15:50:38.572 ----------------------------- Stats start ----------------------------- webRtcPlayer.js:302:25
+15:50:38.808 received VideoEncoderAvgQP 10 app.js:456:12
+15:50:39.581 ----------------------------- Stats start ----------------------------- webRtcPlayer.js:302:25
+15:50:39.842 received VideoEncoderAvgQP 11

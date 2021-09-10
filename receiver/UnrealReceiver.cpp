@@ -7,13 +7,18 @@
 
 UnrealReceiver::UnrealReceiver()
 {
+  OutputFile.open("Data.bin");
+  Storage.reserve(1e6);
   media_ = rtc::Description::Video("video", rtc::Description::Direction::RecvOnly);
   media_.addH264Codec(96);
-  //media_.addVideoCodec(96,"mpeg");
-  media_.setBitrate(6000);
   track_ = pc_.addTrack(media_);
+  
   sess_ = std::make_shared<rtc::RtcpReceivingSession>();
   track_->setMediaHandler(sess_);
+  sess_->requestBitrate(90000);
+  sess_->requestKeyframe();
+  //media_.addVideoCodec(96,"mpeg");
+  media_.setBitrate(90000);
   track_->onMessage([this](rtc::message_variant message) {
     if (std::holds_alternative<std::string>(message))
     {
@@ -84,6 +89,15 @@ UnrealReceiver::UnrealReceiver()
       else
       {
         std::cout << "Other message with " << buffer.size() << " bytes and typebyte " << (uint32_t)typedata << "." << std::endl;
+        //std::move(buffer.begin(),buffer.end(),Storage.end());
+        Storage.insert(Storage.end(),buffer.begin(),buffer.end());
+        if (Storage.size() > 1e5)
+        {
+          std::cout << "Writing buffer to file" << std::endl;
+          OutputFile.write(reinterpret_cast<char*>(Storage.data()),Storage.size()*sizeof(std::byte));
+          std::cout << "Clearing buffer" << std::endl;
+          Storage.clear();
+        }
       }
     }
     });
@@ -96,9 +110,10 @@ UnrealReceiver::UnrealReceiver()
     rtc::message_ptr outmessage;
 
 
-    sess_->send(rtc::make_message({(std::byte)(EClientMessageType::InitialSettings)}));
+    //sess_->send(rtc::make_message({(std::byte)(EClientMessageType::InitialSettings)}));
 
     track_->send(rtc::binary({ (std::byte)(EClientMessageType::QualityControlOwnership) }));
+    
 
     state_ = EConnectionState::VIDEO;
   });
@@ -120,6 +135,9 @@ UnrealReceiver::UnrealReceiver()
     std::cout << "PC received a data channel" << std::endl;
 
   });
+  vdc_->onBufferedAmountLow([](){
+  std::cout << "Buffer amount low" << std::endl;
+  });
   pc_.onStateChange([this](auto state) {
     std::cout << "PC has a state change to " << state << std::endl;
     if (state == rtc::PeerConnection::State::Connected)
@@ -138,23 +156,26 @@ UnrealReceiver::UnrealReceiver()
   {
     std::cout << "Description!" << std::endl;
   });
-
   ss_.onClosed([this]()
   {
     state_ = EConnectionState::CLOSED;
+  });
+  sess_->onOutgoing([](rtc::message_ptr message){
+    auto typedata = static_cast<EClientMessageType>((*message)[0]);
+    std::cout << "Outgoing with " << message->size() << " bytes and typebyte " << (uint32_t)typedata << "." << std::endl;
   });
   
   vdc_->onError([this](auto e){
     std::cout << "Video stream received an error message:\n" << e << std::endl;
     state_ = EConnectionState::ERROR;
   });
-
 }
 
 UnrealReceiver::~UnrealReceiver()
 {
   pc_.close();
   ss_.close();
+  OutputFile.close();
 }
 
 void UnrealReceiver::RegisterWithSignalling()
@@ -191,11 +212,14 @@ void UnrealReceiver::RegisterWithSignalling()
         {
           std::cout << "I am parsing the answer." << std::endl;
           std::string sdp = content["sdp"];
+          media_.parseSdpLine(sdp);
+          //std::cout << sdp << std::endl;
           pc_.setRemoteDescription(rtc::Description(sdp,"answer"));
         }
         else if (content["type"] == "iceCandidate")
         {
           std::cout << "I received an ICE candidate!" << std::endl;
+          //std::cout << content.dump() << std::endl;
           rtc::Candidate candidate(content["candidate"]["candidate"],content["candidate"]["sdpMid"]);
           pc_.addRemoteCandidate(candidate);
           IceCandidatesReceived++;
@@ -257,7 +281,7 @@ int UnrealReceiver::RunForever()
     }
     else if(state_ == EConnectionState::VIDEO)
     {
-      vdc_->send("Plz?"); // This crashes the engine, not that I expected anything else tbh.
+      
     }
     else if (state_ == EConnectionState::ERROR)
     {
