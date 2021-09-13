@@ -13,7 +13,7 @@ enum class EConnectionState
   CONNECTED,
   VIDEO,
   CLOSED,
-  ERROR,
+  RTCERROR,
 };
 
 enum class EClientMessageType
@@ -43,7 +43,7 @@ protected:
 private:
   EConnectionState state_{EConnectionState::STARTUP};
   rtc::Configuration rtcconfig_;
-  rtc::PeerConnection pc_;
+  std::shared_ptr<rtc::PeerConnection> pc_;
   std::shared_ptr<rtc::DataChannel> vdc_;
   std::shared_ptr<rtc::RtcpReceivingSession> sess_;
   std::shared_ptr<rtc::Track> track_;
@@ -62,4 +62,7 @@ private:
 
   std::size_t AnnouncedSize;
   inline bool ReceivedFrame() { return JPGFrame.size() > AnnouncedSize; }
+
+  bool ReceivingFrame_;
+  std::size_t framenumber = 0;
 };
