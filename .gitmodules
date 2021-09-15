@@ -1,3 +1,6 @@
 [submodule "libdatachannel"]
 	path = libdatachannel
 	url = git@github.com:paullouisageneau/libdatachannel.git
+[submodule "MediaSDK"]
+	path = MediaSDK
+	url = git@github.com:Intel-Media-SDK/MediaSDK.git

@@ -3,17 +3,25 @@
 #include <chrono>
 #include <thread>
 #include <sstream>
+#include <chrono>
 #include <algorithm>
 #include <bitset>
+#include <rtc/rtc.hpp>
+
+
+#include "omp.h"
 
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <winsock2.h>
 
 UnrealReceiver::UnrealReceiver()
 {
+  const unsigned int bitrate = 3000;
+  const unsigned int maxframe = 10000;
+  Messages.reserve(maxframe);
   rtcconfig_.maxMessageSize = 100000;
   pc_ = std::make_shared<rtc::PeerConnection>(rtcconfig_);
-  OutputFile.open("input.h264");
+  OutputFile.open("input2_"+std::to_string(std::chrono::system_clock::now().time_since_epoch().count())+".h264");
   Storage.reserve(1000000u);
   media_ = rtc::Description::Video("video", rtc::Description::Direction::RecvOnly);
   media_.addH264Codec(96);
@@ -27,34 +35,41 @@ UnrealReceiver::UnrealReceiver()
   
   sess_ = std::make_shared<rtc::RtcpReceivingSession>();
   track_->setMediaHandler(sess_);
-  sess_->requestBitrate(90000);
+  sess_->requestBitrate(bitrate);
   sess_->requestKeyframe();
-  media_.setBitrate(3000);
+  media_.setBitrate(bitrate);
 
-  track_->onMessage([this, sock, addr](rtc::message_variant message) {
+  track_->onMessage([this, sock, addr, maxframe](rtc::message_variant message) {
     if (std::holds_alternative<rtc::binary>(message))
     {
       auto package = std::get<rtc::binary>(message);
+      SaveRTP rtp = reinterpret_cast<rtc::RTP*>(package.data());
+
+
+      //if ( Messages.size() == 0 || rtp.timestamp != Messages[Messages.size() - 1].timestamp)
+      //{
+      //  framenumber++;
+      //  if (framenumber > maxframe)
+      //  {
+      //    state_ = EConnectionState::CLOSED;
+      //
+      //    std::sort(Messages.begin(),Messages.end());
+      //    for (auto m : Messages)
+      //    {
+      //      OutputFile.write((char*)(m.body.data()),m.body.size());
+      //    }
+      //    OutputFile.close();
+      //    exit(EXIT_SUCCESS);
+      //  }
+      //  std::cout << "Frame " << framenumber << "/" << maxframe << "." << std::endl;
+      //}
+      
       sendto(sock, reinterpret_cast<const char*>(package.data()), int(package.size()), 0,
         reinterpret_cast<const struct sockaddr*>(&addr), sizeof(addr));
 
+      //Messages.push_back(std::move(rtp));
+
       //std::cout << package.size() << std::endl;
-
-      if (package.size() == 20)
-      {
-        uint32_t data = *(uint32_t*)(package.data());
-        std::cout << std::bitset<4*8>(data) << std::endl;
-        framenumber++;
-        if (framenumber >= 500)
-        {
-          exit(EXIT_SUCCESS);
-        }
-      }
-      else
-      {
-        OutputFile.write((char*)package.data(), package.size());
-      }
-
       //OutputFile.close();
       //OutputFile.open("package_" + std::to_string(framenumber) + ".rtp");
       //framenumber++;
@@ -84,74 +99,92 @@ UnrealReceiver::UnrealReceiver()
   });
   vdc_->onMessage([this](auto message)
   {
-      auto typedata = static_cast<EClientMessageType>(std::get<rtc::binary>(message)[0]);
-      std::vector<std::byte> buffer = std::get<rtc::binary>(message);
-      if (ReceivingFreezeFrame)
+    if(std::holds_alternative<rtc::binary>(message))
+    {
+      if(std::get<rtc::binary>(message).size() > 0)
       {
-
-        // this is a workaround, because the compiler is not able to
-        // std::vector::insert the rtc::binary into itself, presumably
-        // because namespace wrapping and using directives.
-        //TRANSFORM(std::byte,message, JPGFrame);
-        JPGFrame.insert(JPGFrame.end(), buffer.begin(), buffer.end());
-        if (ReceivedFrame())
+        auto typedata = static_cast<EClientMessageType>(std::get<rtc::binary>(message)[0]);
+        std::vector<std::byte> buffer = std::get<rtc::binary>(message);
+        if (ReceivingFreezeFrame)
         {
-          std::cout << "I have finished receiving the freezeframe" << std::endl;
-          ReceivingFreezeFrame = false;
+
+          // this is a workaround, because the compiler is not able to
+          // std::vector::insert the rtc::binary into itself, presumably
+          // because namespace wrapping and using directives.
+          //TRANSFORM(std::byte,message, JPGFrame);
+          JPGFrame.insert(JPGFrame.end(), buffer.begin(), buffer.end());
+          if (ReceivedFrame())
+          {
+            std::cout << "I have finished receiving the freezeframe" << std::endl;
+            ReceivingFreezeFrame = false;
+          }
+        }
+        else if (typedata == EClientMessageType::QualityControlOwnership)
+        {
+
+        }
+        else if (typedata == EClientMessageType::FreezeFrame)
+        {
+          std::cout << "I have started receiving the freeze frame" << std::endl;
+          //AnnouncedSize = (std::size_t)*(reinterpret_cast<int32_t*>(buffer[1]));
+          //JPGFrame = buffer;
+          //if (buffer.size() - 5 >= AnnouncedSize)
+          //{
+          //  std::cout << "FF was received in one go!" << std::endl;
+          //}
+          //else
+          //{
+          //  std::cout << "FF needs more packages!" << std::endl;
+          //  ReceivingFreezeFrame = true;
+          //}
+        }
+        else if (typedata == EClientMessageType::Command)
+        {
+          std::cout << "Command!" << std::endl;
+        }
+        else if (typedata == EClientMessageType::UnfreezeFrame)
+        {
+          std::cout << "UnfreezeFrame!" << std::endl;
+        }
+        else if (typedata == EClientMessageType::VideoEncoderAvgQP)
+        {
+          //std::cout << "VideoEncoderAvgQP!" << std::endl;
+        }
+        else if (typedata == EClientMessageType::LatencyTest)
+        {
+          std::cout << "LatencyTest!" << std::endl;
+        }
+        else if (typedata == EClientMessageType::InitialSettings)
+        {
+          std::cout << "InitialSettings!" << std::endl;
+        }
+        else if (typedata == EClientMessageType::Response)
+        {
+          std::cout << "Response!" << std::endl;
+        }
+        else
+        {
+          std::cout << "ERROR data channel message with " << buffer.size() << " bytes and typebyte " << (uint32_t)typedata << "." << std::endl;
         }
       }
-      else if (typedata == EClientMessageType::QualityControlOwnership)
-      {
-
-      }
-      else if (typedata == EClientMessageType::FreezeFrame)
-      {
-        std::cout << "I have started receiving the freeze frame" << std::endl;
-        //AnnouncedSize = (std::size_t)*(reinterpret_cast<int32_t*>(buffer[1]));
-        //JPGFrame = buffer;
-        //if (buffer.size() - 5 >= AnnouncedSize)
-        //{
-        //  std::cout << "FF was received in one go!" << std::endl;
-        //}
-        //else
-        //{
-        //  std::cout << "FF needs more packages!" << std::endl;
-        //  ReceivingFreezeFrame = true;
-        //}
-      }
-      else if (typedata == EClientMessageType::Command)
-      {
-        std::cout << "Command!" << std::endl;
-      }
-      else if (typedata == EClientMessageType::UnfreezeFrame)
-      {
-        std::cout << "UnfreezeFrame!" << std::endl;
-      }
-      else if (typedata == EClientMessageType::VideoEncoderAvgQP)
-      {
-        //std::cout << "VideoEncoderAvgQP!" << std::endl;
-      }
-      else if (typedata == EClientMessageType::LatencyTest)
-      {
-        std::cout << "LatencyTest!" << std::endl;
-      }
-      else if (typedata == EClientMessageType::InitialSettings)
-      {
-        std::cout << "InitialSettings!" << std::endl;
-      }
-      else if (typedata == EClientMessageType::Response)
-      {
-        std::cout << "Response!" << std::endl;
-      }
-      else
-      {
-        std::cout << "ERROR data channel message with " << buffer.size() << " bytes and typebyte " << (uint32_t)typedata << "." << std::endl;
-      }
+    }
+    else
+    {
+      std::cout << std::get<std::string>(message) << std::endl;
+    }
   });
   vdc_->onAvailable([this]()
-    {
-      //std::cout << "Received an available event on the data channel!" << std::endl;
-    });
+  {
+      
+    std::cout << "Received an available event on the data channel!" << std::endl;
+
+
+    //auto potential = vdc_->receive();
+    //if (potential.has_value())
+    //{
+    //}
+
+  });
   pc_->onGatheringStateChange([this](auto state) {
     std::cout << "We switched ice gathering state to " << state << std::endl;
   });
@@ -196,6 +229,7 @@ UnrealReceiver::UnrealReceiver()
 
 UnrealReceiver::~UnrealReceiver()
 {
+  OutputFile.write((char*)Storage.data(), Storage.size());
   pc_->close();
   ss_.close();
   OutputFile.close();

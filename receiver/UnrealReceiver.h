@@ -4,6 +4,7 @@
 #include <json.hpp>
 #include <vector>
 #include <fstream>
+#include <compare>
 
 enum class EConnectionState
 {
@@ -26,6 +27,45 @@ enum class EClientMessageType
 	VideoEncoderAvgQP,
 	LatencyTest,
 	InitialSettings,
+};
+
+struct SaveRTP
+{
+  uint32_t timestamp{0};
+  uint32_t ssrc{0};
+  uint16_t sequence{0};
+  std::vector<std::byte> body;
+  SaveRTP(){body.reserve(2048); }
+  SaveRTP(rtc::RTP* package)
+  {
+    timestamp = package->timestamp();
+    ssrc = package->ssrc();
+    sequence = package->seqNumber();
+    body.insert(
+      body.end(),
+      (std::byte*)package->getBody(),
+      (std::byte*)package->getBody() + package->getSize()
+    );
+  }
+  SaveRTP& operator=(rtc::RTP* package)
+  {
+    timestamp = package->timestamp();
+    ssrc = package->ssrc();
+    sequence = package->seqNumber();
+    body.clear();
+    body.insert(
+      body.end(),
+      (std::byte*)package->getBody(),
+      (std::byte*)package->getBody() + package->getSize()
+    );
+    return *this;
+  }
+
+  std::strong_ordering operator <=>(const auto& other) const {
+    //return (timestamp <=> other.timestamp == 0) ? sequence <=> other.sequence : timestamp<=> other.timestamp;
+    return sequence <=> other.sequence;
+  }
+
 };
 
 class UnrealReceiver
@@ -57,12 +97,16 @@ private:
   bool ReceivingFreezeFrame = false;
   std::vector<std::byte> JPGFrame;
 
+  // RTP Package info
+  uint32_t timestamp;
+
   std::vector<std::byte> Storage;
+  std::vector<SaveRTP> Messages;
   std::ofstream OutputFile;
 
   std::size_t AnnouncedSize;
   inline bool ReceivedFrame() { return JPGFrame.size() > AnnouncedSize; }
 
   bool ReceivingFrame_;
-  std::size_t framenumber = 0;
+  std::size_t framenumber = 1;
 };
