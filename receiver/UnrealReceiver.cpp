@@ -14,6 +14,8 @@
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <winsock2.h>
 
+namespace UR{
+
 UnrealReceiver::UnrealReceiver()
 {
   const unsigned int bitrate = 3000;
@@ -21,7 +23,7 @@ UnrealReceiver::UnrealReceiver()
   Messages.reserve(maxframe);
   rtcconfig_.maxMessageSize = 100000;
   pc_ = std::make_shared<rtc::PeerConnection>(rtcconfig_);
-  OutputFile.open("input2_"+std::to_string(std::chrono::system_clock::now().time_since_epoch().count())+".h264");
+  //OutputFile.open("input2_"+std::to_string(std::chrono::system_clock::now().time_since_epoch().count())+".h264");
   Storage.reserve(1000000u);
   media_ = rtc::Description::Video("video", rtc::Description::Direction::RecvOnly);
   media_.addH264Codec(96);
@@ -45,29 +47,53 @@ UnrealReceiver::UnrealReceiver()
       auto package = std::get<rtc::binary>(message);
       SaveRTP rtp = reinterpret_cast<rtc::RTP*>(package.data());
 
+      if ( Messages.size() == 0)
+      {
+        framenumber++;
+        //if (framenumber > maxframe)
+        //{
+        //  state_ = EConnectionState::CLOSED;
+        //
+        //  std::sort(Messages.begin(),Messages.end());
+        //  for (auto m : Messages)
+        //  {
+        //    OutputFile.write((char*)(m.body.data()),m.body.size());
+        //  }
+        //  OutputFile.close();
+        //  exit(EXIT_SUCCESS);
+        //}
 
-      //if ( Messages.size() == 0 || rtp.timestamp != Messages[Messages.size() - 1].timestamp)
-      //{
-      //  framenumber++;
-      //  if (framenumber > maxframe)
-      //  {
-      //    state_ = EConnectionState::CLOSED;
-      //
-      //    std::sort(Messages.begin(),Messages.end());
-      //    for (auto m : Messages)
-      //    {
-      //      OutputFile.write((char*)(m.body.data()),m.body.size());
-      //    }
-      //    OutputFile.close();
-      //    exit(EXIT_SUCCESS);
-      //  }
-      //  std::cout << "Frame " << framenumber << "/" << maxframe << "." << std::endl;
-      //}
+        //std::cout << "Frame " << framenumber << "/" << maxframe << "." << std::endl;
+      }
+      else if (rtp.timestamp != Messages[Messages.size() - 1].timestamp)
+      {
+        std::sort(Messages.begin(), Messages.end());
+        std::vector<std::byte> Data;
+        bool PackageLoss = false;
+
+        for (unsigned int idx = 0; idx < Messages.size(); ++idx)
+        {
+          const auto& m = Messages[idx];
+          if (idx > 0 && Messages[idx - 1l].sequence != Messages[idx].sequence - 1)
+          {
+            std::cout << "Frame incomplete: " << Messages[idx - 1l].sequence << " preceeds " << Messages[idx].sequence << std::endl;
+            PackageLoss = true;
+            break;
+          }
+          Data.insert(Data.end(),m.body.begin(),m.body.end());
+        }
+        if(!PackageLoss)
+        {
+          Storage.push_back(std::move(Data));
+          framenumber++;
+        }
+        Messages.empty();
+      }
       
       sendto(sock, reinterpret_cast<const char*>(package.data()), int(package.size()), 0,
         reinterpret_cast<const struct sockaddr*>(&addr), sizeof(addr));
 
-      //Messages.push_back(std::move(rtp));
+      Messages.push_back(std::move(rtp));
 
       //std::cout << package.size() << std::endl;
       //OutputFile.close();
@@ -176,7 +202,7 @@ UnrealReceiver::UnrealReceiver()
   vdc_->onAvailable([this]()
   {
       
-    std::cout << "Received an available event on the data channel!" << std::endl;
+    //std::cout << "Received an available event on the data channel!" << std::endl;
 
 
     //auto potential = vdc_->receive();
@@ -229,14 +255,17 @@ UnrealReceiver::UnrealReceiver()
 
 UnrealReceiver::~UnrealReceiver()
 {
-  OutputFile.write((char*)Storage.data(), Storage.size());
+  //OutputFile.write((char*)Storage.data(), Storage.size());
   pc_->close();
   ss_.close();
-  OutputFile.close();
+  //OutputFile.close();
 }
 
 void UnrealReceiver::RegisterWithSignalling()
 {
+  if(!configinit)
+  return;
+  std::cout << "Registering with signalling" << std::endl;
  std::string address =  "ws://" + config_["PublicIp"].get<std::string>()
   + ":" + std::to_string(config_["HttpPort"].get<unsigned>());
   std::string addresstest = "ws://127.0.0.1:8080/";
@@ -300,10 +329,13 @@ void UnrealReceiver::RegisterWithSignalling()
 
 void UnrealReceiver::UseConfig(std::string filename)
 {
+  std::cout << "Fetching config file " << filename << std::endl;
   std::ifstream f(filename);
   if(!f.good())
     return;
   config_ = json::parse(f);
+  f.close();
+  configinit = true;
 }
 
 void UnrealReceiver::Offer()
@@ -315,7 +347,7 @@ void UnrealReceiver::Offer()
     std::cout << "We have a description value" << std::endl;
     rtc::Description desc = *testdescr;
     auto sdp = desc.generateSdp("\n");
-    std::cout << sdp << std::endl;
+    //std::cout << sdp << std::endl;
     json outmessage = {{"type","offer"},{"sdp",sdp}};
     ss_.send(outmessage.dump());
   }
@@ -329,12 +361,14 @@ void UnrealReceiver::Offer()
 
 int UnrealReceiver::RunForever()
 {
+  
   while (true)
   {
     
     if (state_ == EConnectionState::SIGNUP)
     {
       Offer();
+      return 0;
     }
     else if(state_ == EConnectionState::VIDEO)
     {
@@ -352,4 +386,26 @@ int UnrealReceiver::RunForever()
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
   return EXIT_SUCCESS;
+}
+
+void UnrealReceiver::SetDataCallback(const std::function<void(std::vector<std::vector<unsigned char>>)>& DataCallback)
+{
+  std::cout << "Data Callback with pointer to " << &DataCallback << std::endl;
+  DataCallback_ = DataCallback;
+}
+
+std::vector<std::vector<unsigned char>> UnrealReceiver::EmptyCache()
+{
+  auto size = Storage.size();
+  std::vector<std::vector<unsigned char>> Data(size, std::vector<unsigned char>());
+  for (unsigned int i = 0; i < size; ++i)
+  {
+    const std::vector<std::byte>& frame = Storage[i];
+    Data[i].assign(reinterpret_cast<const unsigned char*>(frame.data()), reinterpret_cast<const unsigned char*>(frame.data())+frame.size());
+  }
+  Storage.empty();
+  return Data;
+
+}
+
 }

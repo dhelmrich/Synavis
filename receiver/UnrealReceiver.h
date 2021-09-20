@@ -5,8 +5,13 @@
 #include <vector>
 #include <fstream>
 #include <compare>
+#include <functional>
+#include "UnrealReceiver/export.hpp"
 
-enum class EConnectionState
+namespace UR
+{
+
+enum class UNREALRECEIVER_EXPORT EConnectionState
 {
   STARTUP = 0,
   SIGNUP,
@@ -17,7 +22,7 @@ enum class EConnectionState
   RTCERROR,
 };
 
-enum class EClientMessageType
+enum class UNREALRECEIVER_EXPORT EClientMessageType
 {
 	QualityControlOwnership = 0u,
 	Response,
@@ -29,7 +34,7 @@ enum class EClientMessageType
 	InitialSettings,
 };
 
-struct SaveRTP
+struct UNREALRECEIVER_EXPORT SaveRTP
 {
   uint32_t timestamp{0};
   uint32_t ssrc{0};
@@ -62,23 +67,25 @@ struct SaveRTP
   }
 
   std::strong_ordering operator <=>(const auto& other) const {
-    //return (timestamp <=> other.timestamp == 0) ? sequence <=> other.sequence : timestamp<=> other.timestamp;
-    return sequence <=> other.sequence;
+    return (timestamp <=> other.timestamp == 0) ? sequence <=> other.sequence : timestamp<=> other.timestamp;
+    //return sequence <=> other.sequence;
   }
 
 };
 
-class UnrealReceiver
+class UNREALRECEIVER_EXPORT UnrealReceiver
 {
 public:
   using json = nlohmann::json;
   UnrealReceiver();
   ~UnrealReceiver();
-  void RegisterWithSignalling();
-  int RunForever();
+  virtual void RegisterWithSignalling();
+  virtual int RunForever();
   void Offer();
-  void UseConfig(std::string filename);
+  virtual void UseConfig(std::string filename);
   inline const EConnectionState& State(){return this->state_;};
+  virtual void SetDataCallback(const std::function<void(std::vector<std::vector<unsigned char>>)>& DataCallback);
+  virtual std::vector<std::vector<unsigned char>> EmptyCache();
 protected:
 private:
   EConnectionState state_{EConnectionState::STARTUP};
@@ -92,7 +99,7 @@ private:
   json config_;
   unsigned int MessagesReceived{0};
   unsigned int IceCandidatesReceived{0};
-
+  bool configinit = false;
   // Freeze Frame Definitions
   bool ReceivingFreezeFrame = false;
   std::vector<std::byte> JPGFrame;
@@ -100,9 +107,12 @@ private:
   // RTP Package info
   uint32_t timestamp;
 
-  std::vector<std::byte> Storage;
+  std::vector<std::vector<std::byte>> Storage;
+  std::size_t StorageSizes{0};
   std::vector<SaveRTP> Messages;
   std::ofstream OutputFile;
+
+  std::function<void(std::vector<std::vector<unsigned char>>)> DataCallback_;
 
   std::size_t AnnouncedSize;
   inline bool ReceivedFrame() { return JPGFrame.size() > AnnouncedSize; }
@@ -110,3 +120,5 @@ private:
   bool ReceivingFrame_;
   std::size_t framenumber = 1;
 };
+
+}
