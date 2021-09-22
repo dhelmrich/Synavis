@@ -31,4 +31,8 @@ The winsocket really needs to be removed and/or exchanged with something that ru
 I would greatly appreciate help with this project. It is an integral part of my thesis, but not the main focus of it.
 I am working in Berlin time and will respond during work hours when I can spare time.
 
+## Legal Details
+
+I would like to acknowledge funding provided by the German government to the Gauss Centre for Supercomputing via the InHPC-DE project (01—H17001).
+
 
