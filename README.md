@@ -1,5 +1,7 @@
 # In progress project!
 
+Update 2021-09-22: I am trying to find an easy way to decode the frames without too much software bloat.
+
 # UnrealReceiver
 C++ WebRTC Bridge for Unreal Engine PixelStreaming
 
