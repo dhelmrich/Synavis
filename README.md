@@ -1,4 +1,4 @@
-# In progress project!
+# In progress project -  do not rely on this project!
 
 Update 2021-09-22: I am trying to find an easy way to decode the frames without too much software bloat.
 
