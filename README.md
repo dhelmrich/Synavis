@@ -1,7 +1,8 @@
 # In progress project -  do not rely on this project!
 
-Update 2021-09-30: Dependency managemend while testing out different libraries is not very easy, so those changes will not be pushed here. I would like to do the decoding on the python side, but as far as I understand is that I am missing additional headerinfo for the decoding to work. Otherwise it is just bytestream-kauderwelsch.
-Update 2021-09-22: I am trying to find an easy way to decode the frames without too much software bloat.
+**Update 2021-09-30**: Dependency managemend while testing out different libraries is not very easy, so those changes will not be pushed here. I would like to do the decoding on the python side, but as far as I understand is that I am missing additional headerinfo for the decoding to work. Otherwise it is just bytestream-kauderwelsch.
+
+**Update 2021-09-22**: I am trying to find an easy way to decode the frames without too much software bloat.
 
 # UnrealReceiver
 C++ WebRTC Bridge for Unreal Engine PixelStreaming
