@@ -39,6 +39,8 @@ struct UNREALRECEIVER_EXPORT SaveRTP
   uint32_t timestamp{0};
   uint32_t ssrc{0};
   uint16_t sequence{0};
+  uint8_t payload_type{};
+  bool has_padding{false};
   std::vector<std::byte> body;
   SaveRTP(){body.reserve(2048); }
   SaveRTP(rtc::RTP* package)
@@ -51,12 +53,16 @@ struct UNREALRECEIVER_EXPORT SaveRTP
       (std::byte*)package->getBody(),
       (std::byte*)package->getBody() + package->getSize()
     );
+    payload_type = package->payloadType();
+    has_padding = package->padding();
   }
   SaveRTP& operator=(rtc::RTP* package)
   {
     timestamp = package->timestamp();
     ssrc = package->ssrc();
     sequence = package->seqNumber();
+    payload_type = package->payloadType();
+    has_padding = package->padding();
     body.clear();
     body.insert(
       body.end(),
@@ -64,6 +70,11 @@ struct UNREALRECEIVER_EXPORT SaveRTP
       (std::byte*)package->getBody() + package->getSize()
     );
     return *this;
+  }
+
+  inline void decodeH264Header()
+  {
+    
   }
 
   std::strong_ordering operator <=>(const auto& other) const {
@@ -81,6 +92,7 @@ public:
   ~UnrealReceiver();
   virtual void RegisterWithSignalling();
   virtual int RunForever();
+  std::string SessionDescriptionProtocol();
   void Offer();
   virtual void UseConfig(std::string filename);
   inline const EConnectionState& State(){return this->state_;};
@@ -103,6 +115,7 @@ private:
   // Freeze Frame Definitions
   bool ReceivingFreezeFrame = false;
   std::vector<std::byte> JPGFrame;
+  std::string answersdp_;
 
   // RTP Package info
   uint32_t timestamp;

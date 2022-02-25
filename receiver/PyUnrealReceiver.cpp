@@ -42,7 +42,8 @@ PYBIND11_MODULE(PyUnrealReceiver, m)
     .def("SetDataCallback", (void (UnrealReceiver::*)(const std::function<void(std::vector<std::vector<unsigned char>>)>&)) & PyReceiver::SetDataCallback, py::arg("DataCallback"))
     //.def("SetDataCallback",[](const std::function<void(std::vector<std::byte>)>&){})
     .def("RunForever", &UnrealReceiver::RunForever)
-    .def("EmptyCache",&UnrealReceiver::EmptyCache);
+    .def("EmptyCache",&UnrealReceiver::EmptyCache)
+    .def("SessionDescriptionProtocol",&UnrealReceiver::SessionDescriptionProtocol);
 }
 
 }

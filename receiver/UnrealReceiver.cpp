@@ -16,6 +16,12 @@
 
 namespace UR{
 
+  template<typename... Ts>
+std::vector<std::byte> literalbytes(Ts&&... args) noexcept {
+    return{std::byte(std::forward<Ts>(args))...};
+}
+
+
 UnrealReceiver::UnrealReceiver()
 {
   const unsigned int bitrate = 3000;
@@ -32,7 +38,7 @@ UnrealReceiver::UnrealReceiver()
   SOCKET sock = socket(AF_INET, SOCK_DGRAM, 0);
   sockaddr_in addr;
   addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-  addr.sin_port = htons(5000);
+  addr.sin_port = htons(5332);
   addr.sin_family = AF_INET;
   
   sess_ = std::make_shared<rtc::RtcpReceivingSession>();
@@ -45,7 +51,40 @@ UnrealReceiver::UnrealReceiver()
     if (std::holds_alternative<rtc::binary>(message))
     {
       auto package = std::get<rtc::binary>(message);
-      SaveRTP rtp = reinterpret_cast<rtc::RTP*>(package.data());
+      rtc::RTP* package_raw = reinterpret_cast<rtc::RTP*>(package.data());
+      SaveRTP rtp = package_raw;
+
+      /**
+       * FRIOM Stackoverflow:
+       * In RTP all H264 I-Frames (IDRs) are usualy fragmented.
+       * When you receive RTP you first must skip the header
+       * (usualy first 12 bytes) and then get to the NAL unit
+       * (first payload byte). If the NAL is 28 (1C) then it
+       * means that following payload represents one H264 IDR
+       * (I-Frame) fragment and that you need to collect all of
+       * them to reconstruct H264 IDR (I-Frame). Fragmentation
+       * occurs because of the limited MTU, and much larger IDR.
+       * One fragment can look like this:
+       *
+       * Fragment that has START BIT = 1:
+       * First byte:  [ 3 NAL UNIT BITS | 5 FRAGMENT TYPE BITS]
+       * Second byte: [ START BIT | END BIT | RESERVED BIT | 5 NAL UNIT BITS]
+       * Other bytes: [... IDR FRAGMENT DATA...]
+       *
+       * Other fragments:
+       * First byte:  [ 3 NAL UNIT BITS | 5 FRAGMENT TYPE BITS]
+       * Other bytes: [... IDR FRAGMENT DATA...]
+       *
+       * To reconstruct IDR you must collect this info:
+       *
+       * int fragment_type = Data[0] & 0x1F;
+       * int nal_type = Data[1] & 0x1F;
+       * int start_bit = Data[1] & 0x80;#
+       * int end_bit = Data[1] & 0x40;
+       *
+       *
+       *
+       */
 
       if ( Messages.size() == 0)
       {
@@ -68,19 +107,20 @@ UnrealReceiver::UnrealReceiver()
       else if (rtp.timestamp != Messages[Messages.size() - 1].timestamp)
       {
         std::sort(Messages.begin(), Messages.end());
-        std::vector<std::byte> Data;
+        std::vector<std::byte> Data = literalbytes(1,0);
+        //std::vector<std::byte> Data;
         bool PackageLoss = false;
-
         for (unsigned int idx = 0; idx < Messages.size(); ++idx)
         {
           const auto& m = Messages[idx];
-          if (idx > 0 && Messages[idx - 1l].sequence != Messages[idx].sequence - 1)
-          {
-            std::cout << "Frame incomplete: " << Messages[idx - 1l].sequence << " preceeds " << Messages[idx].sequence << std::endl;
-            PackageLoss = true;
-            break;
-          }
-          Data.insert(Data.end(),m.body.begin(),m.body.end());
+          // temp fix for rollover without (uint)(-1) being hit
+          //if (idx > 0 && Messages[idx - 1l].sequence != Messages[idx].sequence - 1 && Messages[idx].sequence != 0)
+          //{
+          //  std::cout << "Frame incomplete: " << Messages[idx - 1l].sequence << " preceeds " << Messages[idx].sequence << std::endl;
+          //  PackageLoss = true;
+          //  break;
+          //}
+          //Data.insert(Data.end(),m.body.begin(),m.body.end());
         }
         if(!PackageLoss)
         {
@@ -133,11 +173,6 @@ UnrealReceiver::UnrealReceiver()
         std::vector<std::byte> buffer = std::get<rtc::binary>(message);
         if (ReceivingFreezeFrame)
         {
-
-          // this is a workaround, because the compiler is not able to
-          // std::vector::insert the rtc::binary into itself, presumably
-          // because namespace wrapping and using directives.
-          //TRANSFORM(std::byte,message, JPGFrame);
           JPGFrame.insert(JPGFrame.end(), buffer.begin(), buffer.end());
           if (ReceivedFrame())
           {
@@ -201,15 +236,6 @@ UnrealReceiver::UnrealReceiver()
   });
   vdc_->onAvailable([this]()
   {
-      
-    //std::cout << "Received an available event on the data channel!" << std::endl;
-
-
-    //auto potential = vdc_->receive();
-    //if (potential.has_value())
-    //{
-    //}
-
   });
   pc_->onGatheringStateChange([this](auto state) {
     std::cout << "We switched ice gathering state to " << state << std::endl;
@@ -298,6 +324,7 @@ void UnrealReceiver::RegisterWithSignalling()
         {
           std::cout << "I am parsing the answer." << std::endl;
           std::string sdp = content["sdp"];
+          answersdp_ = sdp;
           media_.parseSdpLine(sdp);
           //std::cout << sdp << std::endl;
           pc_->setRemoteDescription(rtc::Description(sdp,"answer"));
@@ -386,6 +413,22 @@ int UnrealReceiver::RunForever()
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
   return EXIT_SUCCESS;
+}
+
+std::string UnrealReceiver::SessionDescriptionProtocol()
+{
+  auto testdescr = pc_->localDescription();
+  if(testdescr.has_value())
+  {
+    rtc::Description desc = *testdescr;
+    auto sdp = desc.generateSdp("\n");
+    return sdp;
+  }
+  else
+  {
+    return "";
+  }
+  //return answersdp_;
 }
 
 void UnrealReceiver::SetDataCallback(const std::function<void(std::vector<std::vector<unsigned char>>)>& DataCallback)
