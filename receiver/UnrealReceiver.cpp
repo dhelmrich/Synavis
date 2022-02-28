@@ -8,11 +8,10 @@
 #include <bitset>
 #include <rtc/rtc.hpp>
 
-
-#include "omp.h"
-
+#ifdef _WIN32
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <winsock2.h>
+#endif
 
 namespace UR{
 
@@ -129,9 +128,11 @@ UnrealReceiver::UnrealReceiver()
         }
         Messages.empty();
       }
-      
+
+#ifdef _WIN32
       sendto(sock, reinterpret_cast<const char*>(package.data()), int(package.size()), 0,
         reinterpret_cast<const struct sockaddr*>(&addr), sizeof(addr));
+#endif
 
       Messages.push_back(std::move(rtp));
 
