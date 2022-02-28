@@ -16,7 +16,7 @@ string(TOUPPER ${projectname} PROJECTNAME_UPPER)
 string(TOLOWER ${projectname} PROJECTNAME_LOWER)
 # lib path?
 
-project (${projectname})
+project (${projectname} VERSION 0.0.1)
 
 set(ROOTDIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 set(CMAKE_CXX_STANDARD 20)
@@ -42,7 +42,7 @@ include(FetchContent)
 FetchContent_Declare(
     pybind11
     GIT_REPOSITORY https://github.com/pybind/pybind11
-    GIT_TAG        v2.2.3
+    GIT_TAG        v2.8
 )
 
 FetchContent_GetProperties(pybind11)

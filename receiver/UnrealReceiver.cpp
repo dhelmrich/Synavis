@@ -20,6 +20,10 @@ std::vector<std::byte> literalbytes(Ts&&... args) noexcept {
     return{std::byte(std::forward<Ts>(args))...};
 }
 
+void SetTimeout(double ms, std::function<void(void)> callback, bool invokeself = false)
+{
+  
+}
 
 UnrealReceiver::UnrealReceiver()
 {

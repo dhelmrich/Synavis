@@ -1,8 +1,8 @@
 import sys
 import os
-sys.path.append("build/receiver/Release/")
-print(os.environ["FFMPEG_PATH"])
-sys.path.append(os.environ["FFMPEG_PATH"])
+sys.path.append("../UnrealReceiver_build/receiver/Release/")
+#print(os.environ["FFMPEG_PATH"])
+#sys.path.append(os.environ["FFMPEG_PATH"])
 import numpy as np
 import asyncio
 import PyUnrealReceiver as UR
@@ -43,7 +43,7 @@ bt.start()
 
 print("Decoupled successfully")
 
-time.sleep(8)
+time.sleep(4)
 print("Slept through decoupling")
 with open("pixelstreaming.sdp","w") as f :
   f.write(Receiver.SessionDescriptionProtocol())
