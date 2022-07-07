@@ -2,6 +2,10 @@
 
 **Update 2022-03-01** Dependencies are now all updated and should work without issue. Gstreamer can still read the frames from the rtp relay, and you should be able to access them via opencv with gstreamer. libdatachannel has an example on how this works. We are working on enhancing compatability with vanilla opencv.
 
+# What will happen to this project going forward
+
+We have decided to remodel our workflows to use encapsulated networking. This enables us to use Unreal Engine workflows in a combination of cloud and HPC services which are physically and logically seperate and where no direct webrtc communication is possible.
+
 # UnrealReceiver
 C++ WebRTC Bridge for Unreal Engine PixelStreaming
 
