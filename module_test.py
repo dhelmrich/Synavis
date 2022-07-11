@@ -1,6 +1,6 @@
 import sys
 import os
-sys.path.append("../UnrealReceiver_build/receiver/Release/")
+sys.path.append("./build/receiver/Release/")
 #print(os.environ["FFMPEG_PATH"])
 #sys.path.append(os.environ["FFMPEG_PATH"])
 import numpy as np

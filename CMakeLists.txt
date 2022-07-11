@@ -53,6 +53,7 @@ endif()
 
 add_subdirectory(receiver)
 add_subdirectory(externtest)
+add_subdirectory(accessor)
 
 
 
