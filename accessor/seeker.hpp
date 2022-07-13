@@ -7,33 +7,49 @@
 
 #include "accessor/export.hpp"
 
+
+#ifdef _WIN32
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
+#include <winsock2.h>
+#elif __linux__
+#include <sys/socket.h>
+#include <sys/types.h> 
+#include <netinet/in.h>
+
+void error(const char *msg)
+{
+    perror(msg);
+    exit(1);
+}
+#endif
+
 namespace AC
 {
-  enum class ACCESSOR_EXPORT EClientMessageType
-  {
-	  QualityControlOwnership = 0u,
-	  Response,
-	  Command,
-	  FreezeFrame,
-	  UnfreezeFrame,
-	  VideoEncoderAvgQP,
-	  LatencyTest,
-	  InitialSettings
-  };
-enum class ACCESSOR_EXPORT EConnectionState
-{
-  STARTUP = 0,
-  SIGNUP,
-  OFFERED,
-  CONNECTED,
-  VIDEO,
-  CLOSED,
-  RTCERROR,
-};
 
   struct ACCESSOR_EXPORT Socket
   {
     
+#ifdef _WIN32
+    int Port;
+
+    SOCKET sock_;
+    sockaddr_in addr_;
+
+    static Socket GetFreeSocketPort(std::string adr = "127.0.0.1")
+    {
+      sockaddr info;
+      int size = sizeof(addr_);
+      Socket s;
+      s.sock_ = socket(AF_INET,SOCK_DGRAM,0);
+      s.addr_.sin_addr.s_addr = inet_addr(adr.c_str());
+      s.addr_.sin_port = htons(0);
+      s.addr_.sin_family = AF_INET;
+      getsockname(s.sock_,&info,&size);
+      s.Port = *reinterpret_cast<int*>(info.sa_data);
+      return s;
+    }
+#elif __LINUX__
+#endif
   };
 
   struct ACCESSOR_EXPORT SaveRTP
