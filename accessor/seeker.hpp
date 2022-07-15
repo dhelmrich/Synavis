@@ -7,6 +7,7 @@
 
 #include "accessor/export.hpp"
 
+#define MAX_RTP_SIZE 10000
 
 #ifdef _WIN32
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
@@ -49,6 +50,26 @@ namespace AC
       return s;
     }
 #elif __LINUX__
+  int sockfd, newsockfd, portno;
+  socklen_t clilen;
+  char buffer[MAX_RTP_SIZE];
+  struct sockaddr_in serv_addr, cli_addr;
+  int n;
+  sockfd = socket(AT_INT, SOCK_DGRAM,0);
+  if(sockfd < 0)
+  {
+    
+  }
+  bzero((char*)&serv_adds,sizeof(serv_addr));
+  portno = 0;
+  
+  serv_addr.sin_family = AF_INET;
+  serv_addr.sin_addr.s_addr = INADDR_ANY;
+  serv_addr.sin_port = htons(portno);
+  if (bind(sockfd, (struct sockaddr *) &serv_addr,
+              sizeof(serv_addr)) < 0) 
+              error("ERROR on binding");
+  
 #endif
   };
 

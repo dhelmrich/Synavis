@@ -8,9 +8,21 @@
 #include <bitset>
 #include <rtc/rtc.hpp>
 
+#define MAX_RTP_SIZE 10000
+
 #ifdef _WIN32
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <winsock2.h>
+#elif __linux__
+#include <sys/socket.h>
+#include <sys/types.h> 
+#include <netinet/in.h>
+
+void error(const char *msg)
+{
+    perror(msg);
+    exit(1);
+}
 #endif
 
 namespace UR{
@@ -30,25 +42,42 @@ UnrealReceiver::UnrealReceiver()
   const unsigned int bitrate = 3000;
   const unsigned int maxframe = 10000;
   Messages.reserve(maxframe);
-  rtcconfig_.maxMessageSize = 100000;
+  rtcconfig_.maxMessageSize = MAX_RTP_SIZE;
   pc_ = std::make_shared<rtc::PeerConnection>(rtcconfig_);
   //OutputFile.open("input2_"+std::to_string(std::chrono::system_clock::now().time_since_epoch().count())+".h264");
-  Storage.reserve(1000000u);
-  media_ = rtc::Description::Video("video", rtc::Description::Direction::RecvOnly);
-  media_.addH264Codec(96);
-  track_ = pc_->addTrack(media_);
+  Storage.reserve(MAX_RTP_SIZE*100u);
+  //media_ = rtc::Description::Video("video", rtc::Description::Direction::RecvOnly);
+  //media_.addH264Codec(96);
+  //track_ = pc_->addTrack(media_);
 
+  
+#ifdef _WIN32
   SOCKET sock = socket(AF_INET, SOCK_DGRAM, 0);
   sockaddr_in addr;
   addr.sin_addr.s_addr = inet_addr("127.0.0.1");
   addr.sin_port = htons(5332);
   addr.sin_family = AF_INET;
+#elif __linux__
+  int sockfd, portno;
+  socklen_t clilen;
+  char buffer[MAX_RTP_SIZE];
+  struct sockaddr_in serv_addr, cli_addr;
+  int n;
+  sockfd = socket(AF_INET, SOCK_STREAM, 0);
+  portno = 5332;
+  serv_addr.sin_family = AF_INET;
+  serv_addr.sin_addr.s_addr = INADDR_ANY;
+  serv_addr.sin_port = htons(portno);
+  bind(sockfd, (struct sockaddr *) &serv_addr,
+              sizeof(serv_addr));
+  
+#endif
   
   sess_ = std::make_shared<rtc::RtcpReceivingSession>();
   track_->setMediaHandler(sess_);
   sess_->requestBitrate(bitrate);
   sess_->requestKeyframe();
-  media_.setBitrate(bitrate);
+  //media_.setBitrate(bitrate);
 
   track_->onMessage([this, sock, addr, maxframe](rtc::message_variant message) {
     if (std::holds_alternative<rtc::binary>(message))
@@ -58,7 +87,7 @@ UnrealReceiver::UnrealReceiver()
       SaveRTP rtp = package_raw;
 
       /**
-       * FRIOM Stackoverflow:
+       * FROM Stackoverflow:
        * In RTP all H264 I-Frames (IDRs) are usualy fragmented.
        * When you receive RTP you first must skip the header
        * (usualy first 12 bytes) and then get to the NAL unit
@@ -130,14 +159,16 @@ UnrealReceiver::UnrealReceiver()
           Storage.push_back(std::move(Data));
           framenumber++;
         }
-        Messages.empty();
+        Messages.clear();
       }
 
 #ifdef _WIN32
       sendto(sock, reinterpret_cast<const char*>(package.data()), int(package.size()), 0,
         reinterpret_cast<const struct sockaddr*>(&addr), sizeof(addr));
+#elif __linux__
+      write(sockfd,package,package.size());
 #endif
-
+      
       Messages.push_back(std::move(rtp));
 
       //std::cout << package.size() << std::endl;
@@ -151,8 +182,9 @@ UnrealReceiver::UnrealReceiver()
       //OutputFile.write((char*)package.data(), package.size());
     }
   });
-
-  vdc_ = pc_->createDataChannel("video");
+  rtc::DataChannelInit info;
+  info.negotiated = false;
+  vdc_ = pc_->createDataChannel("video",info);
   vdc_->onOpen([this]()
   {
     std::cout << "Received an open event on the data channel!" << std::endl;
@@ -330,7 +362,7 @@ void UnrealReceiver::RegisterWithSignalling()
           std::cout << "I am parsing the answer." << std::endl;
           std::string sdp = content["sdp"];
           answersdp_ = sdp;
-          media_.parseSdpLine(sdp);
+          //media_.parseSdpLine(sdp);
           //std::cout << sdp << std::endl;
           pc_->setRemoteDescription(rtc::Description(sdp,"answer"));
         }
@@ -379,7 +411,6 @@ void UnrealReceiver::Offer()
     std::cout << "We have a description value" << std::endl;
     rtc::Description desc = *testdescr;
     auto sdp = desc.generateSdp("\n");
-    //std::cout << sdp << std::endl;
     json outmessage = {{"type","offer"},{"sdp",sdp}};
     ss_.send(outmessage.dump());
   }
@@ -451,9 +482,8 @@ std::vector<std::vector<unsigned char>> UnrealReceiver::EmptyCache()
     const std::vector<std::byte>& frame = Storage[i];
     Data[i].assign(reinterpret_cast<const unsigned char*>(frame.data()), reinterpret_cast<const unsigned char*>(frame.data())+frame.size());
   }
-  Storage.empty();
+  Storage.clear();
   return Data;
-
 }
 
 }

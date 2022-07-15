@@ -108,6 +108,7 @@ private:
   std::shared_ptr<rtc::Track> track_;
   rtc::Description::Video media_;
   rtc::WebSocket ss_;
+  rtc::WebSocket fw_;
   json config_;
   unsigned int MessagesReceived{0};
   unsigned int IceCandidatesReceived{0};
@@ -132,6 +133,11 @@ private:
 
   bool ReceivingFrame_;
   std::size_t framenumber = 1;
+
+  // Bridge Connection Settings
+  bool bSpawnPorts {true};
+  std::vector<int> Ports;
+
 };
 
 }

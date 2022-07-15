@@ -15,9 +15,9 @@ list(FILTER PLAINSOURCES EXCLUDE REGEX ".*PyUnrealReceiver.cpp$")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -openmp:llvm -openmp:experimental")
 
 find_package(OpenMP)
-set(PYBIND11_PYTHON_VERSION 3.8)
-find_package( PythonInterp 3.8 REQUIRED )
-find_package( PythonLibs 3.8 REQUIRED )
+set(PYBIND11_PYTHON_VERSION 3.9)
+find_package( PythonInterp 3.9 REQUIRED )
+find_package( PythonLibs 3.9 REQUIRED )
 
 pybind11_add_module(${PYPROJECT} SHARED 
             ${RECEIVERSOURCES})
