@@ -37,3 +37,4 @@ build*/*
 *.sln
 *.obj
 *.zip
+out*/*

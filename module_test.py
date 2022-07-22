@@ -12,7 +12,6 @@ import time
 import ffmpeg
 import cv2
 import io
-import h264decoder
 os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'protocol_whitelist;file,rtp,udp'
 
 width = 1024

@@ -27,20 +27,35 @@ void error(const char *msg)
 namespace AC
 {
 
-  struct ACCESSOR_EXPORT Socket
+  struct ACCESSOR_EXPORT BridgeSocket
   {
+
+    bool Valid = false;
+    std::string Address;
+
     
 #ifdef _WIN32
     int Port;
 
     SOCKET sock_;
     sockaddr_in addr_;
+#elif __linux__
+    int sockfd, newsockfd, portno;
+    socklen_t clilen;
+    char buffer[MAX_RTP_SIZE];
+    struct sockaddr_in serv_addr, cli_addr;
+    int n;
+#endif
 
-    static Socket GetFreeSocketPort(std::string adr = "127.0.0.1")
+    static BridgeSocket GetFreeSocketPort(std::string adr = "127.0.0.1")
     {
+      BridgeSocket s;
+      s.Address = adr;
+      s.Valid = false;
+      
+#ifdef _WIN32
       sockaddr info;
       int size = sizeof(addr_);
-      Socket s;
       s.sock_ = socket(AF_INET,SOCK_DGRAM,0);
       s.addr_.sin_addr.s_addr = inet_addr(adr.c_str());
       s.addr_.sin_port = htons(0);
@@ -48,29 +63,26 @@ namespace AC
       getsockname(s.sock_,&info,&size);
       s.Port = *reinterpret_cast<int*>(info.sa_data);
       return s;
-    }
-#elif __LINUX__
-  int sockfd, newsockfd, portno;
-  socklen_t clilen;
-  char buffer[MAX_RTP_SIZE];
-  struct sockaddr_in serv_addr, cli_addr;
-  int n;
-  sockfd = socket(AT_INT, SOCK_DGRAM,0);
-  if(sockfd < 0)
-  {
-    
-  }
-  bzero((char*)&serv_adds,sizeof(serv_addr));
-  portno = 0;
-  
-  serv_addr.sin_family = AF_INET;
-  serv_addr.sin_addr.s_addr = INADDR_ANY;
-  serv_addr.sin_port = htons(portno);
-  if (bind(sockfd, (struct sockaddr *) &serv_addr,
-              sizeof(serv_addr)) < 0) 
-              error("ERROR on binding");
-  
+#elif __linux__
+      s.sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+      if (s.sockfd < 0)
+      {
+        return s; 
+      }
+      bzero((char*)&s.serv_addr, sizeof(serv_addr));
+      s.portno = 0;
+
+      s.serv_addr.sin_family = AF_INET;
+      s.serv_addr.sin_addr.s_addr = INADDR_ANY;
+      s.serv_addr.sin_port = htons(s.portno);
+      if (bind(s.sockfd, (struct sockaddr*)&s.serv_addr,
+        sizeof(s.serv_addr)) < 0)
+        error("ERROR on binding");
 #endif
+
+      s.Valid = true;
+      return s;
+    }
   };
 
   struct ACCESSOR_EXPORT SaveRTP
@@ -138,8 +150,8 @@ namespace AC
     
 
   protected:
-    std::vector<int> Ports;
+    std::vector<BridgeSocket> Sockets;
     
-  };
-
+  }; 
+  
 }
