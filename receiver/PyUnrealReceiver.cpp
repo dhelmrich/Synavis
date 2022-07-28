@@ -1,4 +1,5 @@
 // -*- mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+#define _STL_CRT_SECURE_INVALID_PARAMETER(expr) _CRT_SECURE_INVALID_PARAMETER(expr)
 #include "pybind11/pybind11.h"
 #include "pybind11/stl.h"
 #include <pybind11/numpy.h>

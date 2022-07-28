@@ -1,6 +1,6 @@
+#pragma once
 
-
-#include <rtc/rtc.hpp>
+#include "rtc/rtc.hpp"
 #include <json.hpp>
 #include <vector>
 #include <fstream>
@@ -8,50 +8,40 @@
 #include <functional>
 #include <thread>
 
-#include "accessor/export.hpp"
 
+#include "accessor/export.hpp"
 #include "seeker.hpp"
 
 namespace AC
 {
-  
-  enum class ACCESSOR_EXPORT EClientMessageType
+  class ApplicationTrack
   {
-	  QualityControlOwnership = 0u,
-	  Response,
-	  Command,
-	  FreezeFrame,
-	  UnfreezeFrame,
-	  VideoEncoderAvgQP,
-	  LatencyTest,
-	  InitialSettings
-  };
-  enum class ACCESSOR_EXPORT EConnectionState
-  {
-    STARTUP = 0,
-    SIGNUP,
-    OFFERED,
-    CONNECTED,
-    VIDEO,
-    CLOSED,
-    RTCERROR,
-  };
-
-  struct ApplicationTrack
-  {
+  public:
+    ApplicationTrack(std::shared_ptr<rtc::Track> inTrack,
+      std::shared_ptr<rtc::RtcpSrReporter> inSendReporter);
     std::shared_ptr<rtc::Track> Track;
     std::shared_ptr<rtc::RtcpSrReporter> SendReporter;
-    ApplicationTrack(std::shared_ptr<rtc::Track> inTrack, std::shared_ptr<rtc::RtcpSrReporter> inSendReporter)
-      : Track(inTrack), SendReporter(inSendReporter) {}
+    rtc::Description::Video video_{"video",
+      rtc::Description::Direction::SendOnly};
+    const rtc::SSRC ssrc_ = 42;
+    void Send(std::byte* Data, unsigned int Length);
+    bool Open();
   };
 
   class NoBufferThread
   {
   public:
-    NoBufferThread(std::weak_ptr<ApplicationTrack> inDataDestination, std::weak_ptr<BridgeSocket> inDataSource);
+    const int ReceptionSize = 208 * 1024;
+    NoBufferThread(std::weak_ptr<ApplicationTrack> inDataDestination,
+      std::weak_ptr<BridgeSocket> inDataSource);
     void Run();
   private:
     std::unique_ptr<std::thread> Thread;
+    std::tuple<
+      std::weak_ptr<ApplicationTrack>,
+      std::weak_ptr<ApplicationTrack>,
+      std::weak_ptr<ApplicationTrack>
+    > WebRTCTracks;
     std::weak_ptr<ApplicationTrack> DataDestination;
     std::weak_ptr<BridgeSocket> DataSource;
   };
@@ -65,7 +55,13 @@ namespace AC
    */
   class ACCESSOR_EXPORT Connector
   {
+    friend class Seeker;
   public:
+
+    void StartSignalling(std::string IP, int Port,
+        bool keepAlive = true,
+        bool useAuthentification = false);
+
     using json = nlohmann::json;
     void StartFrameReception();
 
@@ -79,12 +75,18 @@ namespace AC
     void AwaitSignalling();
     std::string ProcessedSDP(std::string);
 
-    void BridgeSynchronize(std::variant<std::byte, std::string> Message, bool bFailIfNotResolved = false);
 
     // Data streams to other Bridge
+    // Bridge Pointer is also Shared, which means that
+    // the Seeker class has to resolve the object destruction of
+    // connections, which is intended anyways.
+    std::shared_ptr<class Seeker> BridgePointer;
     std::shared_ptr<BridgeSocket> VideoConnection;
     std::shared_ptr<BridgeSocket> AudioConnection;
     std::shared_ptr<BridgeSocket> DataConnection;
+
+    // Signalling Server
+    std::shared_ptr<rtc::WebSocket> SignallingConnection;
 
     // WebRTC Connectivity
     std::optional<std::shared_ptr<rtc::PeerConnection>> ApplicationConnection;
@@ -96,13 +98,15 @@ namespace AC
     std::optional<std::shared_ptr<ApplicationTrack>> VideoToApplication;
     std::optional<std::shared_ptr<ApplicationTrack>> AudioToApplication;
     std::optional<std::shared_ptr<rtc::DataChannel>> DataToApplication;
+
+  protected:
+    Connector();
+    ~Connector();
     
   private:
     rtc::Configuration rtcconfig_;
     std::shared_ptr<rtc::PeerConnection> pc_;
     std::shared_ptr<rtc::DataChannel> vdc_;
-    rtc::Description::Video media_;
-    rtc::WebSocket ss_;
     json config_;
     unsigned int MessagesReceived{0};
     unsigned int IceCandidatesReceived{0};

@@ -3,7 +3,7 @@
 # path: ${librarypath}
 
 set(subname accessor)
-set(pysubname accessor)
+set(pysubname PyAccessor)
 
 include(GenerateExportHeader)
 
@@ -21,14 +21,14 @@ find_package( PythonLibs 3.9 REQUIRED )
 pybind11_add_module(PyAccessor SHARED 
             ${ACCESSORSOURCES})
 
-add_library(accessor
+add_library(${subname} 
   ${APLAINSOURCES}
   ${ACCESSORHEADERS}
 )
 
 
 
-message(Warning "${ROOTDIRECTORY}/libdatachannel/include/rtc/")
+message(Warning "${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/include")
 target_include_directories(${subname}
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
   PUBLIC ${CMAKE_CURRENT_BINARY_DIR}

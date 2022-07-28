@@ -1,4 +1,3 @@
-
 # Projectname: ${projectname}
 # PROJECTNAME: ${PROJECTNAME_UPPER}
 # path: ${librarypath}
@@ -29,7 +28,7 @@ add_library(${projectname}
 
 
 
-message(Warning "${ROOTDIRECTORY}/libdatachannel/include/rtc/")
+message(Warning "${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/include")
 target_include_directories(${projectname}
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
   PUBLIC ${CMAKE_CURRENT_BINARY_DIR}
