@@ -156,6 +156,7 @@ namespace AC
 	  LatencyTest,
 	  InitialSettings
   };
+
   enum class ACCESSOR_EXPORT EConnectionState
   {
     STARTUP = 0,
@@ -184,18 +185,35 @@ namespace AC
     virtual void DestroyConnection(std::shared_ptr<Connector> Connector);
 
     void CreateTask(std::function<void(void)> Task);
-    void BridgeSynchronize(std::shared_ptr<Connector> Instigator,
+    void BridgeSynchronize(AC::Connector* Instigator,
                            std::variant<std::byte, std::string> Message, bool bFailIfNotResolved = false);
-    void BridgeSubmit(std::variant<std::byte, std::string> Message);
+    void BridgeSubmit(AC::Connector* Instigator, std::variant<std::byte, std::string> Message);
     void BridgeRun();
+    void Listen();
 
   protected:
+
+    json Config{
+      {
+        {"LocalPort", int()},
+        {"RemotePort",int()},
+        {"LocalAddress",int()},
+        {"RemoteAddress",int()}
+      }};
+
     std::vector<std::shared_ptr<Connector>> Users;
     std::unique_ptr<std::thread> BridgeThread;
     std::mutex QueueAccess;
     std::queue<std::function<void(void)>> CommInstructQueue;
+    std::unique_ptr<std::thread> ListenerThread;
+    std::mutex CommandAccess;
+    std::queue<std::variant<std::byte, std::string>> CommandBuffer;
 
-
+    struct
+    {
+      std::shared_ptr<BridgeSocket> In;
+      std::shared_ptr<BridgeSocket> Out;
+    } BridgeConnection;
     
     std::condition_variable TaskAvaliable;
     

@@ -118,7 +118,7 @@ void AC::Connector::StartSignalling(std::string IP, int Port, bool keepAlive, bo
         // we MUST fail if this is not resolved as the sdp description
         // has to be SYNCHRONOUSLY valid on both ends of the bridge!
         BridgePointer->CreateTask(std::bind(&Seeker::BridgeSynchronize, BridgePointer, this, sdp, true));
-
+        //BridgePointer->CreateTask([this, sdp]() {BridgePointer->BridgeSynchronize(this, sdp, true); });
       }
     }
   });

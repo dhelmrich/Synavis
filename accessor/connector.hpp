@@ -57,6 +57,7 @@ namespace AC
   {
     friend class Seeker;
   public:
+    ~Connector();
 
     void StartSignalling(std::string IP, int Port,
         bool keepAlive = true,
@@ -101,7 +102,6 @@ namespace AC
 
   protected:
     Connector();
-    ~Connector();
     
   private:
     rtc::Configuration rtcconfig_;
