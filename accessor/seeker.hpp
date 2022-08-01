@@ -91,58 +91,7 @@ namespace AC
     }
 
     int Receive(bool invalidIsFailure = false);
-
     std::byte* Package();
-  };
-
-  struct ACCESSOR_EXPORT SaveRTP
-  {
-    uint32_t timestamp{0};
-    uint32_t ssrc{0};
-    uint16_t sequence{0};
-    uint8_t payload_type{};
-    bool has_padding{false};
-    std::vector<std::byte> body;
-    SaveRTP(){body.reserve(2048); }
-    SaveRTP(rtc::RTP* package)
-    {
-      timestamp = package->timestamp();
-      ssrc = package->ssrc();
-      sequence = package->seqNumber();
-      body.insert(
-        body.end(),
-        (std::byte*)package->getBody(),
-        (std::byte*)package->getBody() + package->getSize()
-      );
-      payload_type = package->payloadType();
-      has_padding = package->padding();
-    }
-    SaveRTP& operator=(rtc::RTP* package)
-    {
-      timestamp = package->timestamp();
-      ssrc = package->ssrc();
-      sequence = package->seqNumber();
-      payload_type = package->payloadType();
-      has_padding = package->padding();
-      body.clear();
-      body.insert(
-        body.end(),
-        (std::byte*)package->getBody(),
-        (std::byte*)package->getBody() + package->getSize()
-      );
-      return *this;
-    }
-
-    inline void decodeH264Header()
-    {
-      
-    }
-
-    std::strong_ordering operator <=>(const auto& other) const {
-      return (timestamp <=> other.timestamp == 0) ? sequence <=> other.sequence : timestamp<=> other.timestamp;
-      //return sequence <=> other.sequence;
-    }
-
   };
   
   enum class ACCESSOR_EXPORT EClientMessageType
@@ -200,7 +149,7 @@ namespace AC
         {"LocalAddress",int()},
         {"RemoteAddress",int()}
       }};
-
+      *
     std::vector<std::shared_ptr<Connector>> Users;
     std::unique_ptr<std::thread> BridgeThread;
     std::mutex QueueAccess;
@@ -208,6 +157,8 @@ namespace AC
     std::unique_ptr<std::thread> ListenerThread;
     std::mutex CommandAccess;
     std::queue<std::variant<std::byte, std::string>> CommandBuffer;
+    std::condition_variable CommandAvailable;
+    
 
     struct
     {

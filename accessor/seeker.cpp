@@ -61,14 +61,17 @@ void AC::Seeker::BridgeRun()
 
 void AC::Seeker::Listen()
 {
-
+  
 }
 
 void AC::Seeker::FindBridge()
 {
   std::unique_lock<std::mutex> lock(QueueAccess);
   lock.lock();
-
+  CommInstructQueue.push([this]()
+  {
+    
+  });
   lock.release();
 }
 
