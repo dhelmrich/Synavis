@@ -33,14 +33,15 @@ namespace AC
   // forward definitions
   class Connector;
 
-   struct ACCESSOR_EXPORT BridgeSocket
+  struct ACCESSOR_EXPORT BridgeSocket
   {
 
     bool Valid = false;
     std::string Address;
     char* Reception;
+    std::size_t ReceivedLength;
     BridgeSocket():Reception(new char[MAX_RTP_SIZE]){}
-    
+   
 #ifdef _WIN32
     int Port;
 
@@ -59,7 +60,7 @@ namespace AC
       s.Address = adr;
       s.Valid = false;
       
-#ifdef _WIN32
+    #ifdef _WIN32
       sockaddr info;
       int size = sizeof(Addr);
       s.Sock = socket(AF_INET,SOCK_DGRAM,0);
@@ -69,7 +70,7 @@ namespace AC
       getsockname(s.Sock,&info,&size);
       s.Port = *reinterpret_cast<int*>(info.sa_data);
       return s;
-#elif __linux__
+    #elif __linux__
       s.Sock = socket(AF_INET, SOCK_DGRAM, 0);
       if (s.Sock < 0)
       {
@@ -84,12 +85,13 @@ namespace AC
       if (bind(s.Sock, (struct sockaddr*)&s.serv_addr,
         sizeof(s.serv_addr)) < 0)
         error("ERROR on binding");
-#endif
+    #endif
 
       s.Valid = true;
       return s;
     }
 
+    int Peek();
     int Receive(bool invalidIsFailure = false);
     std::byte* Package();
   };
@@ -149,7 +151,8 @@ namespace AC
         {"LocalAddress",int()},
         {"RemoteAddress",int()}
       }};
-      *
+
+    std::unordered_map<int,std::shared_ptr<Connector>> UserByID;
     std::vector<std::shared_ptr<Connector>> Users;
     std::unique_ptr<std::thread> BridgeThread;
     std::mutex QueueAccess;

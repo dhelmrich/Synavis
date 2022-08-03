@@ -74,7 +74,10 @@ namespace AC
 
     void SetupApplicationConnection();
     void AwaitSignalling();
-    std::string ProcessedSDP(std::string);
+
+    void OnBridgeInformation(json message);
+
+    std::string PushSDP(std::string);
 
 
     // Data streams to other Bridge
@@ -99,6 +102,7 @@ namespace AC
     std::optional<std::shared_ptr<ApplicationTrack>> VideoToApplication;
     std::optional<std::shared_ptr<ApplicationTrack>> AudioToApplication;
     std::optional<std::shared_ptr<rtc::DataChannel>> DataToApplication;
+    std::optional<std::shared_ptr<rtc::DataChannel>> DataFromApplication;
 
   protected:
     Connector();

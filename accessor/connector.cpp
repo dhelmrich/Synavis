@@ -59,6 +59,16 @@ void AC::NoBufferThread::Run()
   }
 }
 
+std::string AC::Connector::GetConnectionString()
+{
+  return std::string();
+}
+
+std::string AC::Connector::GenerateSDP()
+{
+  return std::string();
+}
+
 void AC::Connector::SetupApplicationConnection()
 {
   pc_ = std::make_shared<rtc::PeerConnection>();
@@ -75,6 +85,28 @@ void AC::Connector::SetupApplicationConnection()
 			}
   });
 
+}
+
+void AC::Connector::AwaitSignalling()
+{
+}
+
+void AC::Connector::OnBridgeInformation(json message)
+{
+  if (message.find("type") != message.end())
+  {
+    if (message["type"] == "answer")
+    {
+      std::string sdp = message["sdp"];
+      rtc::Description desc(sdp);
+      
+    }
+  }
+}
+
+std::string AC::Connector::PushSDP(std::string)
+{
+  return std::string();
 }
 
 
@@ -118,8 +150,15 @@ void AC::Connector::StartSignalling(std::string IP, int Port, bool keepAlive, bo
         // we MUST fail if this is not resolved as the sdp description
         // has to be SYNCHRONOUSLY valid on both ends of the bridge!
         BridgePointer->CreateTask(std::bind(&Seeker::BridgeSynchronize, BridgePointer, this, sdp, true));
-        //BridgePointer->CreateTask([this, sdp]() {BridgePointer->BridgeSynchronize(this, sdp, true); });
+        auto desc = pc_->localDescription();
+        
       }
     }
   });
+  std::cout << "Waiting for Signalling Websocket to Connect." << std::endl;
+  Notifier.wait();
+}
+
+void AC::Connector::StartFrameReception()
+{
 }

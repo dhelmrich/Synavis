@@ -1,5 +1,13 @@
 #include "seeker.hpp"
+
+#include <variant>
+
 #include "connector.hpp"
+
+int AC::BridgeSocket::Peek()
+{
+
+}
 
 AC::Seeker::Seeker()
 {
@@ -61,7 +69,26 @@ void AC::Seeker::BridgeRun()
 
 void AC::Seeker::Listen()
 {
-  
+  std::unique_lock<std::mutex> lock(CommandAccess);
+  while(true)
+  {
+    CommandAvailable.wait(lock, [this]
+      {
+        return this->BridgeConnection.In->Peek();
+      });
+    bool isMessage = false;
+    try
+    {
+      // all of these things must be available and also present
+      // on the same layer of the json signal
+      auto message = json::parse(this->BridgeConnection.In->Reception);
+      std::string type = message["type"];
+      auto app_id = message["id"].get<int>();
+    } catch( ... )
+    {
+      
+    }
+  }
 }
 
 void AC::Seeker::FindBridge()
