@@ -27,23 +27,111 @@ bool AC::Seeker::CheckSignallingActive()
 
 void AC::Seeker::UseConfig(std::string filename)
 {
-
+  std::ifstream file(filename);
+  auto fileConfig = json::parse(file);
+  bool complete = true;
+  for(auto key : Config)
+    if(fileConfig.find(key) == fileConfig.end())
+      complete = false;
 }
 
-bool AC::Seeker::EstablishedConnection(std::string ip)
+bool AC::Seeker::EstablishedConnection()
 {
-  return false;
+  BridgeConnection.In = std::make_shared<BridgeSocket>();
+  BridgeConnection.Out = std::make_shared<BridgeSocket>();
+  BridgeConnection.Out->Address = Config["LocalAddress"];
+  BridgeConnection.Out->Port = Config["LocalPort"];
+  BridgeConnection.In->Address = Config["RemoteAddress"];
+  BridgeConnection.In->Port = Config["RemotePort"];
+  if(BridgeConnection.Out->Connect() && BridgeConnection.In->Connect())
+  {
+    std::unique_lock<std::mutex> lock(QueueAccess);
+    lock.lock();
+    int PingPongSuccessful = -1;
+    CommInstructQueue.push([this,&PingPongSuccessful]
+    {
+      BridgeConnection.Out->Send(json({{"ping",int()}}).dump());
+      int reception{0};
+      while((reception = BridgeConnection.In->Peek()) == 0)
+      {
+        std::this_thread::yield();
+      }
+      try
+      {
+        if(json::parse(BridgeConnection.In->Copy())["ping"] == 1)
+        {
+          PingPongSuccessful = 1;
+        }
+      }catch(...)
+      {
+        PingPongSuccessful = 0;
+      }
+    });
+    lock.release();
+    while(PingPongSuccessful == -1) std::this_thread::yield();
+    return PingPongSuccessful == 1;
+  }
+  else
+  {
+    return false;
+  }
 }
 
 void AC::Seeker::BridgeSynchronize(AC::Connector* Instigator,
-                                   std::variant<std::byte, std::string> Message, bool bFailIfNotResolved)
+                                   json Message, bool bFailIfNotResolved)
 {
-
+  Message["id"] = Instigator->ID;
+  std::string Transmission = Message.dump();
+  BridgeConnection.Out->Send(Transmission);
+  auto messagelength = BridgeConnection.In->Receive(true);
+  if(messagelength <= 0)
+  {
+    if(bFailIfNotResolved)
+    {
+      throw std::domain_error(std::string("Could not receive answer from Bridgehead and this synchronization is critical:\n\n")
+      + "Message was:\n\n"
+      + Message.dump(1,'\t'));
+    }
+  }
+  else
+  {
+    json Answer;
+    try
+    {
+      Answer = json::parse(BridgeConnection.In->Copy());
+    }
+    catch(std::exception e)
+    {
+      if(bFailIfNotResolved)
+      {
+        throw std::runtime_error(std::string("An error occured while parsing the Bridge response:\n\n")
+        + e.what());
+      }
+    }
+    catch(...)
+    {
+      if(bFailIfNotResolved)
+      {
+        throw std::exception("An unexpected error occured while parsing the Bridge response");
+      }
+    }
+    Instigator->OnBridgeInformation(Answer);
+  }
 }
 
 void AC::Seeker::BridgeSubmit(AC::Connector* Instigator, std::variant<std::byte, std::string> Message)
 {
-  
+  json Transmission = {{"id",Instigator->ID}};
+  // we need to break this up because of json lib compatibility
+  if(std::holds_alternative<std::string>(Message))
+  {
+    Transmission["data"] = std::get<std::string>(Message);
+  }
+  else
+  {
+    Transmission["data"] = std::get<std::byte>(Message);
+  }
+  BridgeConnection.Out->Send(Transmission);
 }
 
 void AC::Seeker::BridgeRun()
@@ -74,7 +162,7 @@ void AC::Seeker::Listen()
   {
     CommandAvailable.wait(lock, [this]
       {
-        return this->BridgeConnection.In->Peek();
+        return bNeedInfo && this->BridgeConnection.In->Peek() > 0;
       });
     bool isMessage = false;
     try
@@ -84,6 +172,7 @@ void AC::Seeker::Listen()
       auto message = json::parse(this->BridgeConnection.In->Reception);
       std::string type = message["type"];
       auto app_id = message["id"].get<int>();
+      UserByID[app_id]->OnBridgeInformation(message);
     } catch( ... )
     {
       
@@ -113,7 +202,9 @@ std::shared_ptr<AC::Connector> AC::Seeker::CreateConnection()
   auto t = std::make_shared<Wrap>();
   std::shared_ptr<AC::Connector> Connection{std::move(t),&t->cont };
 
-
+  Connection->BridgePointer = std::shared_ptr<Seeker>(this);
+  Connection->ID = ++NextID;
+  this->BridgeSynchronize(Connection.get(),{{"ID",NextID},{"Demand","Port"}},false);
 
   return Connection;
 
@@ -121,7 +212,7 @@ std::shared_ptr<AC::Connector> AC::Seeker::CreateConnection()
 
 void AC::Seeker::DestroyConnection(std::shared_ptr<Connector> Connector)
 {
-
+  std::remove(UserByID.begin(), UserByID.end(), Connector);
 }
 
 void AC::Seeker::CreateTask(std::function<void(void)> Task)

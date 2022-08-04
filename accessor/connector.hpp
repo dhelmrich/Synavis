@@ -85,9 +85,7 @@ namespace AC
     // the Seeker class has to resolve the object destruction of
     // connections, which is intended anyways.
     std::shared_ptr<class Seeker> BridgePointer;
-    std::shared_ptr<BridgeSocket> VideoConnection;
-    std::shared_ptr<BridgeSocket> AudioConnection;
-    std::shared_ptr<BridgeSocket> DataConnection;
+    std::shared_ptr<BridgeSocket> Connection;
 
     // Signalling Server
     std::shared_ptr<rtc::WebSocket> SignallingConnection;
@@ -114,6 +112,7 @@ namespace AC
     json config_;
     unsigned int MessagesReceived{0};
     unsigned int IceCandidatesReceived{0};
+    int ID{};
     std::uint64_t Time();
   };
 

@@ -41,18 +41,73 @@ namespace AC
     char* Reception;
     std::size_t ReceivedLength;
     BridgeSocket():Reception(new char[MAX_RTP_SIZE]){}
+    ~BridgeSocket()
+    {
+    
+#ifdef _WIN32
+      closesocket(Sock);
+#elif defined __linux__
+      shutdown(Sock,2);
+#endif
+
+    }
+    int Port;
    
 #ifdef _WIN32
-    int Port;
-
     SOCKET Sock;
+    sockaddr info;
     sockaddr_in Addr;
 #elif __linux__
-    int Sock, newsockfd, portno;
+    int Sock, newsockfd;
     socklen_t clilen;
     struct sockaddr_in serv_addr, cli_addr;
     int n;
 #endif
+
+    bool Connect()
+    {
+    #ifdef _WIN32
+      int size = sizeof(Addr);
+      Sock = socket(AF_INET,SOCK_DGRAM,0);
+      Addr.sin_addr.s_addr = inet_addr(Address.c_str());
+      Addr.sin_port = htons(Port);
+      Addr.sin_family = AF_INET;
+      getsockname(Sock,&info,&size);
+      Port = *reinterpret_cast<int*>(info.sa_data);
+      if(bind(Sock,&info,sizeof(info)) < 0)
+      {
+        return false;
+      }
+      else
+      {
+        return true;
+      }
+    #elif defined __linux__
+      s.Sock = socket(AF_INET, SOCK_DGRAM, 0);
+      if (s.Sock < 0)
+      {
+        return s; 
+      }
+      bzero((char*)&s.serv_addr, sizeof(serv_addr));
+      serv_addr.sin_family = AF_INET;
+      serv_addr.sin_addr.s_addr = INADDR_ANY;
+      serv_addr.sin_port = htons(s.Port);
+      if (bind(Sock, (struct sockaddr*)&s.serv_addr,
+        sizeof(serv_addr)) < 0)
+      {
+        return false;
+      }
+    #endif
+
+      return true;
+    }
+
+    int ReadSocketFromBinding()
+    {
+#ifdef _WIN32
+#elif defined __linux__
+#endif
+    }
 
     static BridgeSocket GetFreeSocketPort(std::string adr = "127.0.0.1")
     {
@@ -61,14 +116,13 @@ namespace AC
       s.Valid = false;
       
     #ifdef _WIN32
-      sockaddr info;
       int size = sizeof(Addr);
       s.Sock = socket(AF_INET,SOCK_DGRAM,0);
       s.Addr.sin_addr.s_addr = inet_addr(adr.c_str());
-      s.Addr.sin_port = htons(0);
+      s.Addr.sin_port = htons(s.Port);
       s.Addr.sin_family = AF_INET;
-      getsockname(s.Sock,&info,&size);
-      s.Port = *reinterpret_cast<int*>(info.sa_data);
+      getsockname(s.Sock,&s.info,&size);
+      s.Port = *reinterpret_cast<int*>(s.info.sa_data);
       return s;
     #elif __linux__
       s.Sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -81,7 +135,7 @@ namespace AC
 
       s.serv_addr.sin_family = AF_INET;
       s.serv_addr.sin_addr.s_addr = INADDR_ANY;
-      s.serv_addr.sin_port = htons(s.portno);
+      s.serv_addr.sin_port = htons(s.Port);
       if (bind(s.Sock, (struct sockaddr*)&s.serv_addr,
         sizeof(s.serv_addr)) < 0)
         error("ERROR on binding");
@@ -94,6 +148,8 @@ namespace AC
     int Peek();
     int Receive(bool invalidIsFailure = false);
     std::byte* Package();
+    std::string Copy();
+    void Send(std::variant<std::byte, std::string> message);
   };
   
   enum class ACCESSOR_EXPORT EClientMessageType
@@ -128,7 +184,7 @@ namespace AC
     ~Seeker();
     virtual bool CheckSignallingActive();
     virtual void UseConfig(std::string filename);
-    virtual bool EstablishedConnection(std::string ip = "127.0.0.1");
+    virtual bool EstablishedConnection();
     virtual void FindBridge();
     virtual void RecoverConnection();
 
@@ -137,7 +193,7 @@ namespace AC
 
     void CreateTask(std::function<void(void)> Task);
     void BridgeSynchronize(AC::Connector* Instigator,
-                           std::variant<std::byte, std::string> Message, bool bFailIfNotResolved = false);
+                           json Message, bool bFailIfNotResolved = false);
     void BridgeSubmit(AC::Connector* Instigator, std::variant<std::byte, std::string> Message);
     void BridgeRun();
     void Listen();
@@ -161,7 +217,7 @@ namespace AC
     std::mutex CommandAccess;
     std::queue<std::variant<std::byte, std::string>> CommandBuffer;
     std::condition_variable CommandAvailable;
-    
+    bool bNeedInfo{false};
 
     struct
     {
@@ -170,7 +226,8 @@ namespace AC
     } BridgeConnection;
     
     std::condition_variable TaskAvaliable;
-    
+
+    std::size_t NextID{0};
   }; 
   
 }
