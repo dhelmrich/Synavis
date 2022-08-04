@@ -24,11 +24,7 @@ I can verify, with the relay over the old winsocket, that the frames are receive
 
 ## Open Issues
 
-While I am getting the frames as I expect, I cannot decode them.
-I have tried saving the frames in files and decoding with multiple settings using ffmpeg, but to no avail (I assume this is because I need some h264 metainfo).
-GStreamer can decode the packages over the relay, but simply concatenating the rtp bodies does not seem to do the trick.
-
-The winsocket really needs to be removed and/or exchanged with something that runs on linux as well.
+We have tested a running pipeline with one-sided image provision and a Gstreamer/OpenCV decoding as training sequence. THis works well and we have tested this for depth estimation from monocular images.
 
 ## Collaboration
 
