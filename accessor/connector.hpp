@@ -58,6 +58,7 @@ namespace AC
     friend class Seeker;
   public:
     ~Connector();
+    Connector(Connector&& other) = default;
 
     void StartSignalling(std::string IP, int Port,
         bool keepAlive = true,
@@ -85,16 +86,15 @@ namespace AC
     // the Seeker class has to resolve the object destruction of
     // connections, which is intended anyways.
     std::shared_ptr<class Seeker> BridgePointer;
-    std::shared_ptr<BridgeSocket> Connection;
+    std::shared_ptr<BridgeSocket> Upstream;
+    std::shared_ptr<BridgeSocket> Downstream;
 
     // Signalling Server
     std::shared_ptr<rtc::WebSocket> SignallingConnection;
 
     // WebRTC Connectivity
     std::optional<std::shared_ptr<rtc::PeerConnection>> ApplicationConnection;
-    std::optional<NoBufferThread> AudioTransmissionThread;
-    std::optional<NoBufferThread> VideoTransmissionThread;
-    std::optional<NoBufferThread> DataThread;
+    std::optional<NoBufferThread> TransmissionThread;
 
     // Data streams to Application
     std::optional<std::shared_ptr<ApplicationTrack>> VideoToApplication;
@@ -114,6 +114,8 @@ namespace AC
     unsigned int IceCandidatesReceived{0};
     int ID{};
     std::uint64_t Time();
+
+    std::optional<rtc::Description> Offer_;
   };
 
 }

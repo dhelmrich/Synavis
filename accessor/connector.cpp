@@ -95,10 +95,19 @@ void AC::Connector::OnBridgeInformation(json message)
 {
   if (message.find("type") != message.end())
   {
+    /*!
+     * Message Type: Answer
+     *
+     * This message type contains the sdp information that UE sends
+     * It should have been stripped of anything that is related to the actual
+     * device that UE runs on and only contain video/audio/data transmission information
+     * that is relevant for our webrtc startup
+     */
     if (message["type"] == "answer")
     {
       std::string sdp = message["sdp"];
       rtc::Description desc(sdp);
+      BridgePointer->ConfigureUpstream(this, message);
       
     }
   }
@@ -145,8 +154,7 @@ void AC::Connector::StartSignalling(std::string IP, int Port, bool keepAlive, bo
       {
         std::cout << "I received an offer and this is the most crucial step in bridge setup!" << std::endl;
         std::string sdp = content["sdp"];
-        // implicit conversion to rtc::description
-        this->pc_->setRemoteDescription(sdp);
+
         // we MUST fail if this is not resolved as the sdp description
         // has to be SYNCHRONOUSLY valid on both ends of the bridge!
         BridgePointer->CreateTask(std::bind(&Seeker::BridgeSynchronize, BridgePointer, this, sdp, true));

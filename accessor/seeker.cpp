@@ -204,15 +204,24 @@ std::shared_ptr<AC::Connector> AC::Seeker::CreateConnection()
 
   Connection->BridgePointer = std::shared_ptr<Seeker>(this);
   Connection->ID = ++NextID;
-  this->BridgeSynchronize(Connection.get(),{{"ID",NextID},{"Demand","Port"}},false);
 
+  Connection->Upstream = std::make_shared<BridgeSocket>
+  (std::move(BridgeSocket::GetFreeSocketPort(Config["LocalAddress"])));
+  
   return Connection;
 
 }
 
 void AC::Seeker::DestroyConnection(std::shared_ptr<Connector> Connector)
 {
-  std::remove(UserByID.begin(), UserByID.end(), Connector);
+  UserByID.erase(Connector->ID);
+}
+
+void AC::Seeker::ConfigureUpstream(Connector* Instigator, const json& Answer)
+{
+  Instigator->Upstream->Address = Config["RemoteAddress"];
+  Instigator->Upstream->Port = Config["RemotePort"];
+  Instigator->Upstream->Connect();
 }
 
 void AC::Seeker::CreateTask(std::function<void(void)> Task)

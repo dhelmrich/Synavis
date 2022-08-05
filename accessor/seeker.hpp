@@ -41,6 +41,7 @@ namespace AC
     char* Reception;
     std::size_t ReceivedLength;
     BridgeSocket():Reception(new char[MAX_RTP_SIZE]){}
+    BridgeSocket(BridgeSocket&& other)=default;
     ~BridgeSocket()
     {
     
@@ -191,6 +192,8 @@ namespace AC
     virtual std::shared_ptr<Connector> CreateConnection();
     virtual void DestroyConnection(std::shared_ptr<Connector> Connector);
 
+    void ConfigureUpstream(Connector* Instigator, const json& Answer);
+
     void CreateTask(std::function<void(void)> Task);
     void BridgeSynchronize(AC::Connector* Instigator,
                            json Message, bool bFailIfNotResolved = false);
@@ -227,7 +230,7 @@ namespace AC
     
     std::condition_variable TaskAvaliable;
 
-    std::size_t NextID{0};
+    int NextID{0};
   }; 
   
 }
