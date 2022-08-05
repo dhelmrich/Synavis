@@ -6,7 +6,16 @@
 
 int AC::BridgeSocket::Peek()
 {
+return -1;
+}
 
+std::string AC::BridgeSocket::Copy()
+{
+  return std::string(Reception,ReceivedLength);
+}
+
+void AC::BridgeSocket::Send(std::variant<std::byte, std::string> message)
+{
 }
 
 AC::Seeker::Seeker()
@@ -119,7 +128,7 @@ void AC::Seeker::BridgeSynchronize(AC::Connector* Instigator,
   }
 }
 
-void AC::Seeker::BridgeSubmit(AC::Connector* Instigator, std::variant<std::byte, std::string> Message)
+void AC::Seeker::BridgeSubmit(AC::Connector* Instigator, std::variant<std::byte, std::string> Message) const
 {
   json Transmission = {{"id",Instigator->ID}};
   // we need to break this up because of json lib compatibility
@@ -212,6 +221,8 @@ std::shared_ptr<AC::Connector> AC::Seeker::CreateConnection()
 
 }
 
+// this is copied on purpose so that the reference counter should be at least 1
+// when entering this method
 void AC::Seeker::DestroyConnection(std::shared_ptr<Connector> Connector)
 {
   UserByID.erase(Connector->ID);
@@ -224,7 +235,7 @@ void AC::Seeker::ConfigureUpstream(Connector* Instigator, const json& Answer)
   Instigator->Upstream->Connect();
 }
 
-void AC::Seeker::CreateTask(std::function<void(void)> Task)
+void AC::Seeker::CreateTask(std::function<void(void)>&& Task)
 {
   std::unique_lock<std::mutex> lock(QueueAccess);
   lock.lock();

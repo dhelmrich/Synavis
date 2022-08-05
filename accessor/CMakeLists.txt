@@ -19,6 +19,7 @@ find_package( PythonInterp 3.9 REQUIRED )
 find_package( PythonLibs 3.9 REQUIRED )
 
 pybind11_add_module(PyAccessor SHARED 
+            ${ACCESSORHEADERS}
             ${ACCESSORSOURCES})
 
 add_library(${subname} 

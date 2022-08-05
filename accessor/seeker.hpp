@@ -194,10 +194,10 @@ namespace AC
 
     void ConfigureUpstream(Connector* Instigator, const json& Answer);
 
-    void CreateTask(std::function<void(void)> Task);
-    void BridgeSynchronize(AC::Connector* Instigator,
+    virtual void CreateTask(std::function<void(void)>&& Task);
+    virtual void BridgeSynchronize(AC::Connector* Instigator,
                            json Message, bool bFailIfNotResolved = false);
-    void BridgeSubmit(AC::Connector* Instigator, std::variant<std::byte, std::string> Message);
+    void BridgeSubmit(AC::Connector* Instigator, std::variant<std::byte, std::string> Message) const;
     void BridgeRun();
     void Listen();
 
