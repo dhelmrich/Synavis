@@ -17,11 +17,6 @@ int AC::BridgeSocket::Receive(bool invalidIsFailure)
 #endif
 }
 
-std::byte* AC::BridgeSocket::Package() 
-{
-  return reinterpret_cast<std::byte*>(Reception);
-}
-
 AC::ApplicationTrack::ApplicationTrack(std::shared_ptr<rtc::Track> inTrack,
       std::shared_ptr<rtc::RtcpSrReporter> inSendReporter)
       : Track(inTrack), SendReporter(inSendReporter) {}
@@ -55,7 +50,8 @@ void AC::NoBufferThread::Run()
   {
     if (Length < sizeof(rtc::RtpHeader) || !DataDestinationPtr->Open())
       continue;
-    DataDestinationPtr->Send(DataSourcePtr->Package(),Length);
+    // This is a roundabout reinterpret_cast without having to actually do one
+    DataDestinationPtr->Send(DataSourcePtr->BinaryData.data(),Length);
   }
 }
 

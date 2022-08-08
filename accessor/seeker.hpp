@@ -11,6 +11,7 @@
 #ifdef _WIN32
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <winsock2.h>
+#include <ws2tcpip.h>
 #elif __linux__
 #include <sys/socket.h>
 #include <sys/types.h> 
@@ -24,7 +25,9 @@ void error(const char *msg)
 #endif
 
 
+
 #include "accessor/export.hpp"
+#include <span>
 
 
 namespace AC
@@ -37,8 +40,12 @@ namespace AC
   {
 
     bool Valid = false;
+    bool Outgoing = false;
     std::string Address;
     char* Reception;
+    std::span<std::byte> BinaryData;
+    std::string_view StringData;
+
     std::size_t ReceivedLength;
     BridgeSocket():Reception(new char[MAX_RTP_SIZE]){}
     BridgeSocket(BridgeSocket&& other)=default;
@@ -55,7 +62,7 @@ namespace AC
     int Port;
    
 #ifdef _WIN32
-    SOCKET Sock;
+    SOCKET Sock{INVALID_SOCKET};
     sockaddr info;
     sockaddr_in Addr;
 #elif __linux__
@@ -69,19 +76,50 @@ namespace AC
     {
     #ifdef _WIN32
       int size = sizeof(Addr);
-      Sock = socket(AF_INET,SOCK_DGRAM,0);
+      // we are employing connectionless sockets for the transmission
+      // as we are using a constant udp stream that we are forwarding
+      // The important note here is that the stream is connectionless
+      // and we are doing this because we do not want any recv/rep pattern
+      // breaking the logical flow of the program
+      // the bridge itself is also never waiting for answers and as such,
+      // will use a lazy-style send/receive pattern that will will be able
+      // to parse answers without needing a strict order of things to do
+      // ...
+      // this is also why there are so many threads in this program.
+      // ...
+      // That being said, I am also not super keen on this setup, so any
+      // suggestion is always welcome.
+      Sock = socket(AF_INET,SOCK_DGRAM,IPPROTO_UDP);
       Addr.sin_addr.s_addr = inet_addr(Address.c_str());
       Addr.sin_port = htons(Port);
       Addr.sin_family = AF_INET;
       getsockname(Sock,&info,&size);
       Port = *reinterpret_cast<int*>(info.sa_data);
-      if(bind(Sock,&info,sizeof(info)) < 0)
+      if(Outgoing)
       {
-        return false;
+        if(bind(Sock,&info,sizeof(info)) == SOCKET_ERROR)
+        {
+          closesocket(Sock);
+          WSACleanup();
+          return false;
+        }
+        else
+        {
+          return true;
+        }
       }
       else
       {
-        return true;
+        if(connect(Sock,&info,sizeof(info)) == SOCKET_ERROR)
+        {
+          closesocket(Sock);
+          WSACleanup();
+          return false;
+        }
+        else
+        {
+          return true;
+        }
       }
     #elif defined __linux__
       s.Sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -101,6 +139,11 @@ namespace AC
     #endif
 
       return true;
+    }
+
+    bool Test()
+    {
+      
     }
 
     int ReadSocketFromBinding()
@@ -148,9 +191,7 @@ namespace AC
 
     int Peek();
     int Receive(bool invalidIsFailure = false);
-    std::byte* Package();
-    std::string Copy();
-    void Send(std::variant<std::byte, std::string> message);
+    void Send(std::variant<rtc::binary, std::string> message);
   };
   
   enum class ACCESSOR_EXPORT EClientMessageType
@@ -197,7 +238,7 @@ namespace AC
     virtual void CreateTask(std::function<void(void)>&& Task);
     virtual void BridgeSynchronize(AC::Connector* Instigator,
                            json Message, bool bFailIfNotResolved = false);
-    void BridgeSubmit(AC::Connector* Instigator, std::variant<std::byte, std::string> Message) const;
+    void BridgeSubmit(AC::Connector* Instigator, std::variant<rtc::binary, std::string> Message) const;
     void BridgeRun();
     void Listen();
 
@@ -218,7 +259,7 @@ namespace AC
     std::queue<std::function<void(void)>> CommInstructQueue;
     std::unique_ptr<std::thread> ListenerThread;
     std::mutex CommandAccess;
-    std::queue<std::variant<std::byte, std::string>> CommandBuffer;
+    std::queue<std::variant<rtc::binary, std::string>> CommandBuffer;
     std::condition_variable CommandAvailable;
     bool bNeedInfo{false};
 

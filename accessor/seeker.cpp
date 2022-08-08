@@ -9,13 +9,27 @@ int AC::BridgeSocket::Peek()
 return -1;
 }
 
-std::string AC::BridgeSocket::Copy()
+void AC::BridgeSocket::Send(std::variant<rtc::binary, std::string> message)
 {
-  return std::string(Reception,ReceivedLength);
-}
-
-void AC::BridgeSocket::Send(std::variant<std::byte, std::string> message)
-{
+  if(Outgoing)
+  {
+    const char* buffer;
+    int length;
+    if(std::holds_alternative<std::string>(message))
+    {
+      buffer = std::get<std::string>(message).c_str();
+      length = (int)std::get<std::string>(message).length();
+    }
+    else if (std::holds_alternative<rtc::binary>(message))
+    {
+      buffer = reinterpret_cast<const char*>(std::get<rtc::binary>(message).data());
+      length = (int)std::get<rtc::binary>(message).size();
+    }
+    if(send(Sock,buffer,length,0) == SOCKET_ERROR)
+    {
+      
+    }
+  }
 }
 
 AC::Seeker::Seeker()
@@ -67,7 +81,7 @@ bool AC::Seeker::EstablishedConnection()
       }
       try
       {
-        if(json::parse(BridgeConnection.In->Copy())["ping"] == 1)
+        if(json::parse(BridgeConnection.In->StringData)["ping"] == 1)
         {
           PingPongSuccessful = 1;
         }
@@ -107,7 +121,7 @@ void AC::Seeker::BridgeSynchronize(AC::Connector* Instigator,
     json Answer;
     try
     {
-      Answer = json::parse(BridgeConnection.In->Copy());
+      Answer = json::parse(BridgeConnection.In->StringData);
     }
     catch(std::exception e)
     {
@@ -128,7 +142,7 @@ void AC::Seeker::BridgeSynchronize(AC::Connector* Instigator,
   }
 }
 
-void AC::Seeker::BridgeSubmit(AC::Connector* Instigator, std::variant<std::byte, std::string> Message) const
+void AC::Seeker::BridgeSubmit(AC::Connector* Instigator, std::variant<rtc::binary, std::string> Message) const
 {
   json Transmission = {{"id",Instigator->ID}};
   // we need to break this up because of json lib compatibility
@@ -138,7 +152,8 @@ void AC::Seeker::BridgeSubmit(AC::Connector* Instigator, std::variant<std::byte,
   }
   else
   {
-    Transmission["data"] = std::get<std::byte>(Message);
+    std::string CopyData(reinterpret_cast<const char*>(std::get<rtc::binary>(Message).data()),std::get<rtc::binary>(Message).size());
+    Transmission["data"] = CopyData;
   }
   BridgeConnection.Out->Send(Transmission);
 }
@@ -191,11 +206,46 @@ void AC::Seeker::Listen()
 
 void AC::Seeker::FindBridge()
 {
+  
   std::unique_lock<std::mutex> lock(QueueAccess);
   lock.lock();
   CommInstructQueue.push([this]()
   {
-    
+    std::chrono::utc_time<std::chrono::system_clock::duration> localutctime;
+    localutctime = std::chrono::utc_clock::now();
+    json Offer = {{"Port",Config["LocalPort"]},
+
+    {"Session",std::format("{:%Y-%m-%d %X}",localutctime)}};
+    BridgeConnection.Out->Send(Offer.dump());
+    auto messagelength = BridgeConnection.In->Receive(true);
+    if(messagelength <= 0)
+    {
+      
+    }
+    else
+    {
+      json Answer;
+      try
+      {
+        Answer = json::parse(BridgeConnection.In->StringData);
+        std::string timecode = Answer["Session"];
+        std::chrono::utc_time<std::chrono::system_clock::duration> remoteutctime;
+        std::string format("%Y-%m-%d %X");
+        std::stringstream ss(timecode);
+        if(ss >> std::chrono::parse(format,remoteutctime))
+        {
+          // we are checking this for consistency reasons
+          if(remoteutctime > localutctime)
+          {
+            std::cout << "Found the connection successfully." << std::endl;
+          }
+        }
+      }
+      catch(...)
+      {
+        
+      }
+    }
   });
   lock.release();
 }
