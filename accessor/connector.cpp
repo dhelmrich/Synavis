@@ -136,7 +136,19 @@ void AC::Connector::OnBridgeInformation(json message)
       std::string sdp = message["sdp"];
       rtc::Description desc(sdp);
       Bridge->ConfigureUpstream(this, message);
-      
+      for(unsigned i = 0; i < desc.mediaCount(); ++i)
+      {
+        auto medium = desc.media(i);
+        if(std::holds_alternative<rtc::Description::Media*>(medium))
+        {
+          auto metadata = std::get<rtc::Description::Media*>(medium);
+          // Here we parse the information that is coming from the bridge
+          // and we are also setting up our tracks in this manner.
+          // we are doing a full init work in this fashion!
+          // as this is in the bridge thread, we should probably do it kind of quick
+          // However, the bridge waits here anyways.
+        }
+      }
     }
   }
 }

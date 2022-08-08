@@ -283,6 +283,7 @@ void AC::Seeker::ConfigureUpstream(Connector* Instigator, const json& Answer)
   Instigator->Upstream->Address = Config["RemoteAddress"];
   Instigator->Upstream->Port = Config["RemotePort"];
   Instigator->Upstream->Connect();
+
 }
 
 void AC::Seeker::CreateTask(std::function<void(void)>&& Task)
@@ -327,7 +328,8 @@ void AC::Seeker::StartSignalling(std::string IP, int Port, bool keepAlive, bool 
         // including the CREATION of the connection, as its initialization
         // depends on what we are hearing back from unreal in terms of
         // payloads and ssrc info
-        CreateTask(std::bind(&Seeker::BridgeSynchronize, Bridge, this, sdp, true));
+        auto NewConnection = CreateConnection();
+        CreateTask(std::bind(&Seeker::BridgeSynchronize, this, NewConnection.get(), sdp, true));
         
       }
     }
