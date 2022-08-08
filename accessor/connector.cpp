@@ -17,15 +17,22 @@ int AC::BridgeSocket::Receive(bool invalidIsFailure)
 #endif
 }
 
-AC::ApplicationTrack::ApplicationTrack(std::shared_ptr<rtc::Track> inTrack,
-      std::shared_ptr<rtc::RtcpSrReporter> inSendReporter)
-      : Track(inTrack), SendReporter(inSendReporter) {}
-
+AC::ApplicationTrack::ApplicationTrack(std::shared_ptr<rtc::Track> inTrack)
+      : Track(inTrack) {}
+      
 void AC::ApplicationTrack::Send(std::byte* Data, unsigned Length)
 {
   auto rtp = reinterpret_cast<rtc::RtpHeader*>(Data);
-  rtp->setSsrc(ssrc_);
+  rtp->setSsrc(SSRC);
   Track->send(Data, Length);
+}
+
+void AC::ApplicationTrack::ConfigureOutput(std::shared_ptr<rtc::RtcpSrReporter> inReporter)
+{
+}
+
+void AC::ApplicationTrack::ConfigureIn()
+{
 }
 
 bool AC::ApplicationTrack::Open()
@@ -80,7 +87,32 @@ void AC::Connector::SetupApplicationConnection()
 				std::cout << message << std::endl;
 			}
   });
+  pc_->onTrack([this](auto track)
+  {
+  });
+  pc_->onDataChannel([this](auto channel)
+  {
+    DataFromApplication = channel;
+    // this is a submit function that is expedient if we are
+    // trying to avoid having output sockets on the receiving end
+    // and then collect commands through the bridge instead
+    // of having another socket here. It might actually be quite nice
+    // TODO review or open socket here
+    DataFromApplication->onMessage([this](auto message){
+      Bridge->BridgeSubmit(this,message);
+    });
+  });
 
+  // at this point we need the answer from the bridge, potentially, before we set anything up!
+  // TODO review the connection graph at this point
+
+  rtc::Description::Video V2A("video",rtc::Description::Direction::SendOnly);
+  V2A.addH264Codec(96);
+  V2A.addSSRC(ApplicationTrack::SSRC,"video-send");
+  VideoToApplication = std::make_shared<ApplicationTrack>(pc_->addTrack(V2A));
+
+  rtc::Description::Audio A2A("audio", rtc::Description::Direction::SendOnly);
+  
 }
 
 void AC::Connector::AwaitSignalling()
@@ -103,7 +135,7 @@ void AC::Connector::OnBridgeInformation(json message)
     {
       std::string sdp = message["sdp"];
       rtc::Description desc(sdp);
-      BridgePointer->ConfigureUpstream(this, message);
+      Bridge->ConfigureUpstream(this, message);
       
     }
   }
@@ -124,44 +156,6 @@ AC::Connector::~Connector()
 {
 }
 
-void AC::Connector::StartSignalling(std::string IP, int Port, bool keepAlive, bool useAuthentification)
-{
-  SignallingConnection = std::make_shared<rtc::WebSocket>();
-  std::promise<void> RunGuard;
-  auto Notifier = RunGuard.get_future();
-  SignallingConnection->onOpen([this, &RunGuard]()
-  {
-    
-  });
-  SignallingConnection->onClosed([this, &RunGuard](){});
-  SignallingConnection->onError([this, &RunGuard](auto error){});
-  SignallingConnection->onMessage([
-    this,
-    &RunGuard,
-    TentativeConnection = std::weak_ptr<rtc::WebSocket>(SignallingConnection)
-  ](auto message)
-  {
-    // without the rtc library types the compiler will get confused as to what this is
-    // they types are essentially std::bytes and std::string.
-    if(std::holds_alternative<rtc::string>(message))
-    {
-      json content = json::parse(std::get<rtc::string>(message));
-      if(content["type"] == "offer")
-      {
-        std::cout << "I received an offer and this is the most crucial step in bridge setup!" << std::endl;
-        std::string sdp = content["sdp"];
-
-        // we MUST fail if this is not resolved as the sdp description
-        // has to be SYNCHRONOUSLY valid on both ends of the bridge!
-        BridgePointer->CreateTask(std::bind(&Seeker::BridgeSynchronize, BridgePointer, this, sdp, true));
-        auto desc = pc_->localDescription();
-        
-      }
-    }
-  });
-  std::cout << "Waiting for Signalling Websocket to Connect." << std::endl;
-  Notifier.wait();
-}
 
 void AC::Connector::StartFrameReception()
 {

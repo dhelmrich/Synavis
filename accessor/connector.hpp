@@ -17,13 +17,14 @@ namespace AC
   class ApplicationTrack
   {
   public:
-    ApplicationTrack(std::shared_ptr<rtc::Track> inTrack,
-      std::shared_ptr<rtc::RtcpSrReporter> inSendReporter);
+    const static rtc::SSRC SSRC = 42;
+    ApplicationTrack(std::shared_ptr<rtc::Track> inTrack);
+    void ConfigureOutput(std::shared_ptr<rtc::RtcpSrReporter> inReporter);
+    void ConfigureIn();
     std::shared_ptr<rtc::Track> Track;
     std::shared_ptr<rtc::RtcpSrReporter> SendReporter;
     rtc::Description::Video video_{"video",
       rtc::Description::Direction::SendOnly};
-    const rtc::SSRC ssrc_ = 42;
     void Send(std::byte* Data, unsigned int Length);
     bool Open();
   };
@@ -85,22 +86,19 @@ namespace AC
     // Bridge Pointer is also Shared, which means that
     // the Seeker class has to resolve the object destruction of
     // connections, which is intended anyways.
-    std::shared_ptr<class Seeker> BridgePointer;
+    std::shared_ptr<class Seeker> Bridge;
     std::shared_ptr<BridgeSocket> Upstream;
     std::shared_ptr<BridgeSocket> Downstream;
-
-    // Signalling Server
-    std::shared_ptr<rtc::WebSocket> SignallingConnection;
 
     // WebRTC Connectivity
     std::optional<std::shared_ptr<rtc::PeerConnection>> ApplicationConnection;
     std::optional<NoBufferThread> TransmissionThread;
 
     // Data streams to Application
-    std::optional<std::shared_ptr<ApplicationTrack>> VideoToApplication;
-    std::optional<std::shared_ptr<ApplicationTrack>> AudioToApplication;
-    std::optional<std::shared_ptr<rtc::DataChannel>> DataToApplication;
-    std::optional<std::shared_ptr<rtc::DataChannel>> DataFromApplication;
+    std::shared_ptr<ApplicationTrack> VideoToApplication;
+    std::shared_ptr<ApplicationTrack> AudioToApplication;
+    std::shared_ptr<rtc::DataChannel> DataToApplication;
+    std::shared_ptr<rtc::DataChannel> DataFromApplication;
 
   protected:
     Connector();

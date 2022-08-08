@@ -261,7 +261,7 @@ std::shared_ptr<AC::Connector> AC::Seeker::CreateConnection()
   auto t = std::make_shared<Wrap>();
   std::shared_ptr<AC::Connector> Connection{std::move(t),&t->cont };
 
-  Connection->BridgePointer = std::shared_ptr<Seeker>(this);
+  Connection->Bridge = std::shared_ptr<Seeker>(this);
   Connection->ID = ++NextID;
 
   Connection->Upstream = std::make_shared<BridgeSocket>
@@ -293,4 +293,46 @@ void AC::Seeker::CreateTask(std::function<void(void)>&& Task)
   lock.unlock();
 }
 
+
+void AC::Seeker::StartSignalling(std::string IP, int Port, bool keepAlive, bool useAuthentification)
+{
+  SignallingConnection = std::make_shared<rtc::WebSocket>();
+  std::promise<void> RunGuard;
+  auto Notifier = RunGuard.get_future();
+  SignallingConnection->onOpen([this, &RunGuard]()
+  {
+    
+  });
+  SignallingConnection->onClosed([this, &RunGuard](){});
+  SignallingConnection->onError([this, &RunGuard](auto error){});
+  SignallingConnection->onMessage([
+    this,
+    &RunGuard,
+    TentativeConnection = std::weak_ptr<rtc::WebSocket>(SignallingConnection)
+  ](auto message)
+  {
+    // without the rtc library types the compiler will get confused as to what this is
+    // they types are essentially std::bytes and std::string.
+    if(std::holds_alternative<rtc::string>(message))
+    {
+      json content = json::parse(std::get<rtc::string>(message));
+      if(content["type"] == "offer")
+      {
+        std::cout << "I received an offer and this is the most crucial step in bridge setup!" << std::endl;
+        std::string sdp = content["sdp"];
+
+        // we MUST fail if this is not resolved as the sdp description
+        // has to be SYNCHRONOUSLY valid on both ends of the bridge!
+        // Additionally, we must process the answer before anything else happens
+        // including the CREATION of the connection, as its initialization
+        // depends on what we are hearing back from unreal in terms of
+        // payloads and ssrc info
+        CreateTask(std::bind(&Seeker::BridgeSynchronize, Bridge, this, sdp, true));
+        
+      }
+    }
+  });
+  std::cout << "Waiting for Signalling Websocket to Connect." << std::endl;
+  Notifier.wait();
+}
 

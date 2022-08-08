@@ -72,6 +72,10 @@ namespace AC
     int n;
 #endif
 
+    // this method connects the Socket to its respective output or input
+    // in the input case, the address should be set to the remote end
+    // it will automatically call either bind or connect
+    // remember that this class is connectionless
     bool Connect()
     {
     #ifdef _WIN32
@@ -224,7 +228,10 @@ namespace AC
     using json = nlohmann::json;
     Seeker();
     ~Seeker();
+
+    // This methods checks whether the SigServ is reachable
     virtual bool CheckSignallingActive();
+
     virtual void UseConfig(std::string filename);
     virtual bool EstablishedConnection();
     virtual void FindBridge();
@@ -241,6 +248,8 @@ namespace AC
     void BridgeSubmit(AC::Connector* Instigator, std::variant<rtc::binary, std::string> Message) const;
     void BridgeRun();
     void Listen();
+
+    virtual void StartSignalling(std::string IP, int Port, bool keepAlive = true, bool useAuthentification = false);
 
   protected:
 
@@ -262,6 +271,9 @@ namespace AC
     std::queue<std::variant<rtc::binary, std::string>> CommandBuffer;
     std::condition_variable CommandAvailable;
     bool bNeedInfo{false};
+
+    // Signalling Server
+    std::shared_ptr<rtc::WebSocket> SignallingConnection;
 
     struct
     {
