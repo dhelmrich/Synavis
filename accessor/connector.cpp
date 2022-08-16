@@ -119,7 +119,7 @@ void AC::Connector::AwaitSignalling()
 {
 }
 
-void AC::Connector::OnBridgeInformation(json message)
+void AC::Connector::OnInformation(json message)
 {
   if (message.find("type") != message.end())
   {

@@ -138,7 +138,7 @@ void AC::Seeker::BridgeSynchronize(AC::Connector* Instigator,
         throw std::exception("An unexpected error occured while parsing the Bridge response");
       }
     }
-    Instigator->OnBridgeInformation(Answer);
+    Instigator->OnInformation(Answer);
   }
 }
 
@@ -196,7 +196,7 @@ void AC::Seeker::Listen()
       auto message = json::parse(this->BridgeConnection.In->Reception);
       std::string type = message["type"];
       auto app_id = message["id"].get<int>();
-      UserByID[app_id]->OnBridgeInformation(message);
+      UserByID[app_id]->OnInformation(message);
     } catch( ... )
     {
       
@@ -253,6 +253,7 @@ void AC::Seeker::FindBridge()
 void AC::Seeker::RecoverConnection()
 {
 }
+
 
 std::shared_ptr<AC::Connector> AC::Seeker::CreateConnection()
 {
@@ -317,6 +318,12 @@ void AC::Seeker::StartSignalling(std::string IP, int Port, bool keepAlive, bool 
     if(std::holds_alternative<rtc::string>(message))
     {
       json content = json::parse(std::get<rtc::string>(message));
+      int ID;
+      if(!FindID(content,ID))
+      {
+        std::cout << "From onMessage SignallingServer Thread: Could not identify player id from input, discarding this message." << std::endl;
+
+      }
       if(content["type"] == "offer")
       {
         std::cout << "I received an offer and this is the most crucial step in bridge setup!" << std::endl;
@@ -330,8 +337,21 @@ void AC::Seeker::StartSignalling(std::string IP, int Port, bool keepAlive, bool 
         // payloads and ssrc info
         auto NewConnection = CreateConnection();
         CreateTask(std::bind(&Seeker::BridgeSynchronize, this, NewConnection.get(), sdp, true));
-        
       }
+      else if(content["type"] == "iceCandidate")
+      {
+        std::shared_ptr<Connector> Connector;
+        try
+        {
+        Connector = UserByID[ID];
+        }
+        catch( ... )
+        {
+          std::cout << "From onMessage SS thread: Could not find connector for ice candidate." << std::endl;
+        }
+        Connector->OnInformation(content);
+      }
+
     }
   });
   std::cout << "Waiting for Signalling Websocket to Connect." << std::endl;

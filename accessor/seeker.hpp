@@ -237,6 +237,23 @@ namespace AC
     virtual void FindBridge();
     virtual void RecoverConnection();
 
+    inline bool FindID(const json& Jason, int& ID)
+    {
+      decltype(Jason.begin()) id_entry;
+      for(auto it = Jason.begin(); it != Jason.end(); ++it)
+      {
+        for(auto name : {"id", "player_id", "app_id"})
+        {
+          if(id_entry.key() == name && id_entry.value().is_number_integer())
+          {
+            ID = id_entry.value().get<int>();
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
     virtual std::shared_ptr<Connector> CreateConnection();
     virtual void DestroyConnection(std::shared_ptr<Connector> Connector);
 

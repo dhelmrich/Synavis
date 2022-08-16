@@ -77,7 +77,7 @@ namespace AC
     void SetupApplicationConnection();
     void AwaitSignalling();
 
-    void OnBridgeInformation(json message);
+    void OnInformation(json message);
 
     std::string PushSDP(std::string);
 
