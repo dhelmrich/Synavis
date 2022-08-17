@@ -14,6 +14,8 @@ set(APLAINSOURCES ${ACCESSORSOURCES})
 list(FILTER APLAINSOURCES EXCLUDE REGEX ".*PyAccessor.cpp$")
 
 find_package(OpenMP)
+find_library(bridge REQUIRED)
+
 set(PYBIND11_PYTHON_VERSION 3.9)
 find_package( PythonInterp 3.9 REQUIRED )
 find_package( PythonLibs 3.9 REQUIRED )
@@ -35,6 +37,7 @@ target_include_directories(${subname}
   PUBLIC ${CMAKE_CURRENT_BINARY_DIR}
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/include
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/deps/json/single_include/nlohmann/
+  ${CMAKE_SOURCE_DIR}/Bridge
 )
 target_include_directories(${pysubname}
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
@@ -42,15 +45,16 @@ target_include_directories(${pysubname}
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/include
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/deps/json/single_include/nlohmann/
   ${CMAKE_BINARY_DIR}/_deps/pybind11-src/include
+  ${CMAKE_SOURCE_DIR}/Bridge
   ${PYTHON_INCLUDE_DIRS}
 )
 
-target_link_libraries(${subname} PRIVATE datachannel-static nlohmann_json::nlohmann_json )
+target_link_libraries(${subname} PRIVATE datachannel-static nlohmann_json::nlohmann_json Bridge )
 if(OpenMP_CXX_FOUND)
     target_link_libraries(${subname} PUBLIC OpenMP::OpenMP_CXX)
     target_link_libraries(${pysubname} PUBLIC OpenMP::OpenMP_CXX)
 endif()
-target_link_libraries(${pysubname} PRIVATE datachannel-static nlohmann_json::nlohmann_json ${PYTHON_LIBRARIES})
+target_link_libraries(${pysubname} PRIVATE datachannel-static nlohmann_json::nlohmann_json Bridge ${PYTHON_LIBRARIES})
 set_target_properties(${pysubname} PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/)
 
 generate_export_header(${subname}

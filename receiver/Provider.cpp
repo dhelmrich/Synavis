@@ -1,22 +1,25 @@
-#include <rtc/rtc.hpp>
-#include <json.hpp>
+#include "Provider.h"
 
-
-#include "UnrealReceiver/export.hpp"
-
-namespace UR
+void UR::Provider::ConnectToSignalling(std::string IP, int Port, bool keepAlive, bool useAuthentification)
 {
+}
 
-  class UnrealReceiver;
-  class UNREALRECEIVER_EXPORT Provider
-  {
-    using json = nlohmann::json;
-    virtual void ConnectToSignalling(std::string IP, int Port, bool keepAlive = true, bool useAuthentification = false);
-    virtual void CreateTask(std::function<void(void)>&& Task);
-    virtual void BridgeSynchronize(UR::UnrealReceiver* Instigator,
-                           json Message, bool bFailIfNotResolved = false);
-    void BridgeSubmit(UR::UnrealReceiver* Instigator, std::variant<rtc::binary, std::string> Message) const;
-    void BridgeRun();
-    void Listen();
-  };
+void UR::Provider::CreateTask(std::function<void()>&& Task)
+{
+}
+
+void UR::Provider::BridgeSynchronize(UR::UnrealReceiver* Instigator, json Message, bool bFailIfNotResolved)
+{
+}
+
+void UR::Provider::BridgeSubmit(UR::UnrealReceiver* Instigator, std::variant<rtc::binary, std::string> Message) const
+{
+}
+
+void UR::Provider::BridgeRun()
+{
+}
+
+void UR::Provider::Listen()
+{
 }

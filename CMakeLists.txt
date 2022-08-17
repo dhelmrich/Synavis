@@ -51,6 +51,7 @@ if(NOT pybind11_POPULATED)
     add_subdirectory(${pybind11_SOURCE_DIR} ${pybind11_BINARY_DIR})
 endif()
 
+add_subdirectory(unrealbridge)
 add_subdirectory(receiver)
 add_subdirectory(externtest)
 add_subdirectory(accessor)
