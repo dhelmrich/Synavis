@@ -4,12 +4,12 @@
 
 #include "connector.hpp"
 
-int AC::BridgeSocket::Peek()
+int WebRTCBridge::BridgeSocket::Peek()
 {
 return -1;
 }
 
-void AC::BridgeSocket::Send(std::variant<rtc::binary, std::string> message)
+void WebRTCBridge::BridgeSocket::Send(std::variant<rtc::binary, std::string> message)
 {
   if(Outgoing)
   {
@@ -32,33 +32,25 @@ void AC::BridgeSocket::Send(std::variant<rtc::binary, std::string> message)
   }
 }
 
-AC::Seeker::Seeker()
+WebRTCBridge::Seeker::Seeker()
 {
   BridgeThread = std::make_unique<std::thread>(&Seeker::BridgeRun,this);
   ListenerThread = std::make_unique<std::thread>(&Seeker::Listen, this);
 }
 
-AC::Seeker::~Seeker()
+WebRTCBridge::Seeker::~Seeker()
 {
   
 }
 
-bool AC::Seeker::CheckSignallingActive()
+bool WebRTCBridge::Seeker::CheckSignallingActive()
 {
   return false;
 }
 
-void AC::Seeker::UseConfig(std::string filename)
-{
-  std::ifstream file(filename);
-  auto fileConfig = json::parse(file);
-  bool complete = true;
-  for(auto key : Config)
-    if(fileConfig.find(key) == fileConfig.end())
-      complete = false;
-}
 
-bool AC::Seeker::EstablishedConnection()
+
+bool WebRTCBridge::Seeker::EstablishedConnection()
 {
   BridgeConnection.In = std::make_shared<BridgeSocket>();
   BridgeConnection.Out = std::make_shared<BridgeSocket>();
@@ -100,7 +92,7 @@ bool AC::Seeker::EstablishedConnection()
   }
 }
 
-void AC::Seeker::BridgeSynchronize(AC::Connector* Instigator,
+void WebRTCBridge::Seeker::BridgeSynchronize(WebRTCBridge::Connector* Instigator,
                                    json Message, bool bFailIfNotResolved)
 {
   Message["id"] = Instigator->ID;
@@ -142,7 +134,7 @@ void AC::Seeker::BridgeSynchronize(AC::Connector* Instigator,
   }
 }
 
-void AC::Seeker::BridgeSubmit(AC::Connector* Instigator, std::variant<rtc::binary, std::string> Message) const
+void WebRTCBridge::Seeker::BridgeSubmit(WebRTCBridge::Connector* Instigator, std::variant<rtc::binary, std::string> Message) const
 {
   json Transmission = {{"id",Instigator->ID}};
   // we need to break this up because of json lib compatibility
@@ -158,7 +150,7 @@ void AC::Seeker::BridgeSubmit(AC::Connector* Instigator, std::variant<rtc::binar
   BridgeConnection.Out->Send(Transmission);
 }
 
-void AC::Seeker::BridgeRun()
+void WebRTCBridge::Seeker::BridgeRun()
 {
   std::unique_lock<std::mutex> lock(QueueAccess);
   while(true)
@@ -179,7 +171,7 @@ void AC::Seeker::BridgeRun()
   }
 }
 
-void AC::Seeker::Listen()
+void WebRTCBridge::Seeker::Listen()
 {
   std::unique_lock<std::mutex> lock(CommandAccess);
   while(true)
@@ -204,7 +196,7 @@ void AC::Seeker::Listen()
   }
 }
 
-void AC::Seeker::FindBridge()
+void WebRTCBridge::Seeker::FindBridge()
 {
   
   std::unique_lock<std::mutex> lock(QueueAccess);
@@ -250,17 +242,17 @@ void AC::Seeker::FindBridge()
   lock.release();
 }
 
-void AC::Seeker::RecoverConnection()
+void WebRTCBridge::Seeker::RecoverConnection()
 {
 }
 
 
-std::shared_ptr<AC::Connector> AC::Seeker::CreateConnection()
+std::shared_ptr<WebRTCBridge::Connector> WebRTCBridge::Seeker::CreateConnection()
 {
   // structural wrapper to forego the need to create a fractured shared pointer
-  struct Wrap { Wrap() :cont(AC::Connector()) {} AC::Connector cont; };
+  struct Wrap { Wrap() :cont(WebRTCBridge::Connector()) {} WebRTCBridge::Connector cont; };
   auto t = std::make_shared<Wrap>();
-  std::shared_ptr<AC::Connector> Connection{std::move(t),&t->cont };
+  std::shared_ptr<WebRTCBridge::Connector> Connection{std::move(t),&t->cont };
 
   Connection->Bridge = std::shared_ptr<Seeker>(this);
   Connection->ID = ++NextID;
@@ -274,12 +266,12 @@ std::shared_ptr<AC::Connector> AC::Seeker::CreateConnection()
 
 // this is copied on purpose so that the reference counter should be at least 1
 // when entering this method
-void AC::Seeker::DestroyConnection(std::shared_ptr<Connector> Connector)
+void WebRTCBridge::Seeker::DestroyConnection(std::shared_ptr<Connector> Connector)
 {
   UserByID.erase(Connector->ID);
 }
 
-void AC::Seeker::ConfigureUpstream(Connector* Instigator, const json& Answer)
+void WebRTCBridge::Seeker::ConfigureUpstream(Connector* Instigator, const json& Answer)
 {
   Instigator->Upstream->Address = Config["RemoteAddress"];
   Instigator->Upstream->Port = Config["RemotePort"];
@@ -287,7 +279,7 @@ void AC::Seeker::ConfigureUpstream(Connector* Instigator, const json& Answer)
 
 }
 
-void AC::Seeker::CreateTask(std::function<void(void)>&& Task)
+void WebRTCBridge::Seeker::CreateTask(std::function<void(void)>&& Task)
 {
   std::unique_lock<std::mutex> lock(QueueAccess);
   lock.lock();
@@ -296,7 +288,7 @@ void AC::Seeker::CreateTask(std::function<void(void)>&& Task)
 }
 
 
-void AC::Seeker::StartSignalling(std::string IP, int Port, bool keepAlive, bool useAuthentification)
+void WebRTCBridge::Seeker::StartSignalling(std::string IP, int Port, bool keepAlive, bool useAuthentification)
 {
   SignallingConnection = std::make_shared<rtc::WebSocket>();
   std::promise<void> RunGuard;

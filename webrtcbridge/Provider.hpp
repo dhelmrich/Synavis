@@ -1,23 +1,27 @@
+#pragma once
 #include <rtc/rtc.hpp>
 #include <json.hpp>
 
+#include "UnrealReceiver.hpp"
+#include "WebRTCBridge/export.hpp"
 
-#include "UnrealReceiver/export.hpp"
-
-namespace UR
+namespace WebRTCBridge
 {
 
   class UnrealReceiver;
-  class UNREALRECEIVER_EXPORT Provider
+
+
+  class WEBRTCBRIDGE_EXPORT Provider
   {
     using json = nlohmann::json;
     virtual void ConnectToSignalling(std::string IP, int Port, bool keepAlive = true, bool useAuthentification = false);
     virtual void CreateTask(std::function<void(void)>&& Task);
-    virtual void BridgeSynchronize(UR::UnrealReceiver* Instigator,
+    virtual void BridgeSynchronize(WebRTCBridge::UnrealReceiver* Instigator,
                            json Message, bool bFailIfNotResolved = false);
-    void BridgeSubmit(UR::UnrealReceiver* Instigator, std::variant<rtc::binary, std::string> Message) const;
+    void BridgeSubmit(WebRTCBridge::UnrealReceiver* Instigator, std::variant<rtc::binary, std::string> Message) const;
     void BridgeRun();
     void Listen();
+    void FindBridge();
   protected:
     json Config{
       {

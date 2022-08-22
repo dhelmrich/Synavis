@@ -8,71 +8,19 @@
 #elif __linux__
 #endif
 
-int AC::BridgeSocket::Receive(bool invalidIsFailure)
-{
-#ifdef _WIN32
-  return 0;
-#elif __linux__
-  return 0;
-#endif
-}
 
-AC::ApplicationTrack::ApplicationTrack(std::shared_ptr<rtc::Track> inTrack)
-      : Track(inTrack) {}
-      
-void AC::ApplicationTrack::Send(std::byte* Data, unsigned Length)
-{
-  auto rtp = reinterpret_cast<rtc::RtpHeader*>(Data);
-  rtp->setSsrc(SSRC);
-  Track->send(Data, Length);
-}
 
-void AC::ApplicationTrack::ConfigureOutput(std::shared_ptr<rtc::RtcpSrReporter> inReporter)
-{
-}
-
-void AC::ApplicationTrack::ConfigureIn()
-{
-}
-
-bool AC::ApplicationTrack::Open()
-{
-  return Track->isOpen();
-}
-
-AC::NoBufferThread::NoBufferThread(std::weak_ptr<ApplicationTrack> inDataDestination,
-                                   std::weak_ptr<BridgeSocket> inDataSource)
-    : DataDestination(inDataDestination), DataSource(inDataSource)
-{
-  Thread = std::make_unique<std::thread>(&AC::NoBufferThread::Run,this);
-}
-
-void AC::NoBufferThread::Run()
-{
-  // Consume buffer until close (this should never be empty but we never know)
-  auto DataDestinationPtr = DataDestination.lock();
-  auto DataSourcePtr = DataSource.lock();
-  int Length;
-  while((Length = DataSourcePtr->Receive()) > 0)
-  {
-    if (Length < sizeof(rtc::RtpHeader) || !DataDestinationPtr->Open())
-      continue;
-    // This is a roundabout reinterpret_cast without having to actually do one
-    DataDestinationPtr->Send(DataSourcePtr->BinaryData.data(),Length);
-  }
-}
-
-std::string AC::Connector::GetConnectionString()
+std::string WebRTCBridge::Connector::GetConnectionString()
 {
   return std::string();
 }
 
-std::string AC::Connector::GenerateSDP()
+std::string WebRTCBridge::Connector::GenerateSDP()
 {
   return std::string();
 }
 
-void AC::Connector::SetupApplicationConnection()
+void WebRTCBridge::Connector::SetupApplicationConnection()
 {
   pc_ = std::make_shared<rtc::PeerConnection>();
   pc_->onStateChange([this](rtc::PeerConnection::State inState)
@@ -115,11 +63,11 @@ void AC::Connector::SetupApplicationConnection()
   
 }
 
-void AC::Connector::AwaitSignalling()
+void WebRTCBridge::Connector::AwaitSignalling()
 {
 }
 
-void AC::Connector::OnInformation(json message)
+void WebRTCBridge::Connector::OnInformation(json message)
 {
   if (message.find("type") != message.end())
   {
@@ -153,22 +101,22 @@ void AC::Connector::OnInformation(json message)
   }
 }
 
-std::string AC::Connector::PushSDP(std::string)
+std::string WebRTCBridge::Connector::PushSDP(std::string)
 {
   return std::string();
 }
 
 
-AC::Connector::Connector()
+WebRTCBridge::Connector::Connector()
 {
 
 }
 
-AC::Connector::~Connector()
+WebRTCBridge::Connector::~Connector()
 {
 }
 
 
-void AC::Connector::StartFrameReception()
+void WebRTCBridge::Connector::StartFrameReception()
 {
 }

@@ -6,35 +6,11 @@
 #include <fstream>
 #include <compare>
 #include <functional>
-#include "UnrealReceiver/export.hpp"
+#include "WebRTCBridge/export.hpp"
 
-namespace UR
+namespace WebRTCBridge
 {
-
-enum class UNREALRECEIVER_EXPORT EConnectionState
-{
-  STARTUP = 0,
-  SIGNUP,
-  OFFERED,
-  CONNECTED,
-  VIDEO,
-  CLOSED,
-  RTCERROR,
-};
-
-enum class UNREALRECEIVER_EXPORT EClientMessageType
-{
-	QualityControlOwnership = 0u,
-	Response,
-	Command,
-	FreezeFrame,
-	UnfreezeFrame,
-	VideoEncoderAvgQP,
-	LatencyTest,
-	InitialSettings,
-};
-
-struct UNREALRECEIVER_EXPORT SaveRTP
+struct WEBRTCBRIDGE_EXPORT SaveRTP
 {
   uint32_t timestamp{0};
   uint32_t ssrc{0};

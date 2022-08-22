@@ -9,44 +9,14 @@
 #include <thread>
 
 
-#include "accessor/export.hpp"
+#include "WebRTCBridge/export.hpp"
 #include "seeker.hpp"
 
-namespace AC
+namespace WebRTCBridge
 {
-  class ApplicationTrack
-  {
-  public:
-    const static rtc::SSRC SSRC = 42;
-    ApplicationTrack(std::shared_ptr<rtc::Track> inTrack);
-    void ConfigureOutput(std::shared_ptr<rtc::RtcpSrReporter> inReporter);
-    void ConfigureIn();
-    std::shared_ptr<rtc::Track> Track;
-    std::shared_ptr<rtc::RtcpSrReporter> SendReporter;
-    rtc::Description::Video video_{"video",
-      rtc::Description::Direction::SendOnly};
-    void Send(std::byte* Data, unsigned int Length);
-    bool Open();
-  };
-
-  class NoBufferThread
-  {
-  public:
-    const int ReceptionSize = 208 * 1024;
-    NoBufferThread(std::weak_ptr<ApplicationTrack> inDataDestination,
-      std::weak_ptr<BridgeSocket> inDataSource);
-    void Run();
-  private:
-    std::unique_ptr<std::thread> Thread;
-    std::tuple<
-      std::weak_ptr<ApplicationTrack>,
-      std::weak_ptr<ApplicationTrack>,
-      std::weak_ptr<ApplicationTrack>
-    > WebRTCTracks;
-    std::weak_ptr<ApplicationTrack> DataDestination;
-    std::weak_ptr<BridgeSocket> DataSource;
-  };
-
+  class BridgeSocket;
+  class NoBufferThread;
+  class ApplicationTrack;
   /*!
    * @class Connector
    * A class to connect the application-side to the Unreal server-side bridge
@@ -54,7 +24,7 @@ namespace AC
    * Previoud knowledge about IP environment needed
    *
    */
-  class ACCESSOR_EXPORT Connector
+  class WEBRTCBRIDGE_EXPORT Connector
   {
     friend class Seeker;
   public:

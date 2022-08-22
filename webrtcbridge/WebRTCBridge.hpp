@@ -1,10 +1,10 @@
-#pragma once 
-#include "rtc/rtc.hpp"
+#pragma once
 #include <json.hpp>
-#include <vector>
-#include <fstream>
-#include <compare>
-#include <functional>
+#include <variant>
+#include <rtc/rtc.hpp>
+#include "WebRTCBridge/export.hpp"
+
+
 
 #define MAX_RTP_SIZE 208 * 1024
 
@@ -25,18 +25,14 @@ void error(const char *msg)
 #endif
 
 
-
-#include "accessor/export.hpp"
-#include <span>
-
-
-namespace AC
+namespace WebRTCBridge
 {
+  
 
   // forward definitions
-  class Connector;
+  class Adapter;
 
-  struct ACCESSOR_EXPORT BridgeSocket
+  struct WEBRTCBRIDGE_EXPORT BridgeSocket
   {
 
     bool Valid = false;
@@ -221,21 +217,51 @@ namespace AC
     RTCERROR,
   };
 
-
-  class ACCESSOR_EXPORT Seeker: std::enable_shared_from_this<Seeker>
+  class ApplicationTrack
   {
   public:
+    const static rtc::SSRC SSRC = 42;
+    ApplicationTrack(std::shared_ptr<rtc::Track> inTrack);
+    void ConfigureOutput(std::shared_ptr<rtc::RtcpSrReporter> inReporter);
+    void ConfigureIn();
+    std::shared_ptr<rtc::Track> Track;
+    std::shared_ptr<rtc::RtcpSrReporter> SendReporter;
+    rtc::Description::Video video_{"video",
+      rtc::Description::Direction::SendOnly};
+    void Send(std::byte* Data, unsigned int Length);
+    bool Open();
+  };
+
+  class NoBufferThread
+  {
+  public:
+    const int ReceptionSize = 208 * 1024;
+    NoBufferThread(std::weak_ptr<ApplicationTrack> inDataDestination,
+      std::weak_ptr<BridgeSocket> inDataSource);
+    void Run();
+  private:
+    std::unique_ptr<std::thread> Thread;
+    std::tuple<
+      std::weak_ptr<ApplicationTrack>,
+      std::weak_ptr<ApplicationTrack>,
+      std::weak_ptr<ApplicationTrack>
+    > WebRTCTracks;
+    std::weak_ptr<ApplicationTrack> DataDestination;
+    std::weak_ptr<BridgeSocket> DataSource;
+  };
+
+  class WEBRTCBRIDGE_EXPORT Bridge
+  {
+  public:
+    void UseConfig(std::string filename);
     using json = nlohmann::json;
-    Seeker();
-    ~Seeker();
-
-    // This methods checks whether the SigServ is reachable
+    virtual void BridgeSynchronize(Adapter* Instigator,
+                                   nlohmann::json Message, bool bFailIfNotResolved = false);
+    void CreateTask(std::function<void(void)>&& Task);
+    void BridgeSubmit(Adapter* Instigator, std::variant<rtc::binary, std::string> Message) const;
+    virtual void BridgeRun();
+    virtual void Listen();
     virtual bool CheckSignallingActive();
-
-    virtual void UseConfig(std::string filename);
-    virtual bool EstablishedConnection();
-    virtual void FindBridge();
-    virtual void RecoverConnection();
 
     inline bool FindID(const json& Jason, int& ID)
     {
@@ -254,20 +280,6 @@ namespace AC
       return false;
     }
 
-    virtual std::shared_ptr<Connector> CreateConnection();
-    virtual void DestroyConnection(std::shared_ptr<Connector> Connector);
-
-    void ConfigureUpstream(Connector* Instigator, const json& Answer);
-
-    virtual void CreateTask(std::function<void(void)>&& Task);
-    virtual void BridgeSynchronize(AC::Connector* Instigator,
-                           json Message, bool bFailIfNotResolved = false);
-    void BridgeSubmit(AC::Connector* Instigator, std::variant<rtc::binary, std::string> Message) const;
-    void BridgeRun();
-    void Listen();
-
-    virtual void StartSignalling(std::string IP, int Port, bool keepAlive = true, bool useAuthentification = false);
-
   protected:
 
     json Config{
@@ -278,8 +290,7 @@ namespace AC
         {"RemoteAddress",int()}
       }};
 
-    std::unordered_map<int,std::shared_ptr<Connector>> UserByID;
-    std::vector<std::shared_ptr<Connector>> Users;
+    std::unordered_map<int,std::shared_ptr<Adapter>> EndpointById;
     std::unique_ptr<std::thread> BridgeThread;
     std::mutex QueueAccess;
     std::queue<std::function<void(void)>> CommInstructQueue;
@@ -292,15 +303,7 @@ namespace AC
     // Signalling Server
     std::shared_ptr<rtc::WebSocket> SignallingConnection;
 
-    struct
-    {
-      std::shared_ptr<BridgeSocket> In;
-      std::shared_ptr<BridgeSocket> Out;
-    } BridgeConnection;
-    
-    std::condition_variable TaskAvaliable;
 
-    int NextID{0};
-  }; 
-  
+
+  };
 }

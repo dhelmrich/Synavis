@@ -11,7 +11,7 @@
 
 cmake_minimum_required(VERSION 3.12.0)
 
-set(projectname UnrealReceiver)
+set(projectname WebRTCBridge)
 string(TOUPPER ${projectname} PROJECTNAME_UPPER)
 string(TOLOWER ${projectname} PROJECTNAME_LOWER)
 # lib path?
@@ -51,10 +51,7 @@ if(NOT pybind11_POPULATED)
     add_subdirectory(${pybind11_SOURCE_DIR} ${pybind11_BINARY_DIR})
 endif()
 
-add_subdirectory(unrealbridge)
-add_subdirectory(receiver)
-add_subdirectory(externtest)
-add_subdirectory(accessor)
+add_subdirectory(webrtcbridge)
 
 
 

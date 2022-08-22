@@ -7,10 +7,10 @@ set(PYPROJECT "Py${projectname}")
 
 include(GenerateExportHeader)
 
-file(GLOB RECEIVERSOURCES ./*.cpp)
-file(GLOB RECEIVERHEADERS ./*.h)
+file(GLOB RECEIVERSOURCES *.cpp)
+file(GLOB RECEIVERHEADERS *.hpp)
 set(PLAINSOURCES ${RECEIVERSOURCES})
-list(FILTER PLAINSOURCES EXCLUDE REGEX ".*PyUnrealReceiver.cpp$")
+list(FILTER PLAINSOURCES EXCLUDE REGEX ".*PyWebRTCBridge.cpp$")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -openmp:llvm -openmp:experimental")
 
 find_package(OpenMP)
@@ -34,6 +34,7 @@ target_include_directories(${projectname}
   PUBLIC ${CMAKE_CURRENT_BINARY_DIR}
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/include
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/deps/json/single_include/nlohmann/
+  ${CMAKE_SOURCE_DIR}/unrealbridge
 )
 target_include_directories(${PYPROJECT}
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
@@ -41,6 +42,7 @@ target_include_directories(${PYPROJECT}
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/include
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/deps/json/single_include/nlohmann/
   ${CMAKE_BINARY_DIR}/_deps/pybind11-src/include
+  ${CMAKE_SOURCE_DIR}/unrealbridge
   ${PYTHON_INCLUDE_DIRS}
 )
 

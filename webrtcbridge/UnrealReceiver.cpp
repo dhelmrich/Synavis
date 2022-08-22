@@ -1,4 +1,4 @@
-#include "UnrealReceiver.h"
+#include "UnrealReceiver.hpp"
 #include <fstream>
 #include <chrono>
 #include <thread>
@@ -25,7 +25,8 @@ void error(const char *msg)
 }
 #endif
 
-namespace UR{
+namespace WebRTCBridge
+{
 
   template<typename... Ts>
 std::vector<std::byte> literalbytes(Ts&&... args) noexcept {
