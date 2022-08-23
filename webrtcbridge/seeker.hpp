@@ -5,7 +5,9 @@
 #include <fstream>
 #include <compare>
 #include <functional>
+#include <memory>
 
+#include "WebRTCBridge.hpp"
 
 #include "WebRTCBridge/export.hpp"
 #include <span>
@@ -16,18 +18,18 @@ namespace WebRTCBridge
   class Connector;
   class BridgeSocket;
 
-  class ACCESSOR_EXPORT Seeker: std::enable_shared_from_this<Seeker>
+  class WEBRTCBRIDGE_EXPORT Seeker : public Bridge, std::enable_shared_from_this<Seeker>
   {
   public:
     using json = nlohmann::json;
     Seeker();
-    ~Seeker();
+    virtual ~Seeker() override;
 
     // This methods checks whether the SigServ is reachable
     virtual bool CheckSignallingActive();
     
-    virtual bool EstablishedConnection();
-    virtual void FindBridge();
+    virtual bool EstablishedConnection() override;
+    virtual void FindBridge() override;
     virtual void RecoverConnection();
 
 
@@ -35,11 +37,9 @@ namespace WebRTCBridge
     virtual void DestroyConnection(std::shared_ptr<Connector> Connector);
 
     void ConfigureUpstream(Connector* Instigator, const json& Answer);
-
-    virtual void CreateTask(std::function<void(void)>&& Task);
+    
     virtual void BridgeSynchronize(WebRTCBridge::Connector* Instigator,
                            json Message, bool bFailIfNotResolved = false);
-    void BridgeSubmit(WebRTCBridge::Connector* Instigator, std::variant<rtc::binary, std::string> Message) const;
     void BridgeRun();
     void Listen();
 

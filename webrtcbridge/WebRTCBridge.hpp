@@ -1,5 +1,6 @@
 #pragma once
 #include <json.hpp>
+#include <span>
 #include <variant>
 #include <rtc/rtc.hpp>
 #include "WebRTCBridge/export.hpp"
@@ -194,7 +195,7 @@ namespace WebRTCBridge
     void Send(std::variant<rtc::binary, std::string> message);
   };
   
-  enum class ACCESSOR_EXPORT EClientMessageType
+  enum class WEBRTCBRIDGE_EXPORT EClientMessageType
   {
 	  QualityControlOwnership = 0u,
 	  Response,
@@ -206,7 +207,7 @@ namespace WebRTCBridge
 	  InitialSettings
   };
 
-  enum class ACCESSOR_EXPORT EConnectionState
+  enum class WEBRTCBRIDGE_EXPORT EConnectionState
   {
     STARTUP = 0,
     SIGNUP,
@@ -253,6 +254,8 @@ namespace WebRTCBridge
   class WEBRTCBRIDGE_EXPORT Bridge
   {
   public:
+    Bridge();
+    virtual ~Bridge();
     void UseConfig(std::string filename);
     using json = nlohmann::json;
     virtual void BridgeSynchronize(Adapter* Instigator,
@@ -262,6 +265,9 @@ namespace WebRTCBridge
     virtual void BridgeRun();
     virtual void Listen();
     virtual bool CheckSignallingActive();
+
+    virtual bool EstablishedConnection() = NULL;
+    virtual void FindBridge() = NULL;
 
     inline bool FindID(const json& Jason, int& ID)
     {

@@ -6,6 +6,8 @@
 #include <fstream>
 #include <compare>
 #include <functional>
+
+#include "WebRTCBridge.hpp"
 #include "WebRTCBridge/export.hpp"
 
 namespace WebRTCBridge
@@ -60,7 +62,7 @@ struct WEBRTCBRIDGE_EXPORT SaveRTP
 
 };
 
-class UNREALRECEIVER_EXPORT UnrealReceiver
+class WEBRTCBRIDGE_EXPORT UnrealReceiver
 {
 public:
   using json = nlohmann::json;
