@@ -266,8 +266,9 @@ namespace WebRTCBridge
     virtual void Listen();
     virtual bool CheckSignallingActive();
 
-    virtual bool EstablishedConnection() = NULL;
-    virtual void FindBridge() = NULL;
+    virtual bool EstablishedConnection();
+    virtual void FindBridge();
+    virtual void StartSignalling(std::string IP, int Port, bool keepAlive = true, bool useAuthentification = false);
 
     inline bool FindID(const json& Jason, int& ID)
     {
@@ -285,6 +286,9 @@ namespace WebRTCBridge
       }
       return false;
     }
+
+    
+    
 
   protected:
 
@@ -310,6 +314,16 @@ namespace WebRTCBridge
     std::shared_ptr<rtc::WebSocket> SignallingConnection;
 
 
+
+    struct
+    {
+      std::shared_ptr<BridgeSocket> In;
+      std::shared_ptr<BridgeSocket> Out;
+    } BridgeConnection;
+
+    std::condition_variable TaskAvaliable;
+
+    int NextID{ 0 };
 
   };
 }

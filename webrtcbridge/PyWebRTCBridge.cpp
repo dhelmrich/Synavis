@@ -16,7 +16,7 @@ namespace py = pybind11;
 
 #include "UnrealReceiver.hpp"
 
-namespace UR{
+namespace WebRTCBridge{
 
 
 class PyReceiver : public UnrealReceiver

@@ -32,10 +32,8 @@ void WebRTCBridge::BridgeSocket::Send(std::variant<rtc::binary, std::string> mes
   }
 }
 
-WebRTCBridge::Seeker::Seeker()
+WebRTCBridge::Seeker::Seeker() : Bridge()
 {
-  BridgeThread = std::make_unique<std::thread>(&Seeker::BridgeRun,this);
-  ListenerThread = std::make_unique<std::thread>(&Seeker::Listen, this);
 }
 
 WebRTCBridge::Seeker::~Seeker()
@@ -92,109 +90,7 @@ bool WebRTCBridge::Seeker::EstablishedConnection()
   }
 }
 
-void WebRTCBridge::Seeker::BridgeSynchronize(WebRTCBridge::Connector* Instigator,
-                                   json Message, bool bFailIfNotResolved)
-{
-  Message["id"] = Instigator->ID;
-  std::string Transmission = Message.dump();
-  BridgeConnection.Out->Send(Transmission);
-  auto messagelength = BridgeConnection.In->Receive(true);
-  if(messagelength <= 0)
-  {
-    if(bFailIfNotResolved)
-    {
-      throw std::domain_error(std::string("Could not receive answer from Bridgehead and this synchronization is critical:\n\n")
-      + "Message was:\n\n"
-      + Message.dump(1,'\t'));
-    }
-  }
-  else
-  {
-    json Answer;
-    try
-    {
-      Answer = json::parse(BridgeConnection.In->StringData);
-    }
-    catch(std::exception e)
-    {
-      if(bFailIfNotResolved)
-      {
-        throw std::runtime_error(std::string("An error occured while parsing the Bridge response:\n\n")
-        + e.what());
-      }
-    }
-    catch(...)
-    {
-      if(bFailIfNotResolved)
-      {
-        throw std::exception("An unexpected error occured while parsing the Bridge response");
-      }
-    }
-    Instigator->OnInformation(Answer);
-  }
-}
 
-void WebRTCBridge::Seeker::BridgeSubmit(WebRTCBridge::Connector* Instigator, std::variant<rtc::binary, std::string> Message) const
-{
-  json Transmission = {{"id",Instigator->ID}};
-  // we need to break this up because of json lib compatibility
-  if(std::holds_alternative<std::string>(Message))
-  {
-    Transmission["data"] = std::get<std::string>(Message);
-  }
-  else
-  {
-    std::string CopyData(reinterpret_cast<const char*>(std::get<rtc::binary>(Message).data()),std::get<rtc::binary>(Message).size());
-    Transmission["data"] = CopyData;
-  }
-  BridgeConnection.Out->Send(Transmission);
-}
-
-void WebRTCBridge::Seeker::BridgeRun()
-{
-  std::unique_lock<std::mutex> lock(QueueAccess);
-  while(true)
-  {
-    TaskAvaliable.wait(lock, [this]{
-            return (CommInstructQueue.size());
-        });
-    if(CommInstructQueue.size() > 0)
-    {
-      auto Task = std::move(CommInstructQueue.front());
-      lock.unlock();
-      Task();
-
-      // locking at the end of the loop is necessary because next
-      // top start of this scope requiers there to be a locked lock.
-      lock.lock();
-    }
-  }
-}
-
-void WebRTCBridge::Seeker::Listen()
-{
-  std::unique_lock<std::mutex> lock(CommandAccess);
-  while(true)
-  {
-    CommandAvailable.wait(lock, [this]
-      {
-        return bNeedInfo && this->BridgeConnection.In->Peek() > 0;
-      });
-    bool isMessage = false;
-    try
-    {
-      // all of these things must be available and also present
-      // on the same layer of the json signal
-      auto message = json::parse(this->BridgeConnection.In->Reception);
-      std::string type = message["type"];
-      auto app_id = message["id"].get<int>();
-      UserByID[app_id]->OnInformation(message);
-    } catch( ... )
-    {
-      
-    }
-  }
-}
 
 void WebRTCBridge::Seeker::FindBridge()
 {
@@ -268,7 +164,7 @@ std::shared_ptr<WebRTCBridge::Connector> WebRTCBridge::Seeker::CreateConnection(
 // when entering this method
 void WebRTCBridge::Seeker::DestroyConnection(std::shared_ptr<Connector> Connector)
 {
-  UserByID.erase(Connector->ID);
+  EndpointById.erase(Connector->ID);
 }
 
 void WebRTCBridge::Seeker::ConfigureUpstream(Connector* Instigator, const json& Answer)
@@ -277,14 +173,6 @@ void WebRTCBridge::Seeker::ConfigureUpstream(Connector* Instigator, const json& 
   Instigator->Upstream->Port = Config["RemotePort"];
   Instigator->Upstream->Connect();
 
-}
-
-void WebRTCBridge::Seeker::CreateTask(std::function<void(void)>&& Task)
-{
-  std::unique_lock<std::mutex> lock(QueueAccess);
-  lock.lock();
-  CommInstructQueue.push(Task);
-  lock.unlock();
 }
 
 

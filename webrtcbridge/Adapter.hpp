@@ -10,7 +10,7 @@ namespace WebRTCBridge
 {
   class WEBRTCBRIDGE_EXPORT Adapter
   {
-    friend class WebRTCBridge;
+    friend class Bridge;
     using json = nlohmann::json;
     virtual void StartSignalling(std::string IP, int Port,
         bool keepAlive = true,
@@ -29,7 +29,7 @@ namespace WebRTCBridge
     // Bridge Pointer is also Shared, which means that
     // the Seeker class has to resolve the object destruction of
     // connections, which is intended anyways.
-    std::shared_ptr<WebRTCBridge> Bridge;
+    std::shared_ptr<Bridge> Bridge;
     std::shared_ptr<BridgeSocket> Upstream;
     std::shared_ptr<BridgeSocket> Downstream;
 
