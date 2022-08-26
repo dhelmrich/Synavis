@@ -10,46 +10,8 @@
 
 
 
-std::string WebRTCBridge::Connector::GetConnectionString()
-{
-  return std::string();
-}
-
-std::string WebRTCBridge::Connector::GenerateSDP()
-{
-  return std::string();
-}
-
 void WebRTCBridge::Connector::SetupApplicationConnection()
 {
-  pc_ = std::make_shared<rtc::PeerConnection>();
-  pc_->onStateChange([this](rtc::PeerConnection::State inState)
-  {
-    
-  });
-  pc_->onGatheringStateChange([this](rtc::PeerConnection::GatheringState state) {
-			if (state == rtc::PeerConnection::GatheringState::Complete) {
-				auto description = this->pc_->localDescription();
-				json message = {{"type", description->typeString()},
-				                {"sdp", std::string(description.value())}};
-				std::cout << message << std::endl;
-			}
-  });
-  pc_->onTrack([this](auto track)
-  {
-  });
-  pc_->onDataChannel([this](auto channel)
-  {
-    DataFromApplication = channel;
-    // this is a submit function that is expedient if we are
-    // trying to avoid having output sockets on the receiving end
-    // and then collect commands through the bridge instead
-    // of having another socket here. It might actually be quite nice
-    // TODO review or open socket here
-    DataFromApplication->onMessage([this](auto message){
-      Bridge->BridgeSubmit(this,message);
-    });
-  });
 
   // at this point we need the answer from the bridge, potentially, before we set anything up!
   // TODO review the connection graph at this point
@@ -101,15 +63,39 @@ void WebRTCBridge::Connector::OnInformation(json message)
   }
 }
 
-std::string WebRTCBridge::Connector::PushSDP(std::string)
+
+void WebRTCBridge::Connector::OnGatheringStateChange(rtc::PeerConnection::GatheringState inState)
 {
-  return std::string();
 }
 
+void WebRTCBridge::Connector::OnTrack(std::shared_ptr<rtc::Track> inTrack)
+{
+}
 
-WebRTCBridge::Connector::Connector()
+void WebRTCBridge::Connector::OnLocalDescription(rtc::Description inDescription)
+{
+}
+
+void WebRTCBridge::Connector::OnLocalCandidate(rtc::Candidate inCandidate)
+{
+}
+
+void WebRTCBridge::Connector::OnDataChannel(std::shared_ptr<rtc::DataChannel> inChannel)
+{
+  Adapter::OnDataChannel(inChannel);
+}
+
+WebRTCBridge::Connector::Connector() : Adapter()
 {
 
+}
+
+void WebRTCBridge::Connector::OnPackage(rtc::binary inPackage)
+{
+}
+
+void WebRTCBridge::Connector::OnChannelMessage(std::string inMessage)
+{
 }
 
 WebRTCBridge::Connector::~Connector()

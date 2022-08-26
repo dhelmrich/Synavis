@@ -5,8 +5,6 @@
 #include <rtc/rtc.hpp>
 #include "WebRTCBridge/export.hpp"
 
-
-
 #define MAX_RTP_SIZE 208 * 1024
 
 #ifdef _WIN32
@@ -28,8 +26,6 @@ void error(const char *msg)
 
 namespace WebRTCBridge
 {
-  
-
   // forward definitions
   class Adapter;
 
@@ -287,8 +283,9 @@ namespace WebRTCBridge
       return false;
     }
 
-    
-    
+
+    virtual void OnSignallingMessage(std::string Message) = NULL;
+    virtual void OnSignallingData(rtc::binary Message) = NULL;
 
   protected:
 
@@ -301,10 +298,10 @@ namespace WebRTCBridge
       }};
 
     std::unordered_map<int,std::shared_ptr<Adapter>> EndpointById;
-    std::unique_ptr<std::thread> BridgeThread;
+    std::future<void> BridgeThread;
     std::mutex QueueAccess;
     std::queue<std::function<void(void)>> CommInstructQueue;
-    std::unique_ptr<std::thread> ListenerThread;
+    std::future<void> ListenerThread;
     std::mutex CommandAccess;
     std::queue<std::variant<rtc::binary, std::string>> CommandBuffer;
     std::condition_variable CommandAvailable;

@@ -1,6 +1,7 @@
 #include "seeker.hpp"
 
 #include <variant>
+#include <memory>
 
 #include "connector.hpp"
 
@@ -175,66 +176,60 @@ void WebRTCBridge::Seeker::ConfigureUpstream(Connector* Instigator, const json& 
 
 }
 
-
-void WebRTCBridge::Seeker::StartSignalling(std::string IP, int Port, bool keepAlive, bool useAuthentification)
+void WebRTCBridge::Seeker::BridgeRun()
 {
-  SignallingConnection = std::make_shared<rtc::WebSocket>();
-  std::promise<void> RunGuard;
-  auto Notifier = RunGuard.get_future();
-  SignallingConnection->onOpen([this, &RunGuard]()
+  Bridge::BridgeRun();
+}
+
+void WebRTCBridge::Seeker::Listen()
+{
+  Bridge::Listen();
+}
+
+void WebRTCBridge::Seeker::OnSignallingMessage(std::string Message)
+{
+  json content = json::parse(Message);
+  int ID;
+  if(!FindID(content,ID))
   {
-    
-  });
-  SignallingConnection->onClosed([this, &RunGuard](){});
-  SignallingConnection->onError([this, &RunGuard](auto error){});
-  SignallingConnection->onMessage([
-    this,
-    &RunGuard,
-    TentativeConnection = std::weak_ptr<rtc::WebSocket>(SignallingConnection)
-  ](auto message)
+    std::cout << "From onMessage SignallingServer Thread: Could not identify player id from input, discarding this message." << std::endl;
+
+  }
+  if(content["type"] == "offer")
   {
-    // without the rtc library types the compiler will get confused as to what this is
-    // they types are essentially std::bytes and std::string.
-    if(std::holds_alternative<rtc::string>(message))
+    std::cout << "I received an offer and this is the most crucial step in bridge setup!" << std::endl;
+    std::string sdp = content["sdp"];
+
+    // we MUST fail if this is not resolved as the sdp description
+    // has to be SYNCHRONOUSLY valid on both ends of the bridge!
+    // Additionally, we must process the answer before anything else happens
+    // including the CREATION of the connection, as its initialization
+    // depends on what we are hearing back from unreal in terms of
+    // payloads and ssrc info
+    auto NewConnection = CreateConnection();
+    CreateTask(std::bind(&Seeker::BridgeSynchronize, this, NewConnection.get(), sdp, true));
+  }
+  else if(content["type"] == "iceCandidate")
+  {
+    std::shared_ptr<Connector> Endpoint;
+    try
     {
-      json content = json::parse(std::get<rtc::string>(message));
-      int ID;
-      if(!FindID(content,ID))
+      std::shared_ptr<Adapter> fetch_object = EndpointById[ID];
+      Endpoint = std::dynamic_pointer_cast<Connector>(fetch_object);
+      if(!Endpoint)
       {
-        std::cout << "From onMessage SignallingServer Thread: Could not identify player id from input, discarding this message." << std::endl;
-
+        throw std::exception("Tried to cast an adapter to a connector and failed.");
       }
-      if(content["type"] == "offer")
-      {
-        std::cout << "I received an offer and this is the most crucial step in bridge setup!" << std::endl;
-        std::string sdp = content["sdp"];
-
-        // we MUST fail if this is not resolved as the sdp description
-        // has to be SYNCHRONOUSLY valid on both ends of the bridge!
-        // Additionally, we must process the answer before anything else happens
-        // including the CREATION of the connection, as its initialization
-        // depends on what we are hearing back from unreal in terms of
-        // payloads and ssrc info
-        auto NewConnection = CreateConnection();
-        CreateTask(std::bind(&Seeker::BridgeSynchronize, this, NewConnection.get(), sdp, true));
-      }
-      else if(content["type"] == "iceCandidate")
-      {
-        std::shared_ptr<Connector> Connector;
-        try
-        {
-        Connector = UserByID[ID];
-        }
-        catch( ... )
-        {
-          std::cout << "From onMessage SS thread: Could not find connector for ice candidate." << std::endl;
-        }
-        Connector->OnInformation(content);
-      }
-
     }
-  });
-  std::cout << "Waiting for Signalling Websocket to Connect." << std::endl;
-  Notifier.wait();
+    catch( ... )
+    {
+      std::cout << "From onMessage SS thread: Could not find connector for ice candidate." << std::endl;
+    }
+    Endpoint->OnInformation(content);
+  }
+}
+
+void WebRTCBridge::Seeker::OnSignallingData(rtc::binary Message)
+{
 }
 

@@ -59,8 +59,9 @@ void WebRTCBridge::NoBufferThread::Run()
 
 WebRTCBridge::Bridge::Bridge()
 {
-  BridgeThread = std::make_unique<std::thread>(&Bridge::BridgeRun, this);
-  ListenerThread = std::make_unique<std::thread>(&Bridge::Listen, this);
+  BridgeThread = std::async(std::launch::async, &Bridge::BridgeRun,this);
+
+  ListenerThread = std::async(std::launch::async,&Bridge::Listen, this);
 }
 
 WebRTCBridge::Bridge::~Bridge()
@@ -152,10 +153,17 @@ void WebRTCBridge::Bridge::Listen()
 
 bool WebRTCBridge::Bridge::CheckSignallingActive()
 {
+  return SignallingConnection->isOpen();
 }
 
 bool WebRTCBridge::Bridge::EstablishedConnection()
 {
+  using namespace std::chrono_literals;
+  auto status_bridge_thread = BridgeThread.wait_for(0ms);
+  auto status_command_thread = ListenerThread.wait_for(0ms);
+  return (BridgeConnection.In->Valid && BridgeConnection.Out->Valid
+         && status_bridge_thread != std::future_status::ready
+         && status_command_thread != std::future_status::ready);
 }
 
 void WebRTCBridge::Bridge::FindBridge()
@@ -164,6 +172,38 @@ void WebRTCBridge::Bridge::FindBridge()
 
 void WebRTCBridge::Bridge::StartSignalling(std::string IP, int Port, bool keepAlive, bool useAuthentification)
 {
+  SignallingConnection = std::make_shared<rtc::WebSocket>();
+  std::promise<void> RunGuard;
+  auto Notifier = RunGuard.get_future();
+  SignallingConnection->onOpen([this, &RunGuard]()
+  {
+    RunGuard.set_value();
+  });
+  SignallingConnection->onClosed([this, &RunGuard](){});
+  SignallingConnection->onError([this, &RunGuard](auto error){});
+  SignallingConnection->onMessage([this](auto message)
+  {
+    if(std::holds_alternative<std::string>(message))
+    {
+      OnSignallingMessage(std::get<std::string>(message));
+    }
+    else
+    {
+      OnSignallingData(std::get<rtc::binary>(message));
+    }
+  });
+  if(useAuthentification)
+  {
+    // this is its own issue as we are probably obliged to conform to IDM guidelines here
+    // these should all interface the same way, but here we should probably
+    // call upon the jupyter-jsc service that should run in the background somewhere
+  }
+  else
+  {
+    SignallingConnection->open(IP + std::to_string(Port));
+  }
+  std::cout << "Waiting for Signalling Websocket to Connect." << std::endl;
+  Notifier.wait();
 }
 
 void WebRTCBridge::Bridge::UseConfig(std::string filename)

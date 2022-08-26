@@ -16,7 +16,7 @@
 namespace WebRTCBridge
 {
   class Connector;
-  class BridgeSocket;
+  struct BridgeSocket;
 
   class WEBRTCBRIDGE_EXPORT Seeker : public Bridge, std::enable_shared_from_this<Seeker>
   {
@@ -39,9 +39,9 @@ namespace WebRTCBridge
     void ConfigureUpstream(Connector* Instigator, const json& Answer);
     void BridgeRun();
     void Listen();
-
-    virtual void StartSignalling(std::string IP, int Port, bool keepAlive = true, bool useAuthentification = false) override;
-
+    
+    void OnSignallingMessage(std::string Message) override;
+    void OnSignallingData(rtc::binary Message) override;
   }; 
   
 }

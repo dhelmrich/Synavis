@@ -11,10 +11,11 @@
 
 #include "WebRTCBridge/export.hpp"
 #include "seeker.hpp"
+#include "Adapter.hpp"
 
 namespace WebRTCBridge
 {
-  class BridgeSocket;
+  struct BridgeSocket;
   class NoBufferThread;
   class ApplicationTrack;
   /*!
@@ -24,32 +25,20 @@ namespace WebRTCBridge
    * Previoud knowledge about IP environment needed
    *
    */
-  class WEBRTCBRIDGE_EXPORT Connector
+  class WEBRTCBRIDGE_EXPORT Connector : public Adapter
   {
     friend class Seeker;
   public:
-    ~Connector();
+    virtual ~Connector();
     Connector(Connector&& other) = default;
-
-    void StartSignalling(std::string IP, int Port,
-        bool keepAlive = true,
-        bool useAuthentification = false);
 
     using json = nlohmann::json;
     void StartFrameReception();
 
-    // this is a helper function that should not be considered stable or without fault
-    std::string GetConnectionString();
-
-    std::string GenerateSDP();
-    std::string Answer();
-
     void SetupApplicationConnection();
     void AwaitSignalling();
 
-    void OnInformation(json message);
-
-    std::string PushSDP(std::string);
+    virtual void OnInformation(json message) override;
 
 
     // Data streams to other Bridge
@@ -70,9 +59,18 @@ namespace WebRTCBridge
     std::shared_ptr<rtc::DataChannel> DataToApplication;
     std::shared_ptr<rtc::DataChannel> DataFromApplication;
 
+
+    virtual void OnGatheringStateChange(rtc::PeerConnection::GatheringState inState) override;
+    virtual void OnTrack(std::shared_ptr<rtc::Track> inTrack) override;
+    virtual void OnLocalDescription(rtc::Description inDescription) override;
+    virtual void OnLocalCandidate(rtc::Candidate inCandidate) override;
+    virtual void OnDataChannel(std::shared_ptr<rtc::DataChannel> inChannel) override;
+
   protected:
     Connector();
-    
+  public:
+    void OnPackage(rtc::binary inPackage) override;
+    void OnChannelMessage(std::string inMessage) override;
   private:
     rtc::Configuration rtcconfig_;
     std::shared_ptr<rtc::PeerConnection> pc_;
@@ -81,7 +79,6 @@ namespace WebRTCBridge
     unsigned int MessagesReceived{0};
     unsigned int IceCandidatesReceived{0};
     int ID{};
-    std::uint64_t Time();
 
     std::optional<rtc::Description> Offer_;
   };

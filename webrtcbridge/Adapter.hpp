@@ -8,13 +8,18 @@
 
 namespace WebRTCBridge
 {
+  
+    template<typename... Ts>
+  __forceinline std::vector<std::byte> literalbytes(Ts&&... args) noexcept {
+      return{std::byte(std::forward<Ts>(args))...};
+  }
+
   class WEBRTCBRIDGE_EXPORT Adapter
   {
+  public:
     friend class Bridge;
     using json = nlohmann::json;
-    virtual void StartSignalling(std::string IP, int Port,
-        bool keepAlive = true,
-        bool useAuthentification = false);
+    void SetupWebRTC();
     
     // this is a helper function that should not be considered stable or without fault
     virtual std::string GetConnectionString();
@@ -22,8 +27,17 @@ namespace WebRTCBridge
     virtual std::string GenerateSDP();
     virtual std::string Offer();
     virtual std::string Answer();
-    virtual void OnInformation(json message) = NULL;
     virtual std::string PushSDP(std::string);
+
+    virtual void OnGatheringStateChange(rtc::PeerConnection::GatheringState inState) = NULL;
+    virtual void OnTrack(std::shared_ptr<rtc::Track> inTrack) = NULL;
+    virtual void OnLocalDescription(rtc::Description inDescription) = NULL;
+    virtual void OnLocalCandidate(rtc::Candidate inCandidate) = NULL;
+    virtual void OnDataChannel(std::shared_ptr<rtc::DataChannel> inChannel) = NULL;
+    virtual void OnInformation(json message) = NULL;
+    virtual void OnPackage(rtc::binary inPackage) = NULL;
+    virtual void OnChannelMessage(std::string inMessage) = NULL;
+
 
     // Data streams to other Bridge
     // Bridge Pointer is also Shared, which means that
@@ -45,7 +59,9 @@ namespace WebRTCBridge
     unsigned int MessagesReceived{0};
     unsigned int IceCandidatesReceived{0};
     int ID{};
-    std::uint64_t Time();
+
+    json generated_offer_;
+    json generated_answer_;
 
     std::optional<rtc::Description> StartupDescription_;
   };

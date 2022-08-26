@@ -8,6 +8,8 @@
 #include <bitset>
 #include <rtc/rtc.hpp>
 
+#include "Adapter.hpp"
+
 #define MAX_RTP_SIZE 10000
 
 #ifdef _WIN32
@@ -28,10 +30,6 @@ void error(const char *msg)
 namespace WebRTCBridge
 {
 
-  template<typename... Ts>
-std::vector<std::byte> literalbytes(Ts&&... args) noexcept {
-    return{std::byte(std::forward<Ts>(args))...};
-}
 
 void SetTimeout(double ms, std::function<void(void)> callback, bool invokeself = false)
 {

@@ -13,7 +13,6 @@ set(PLAINSOURCES ${RECEIVERSOURCES})
 list(FILTER PLAINSOURCES EXCLUDE REGEX ".*PyWebRTCBridge.cpp$")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -openmp:llvm -openmp:experimental")
 
-find_package(OpenMP)
 set(PYBIND11_PYTHON_VERSION 3.9)
 find_package( PythonInterp 3.9 REQUIRED )
 find_package( PythonLibs 3.9 REQUIRED )
@@ -47,10 +46,6 @@ target_include_directories(${PYPROJECT}
 )
 
 target_link_libraries(${projectname} PRIVATE datachannel-static nlohmann_json::nlohmann_json )
-if(OpenMP_CXX_FOUND)
-    target_link_libraries(${projectname} PUBLIC OpenMP::OpenMP_CXX)
-    target_link_libraries(${PYPROJECT} PUBLIC OpenMP::OpenMP_CXX)
-endif()
 target_link_libraries(${PYPROJECT} PRIVATE datachannel-static nlohmann_json::nlohmann_json ${PYTHON_LIBRARIES})
 set_target_properties(${PYPROJECT} PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/)
 
