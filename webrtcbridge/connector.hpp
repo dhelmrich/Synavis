@@ -30,7 +30,7 @@ namespace WebRTCBridge
     friend class Seeker;
   public:
     virtual ~Connector();
-    Connector(Connector&& other) = default;
+    Connector(Connector&& other);
 
     using json = nlohmann::json;
     void StartFrameReception();
@@ -58,6 +58,10 @@ namespace WebRTCBridge
     std::shared_ptr<ApplicationTrack> AudioToApplication;
     std::shared_ptr<rtc::DataChannel> DataToApplication;
     std::shared_ptr<rtc::DataChannel> DataFromApplication;
+
+    // Data streams in total
+    std::vector<StreamVariant> FromApplication;
+    std::vector<StreamVariant> ToApplication;
 
 
     virtual void OnGatheringStateChange(rtc::PeerConnection::GatheringState inState) override;

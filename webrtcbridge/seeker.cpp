@@ -95,47 +95,44 @@ bool WebRTCBridge::Seeker::EstablishedConnection()
 
 void WebRTCBridge::Seeker::FindBridge()
 {
-  
+  // THis is a wait function.
   std::unique_lock<std::mutex> lock(QueueAccess);
   lock.lock();
-  CommInstructQueue.push([this]()
-  {
-    std::chrono::utc_time<std::chrono::system_clock::duration> localutctime;
-    localutctime = std::chrono::utc_clock::now();
-    json Offer = {{"Port",Config["LocalPort"]},
+  std::chrono::utc_time<std::chrono::system_clock::duration> localutctime;
+  localutctime = std::chrono::utc_clock::now();
+  json Offer = {{"Port",Config["LocalPort"]},
 
-    {"Session",std::format("{:%Y-%m-%d %X}",localutctime)}};
-    BridgeConnection.Out->Send(Offer.dump());
-    auto messagelength = BridgeConnection.In->Receive(true);
-    if(messagelength <= 0)
+  {"Session",std::format("{:%Y-%m-%d %X}",localutctime)}};
+  BridgeConnection.Out->Send(Offer.dump());
+  auto messagelength = BridgeConnection.In->Receive(true);
+  if(messagelength <= 0)
+  {
+    
+  }
+  else
+  {
+    json Answer;
+    try
+    {
+      Answer = json::parse(BridgeConnection.In->StringData);
+      std::string timecode = Answer["Session"];
+      std::chrono::utc_time<std::chrono::system_clock::duration> remoteutctime;
+      std::string format("%Y-%m-%d %X");
+      std::stringstream ss(timecode);
+      if(ss >> std::chrono::parse(format,remoteutctime))
+      {
+        // we are checking this for consistency reasons
+        if(remoteutctime > localutctime)
+        {
+          std::cout << "Found the connection successfully." << std::endl;
+        }
+      }
+    }
+    catch(...)
     {
       
     }
-    else
-    {
-      json Answer;
-      try
-      {
-        Answer = json::parse(BridgeConnection.In->StringData);
-        std::string timecode = Answer["Session"];
-        std::chrono::utc_time<std::chrono::system_clock::duration> remoteutctime;
-        std::string format("%Y-%m-%d %X");
-        std::stringstream ss(timecode);
-        if(ss >> std::chrono::parse(format,remoteutctime))
-        {
-          // we are checking this for consistency reasons
-          if(remoteutctime > localutctime)
-          {
-            std::cout << "Found the connection successfully." << std::endl;
-          }
-        }
-      }
-      catch(...)
-      {
-        
-      }
-    }
-  });
+  }
   lock.release();
 }
 
@@ -155,7 +152,7 @@ std::shared_ptr<WebRTCBridge::Connector> WebRTCBridge::Seeker::CreateConnection(
   Connection->ID = ++NextID;
 
   Connection->Upstream = std::make_shared<BridgeSocket>
-  (std::move(BridgeSocket::GetFreeSocketPort(Config["LocalAddress"])));
+  (std::move(BridgeSocket::GetFreeSocket(Config["LocalAddress"])));
   
   return Connection;
 

@@ -29,6 +29,7 @@ namespace WebRTCBridge
   // forward definitions
   class Adapter;
 
+
   struct WEBRTCBRIDGE_EXPORT BridgeSocket
   {
 
@@ -37,6 +38,7 @@ namespace WebRTCBridge
     std::string Address;
     char* Reception;
     std::span<std::byte> BinaryData;
+    std::span<std::size_t> NumberData;
     std::string_view StringData;
 
     std::size_t ReceivedLength;
@@ -150,7 +152,7 @@ namespace WebRTCBridge
 #endif
     }
 
-    static BridgeSocket GetFreeSocketPort(std::string adr = "127.0.0.1")
+    static BridgeSocket GetFreeSocket(std::string adr = "127.0.0.1")
     {
       BridgeSocket s;
       s.Address = adr;
@@ -189,6 +191,12 @@ namespace WebRTCBridge
     int Peek();
     int Receive(bool invalidIsFailure = false);
     void Send(std::variant<rtc::binary, std::string> message);
+
+    template < typename N >
+    std::span<N> Reinterpret()
+    {
+      return std::span<N>(Reception, ReceivedLength / sizeof(N));
+    }
   };
   
   enum class WEBRTCBRIDGE_EXPORT EClientMessageType
@@ -205,7 +213,7 @@ namespace WebRTCBridge
 
   enum class WEBRTCBRIDGE_EXPORT EConnectionState
   {
-    STARTUP = 0,
+    STARTUP = (std::uint8_t)EClientMessageType::InitialSettings + 1u,
     SIGNUP,
     OFFERED,
     CONNECTED,
@@ -214,13 +222,20 @@ namespace WebRTCBridge
     RTCERROR,
   };
 
+  enum class WEBRTCBRIDGE_EXPORT EBridgeConnectionType
+  {
+    LockedMode = (std::uint8_t)EConnectionState::RTCERROR + 1u,
+    BridgeMode,
+    DirectMode
+  };
+
   class ApplicationTrack
   {
   public:
     const static rtc::SSRC SSRC = 42;
     ApplicationTrack(std::shared_ptr<rtc::Track> inTrack);
-    void ConfigureOutput(std::shared_ptr<rtc::RtcpSrReporter> inReporter);
-    void ConfigureIn();
+    void ConfigureInput(std::function<void(rtc::message_variant)>&& Handler);
+    void ConfigureOutput(rtc::Description::Media* inConfig);
     std::shared_ptr<rtc::Track> Track;
     std::shared_ptr<rtc::RtcpSrReporter> SendReporter;
     rtc::Description::Video video_{"video",
@@ -229,22 +244,22 @@ namespace WebRTCBridge
     bool Open();
   };
 
+  using StreamVariant = std::variant<std::shared_ptr<rtc::DataChannel>,
+    std::shared_ptr<ApplicationTrack>>;
+
   class NoBufferThread
   {
   public:
-    const int ReceptionSize = 208 * 1024;
-    NoBufferThread(std::weak_ptr<ApplicationTrack> inDataDestination,
-      std::weak_ptr<BridgeSocket> inDataSource);
+    const int ReceptionSize = 208 * 1024 * 1024;
+    EBridgeConnectionType ConnectionMode{ EBridgeConnectionType::DirectMode };
+    NoBufferThread(std::shared_ptr<BridgeSocket> inSocketConnection);
+    std::size_t AddRTC(StreamVariant inRTC);
+    std::size_t AddRTC(StreamVariant&& inRTC);
     void Run();
   private:
-    std::unique_ptr<std::thread> Thread;
-    std::tuple<
-      std::weak_ptr<ApplicationTrack>,
-      std::weak_ptr<ApplicationTrack>,
-      std::weak_ptr<ApplicationTrack>
-    > WebRTCTracks;
-    std::weak_ptr<ApplicationTrack> DataDestination;
-    std::weak_ptr<BridgeSocket> DataSource;
+    std::future<void> Thread;
+    std::map<std::size_t, StreamVariant> WebRTCTracks;
+    std::shared_ptr<BridgeSocket> SocketConnection;
   };
 
   class WEBRTCBRIDGE_EXPORT Bridge
@@ -284,6 +299,7 @@ namespace WebRTCBridge
     }
 
 
+
     virtual void OnSignallingMessage(std::string Message) = NULL;
     virtual void OnSignallingData(rtc::binary Message) = NULL;
 
@@ -309,13 +325,17 @@ namespace WebRTCBridge
 
     // Signalling Server
     std::shared_ptr<rtc::WebSocket> SignallingConnection;
+    EBridgeConnectionType ConnectionMode{ EBridgeConnectionType::BridgeMode };
 
-
-
+    std::shared_ptr<NoBufferThread> DataInThread;
+    
     struct
     {
       std::shared_ptr<BridgeSocket> In;
       std::shared_ptr<BridgeSocket> Out;
+      // Data out is being called without lockign!
+      // There should be no order logic behind the packages, they should just be sent as-is!
+      std::shared_ptr<BridgeSocket> DataOut;
     } BridgeConnection;
 
     std::condition_variable TaskAvaliable;

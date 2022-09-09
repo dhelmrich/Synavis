@@ -14,6 +14,11 @@ int WebRTCBridge::BridgeSocket::Receive(bool invalidIsFailure)
 
 WebRTCBridge::ApplicationTrack::ApplicationTrack(std::shared_ptr<rtc::Track> inTrack)
       : Track(inTrack) {}
+
+void WebRTCBridge::ApplicationTrack::ConfigureInput(std::function<void(rtc::message_variant)>&& Handler)
+{
+  Track->onMessage(Handler);
+}
       
 void WebRTCBridge::ApplicationTrack::Send(std::byte* Data, unsigned Length)
 {
@@ -22,12 +27,17 @@ void WebRTCBridge::ApplicationTrack::Send(std::byte* Data, unsigned Length)
   Track->send(Data, Length);
 }
 
-void WebRTCBridge::ApplicationTrack::ConfigureOutput(std::shared_ptr<rtc::RtcpSrReporter> inReporter)
+void WebRTCBridge::ApplicationTrack::ConfigureOutput(rtc::Description::Media* inConfig)
 {
-}
+  auto ssrc_vector = inConfig->getSSRCs();
+  // as a start, because I am unsure about the vector, I will just get the first
+  auto ssrc = ssrc_vector[0];
+  std::string name{ inConfig->getCNameForSsrc(ssrc).value_or("") };
 
-void WebRTCBridge::ApplicationTrack::ConfigureIn()
-{
+  for (auto it = inConfig->beginMaps(); it != inConfig->endMaps(); ++it)
+  {
+    auto map = *it;
+  }
 }
 
 bool WebRTCBridge::ApplicationTrack::Open()
@@ -35,32 +45,60 @@ bool WebRTCBridge::ApplicationTrack::Open()
   return Track->isOpen();
 }
 
-WebRTCBridge::NoBufferThread::NoBufferThread(std::weak_ptr<ApplicationTrack> inDataDestination,
-                                   std::weak_ptr<BridgeSocket> inDataSource)
-    : DataDestination(inDataDestination), DataSource(inDataSource)
+WebRTCBridge::NoBufferThread::NoBufferThread(std::shared_ptr<BridgeSocket> inDataSource)
+    : SocketConnection(inDataSource)
 {
-  Thread = std::make_unique<std::thread>(&WebRTCBridge::NoBufferThread::Run,this);
+  Thread = std::async(&WebRTCBridge::NoBufferThread::Run,this);
+}
+
+std::size_t WebRTCBridge::NoBufferThread::AddRTC(StreamVariant inRTC)
+{
+
+  return std::size_t();
+}
+
+std::size_t WebRTCBridge::NoBufferThread::AddRTC(StreamVariant&& inRTC)
+{
+
+  return std::size_t();
 }
 
 void WebRTCBridge::NoBufferThread::Run()
 {
   // Consume buffer until close (this should never be empty but we never know)
-  auto DataDestinationPtr = DataDestination.lock();
-  auto DataSourcePtr = DataSource.lock();
+  
   int Length;
-  while((Length = DataSourcePtr->Receive()) > 0)
+  while ((Length = SocketConnection->Receive()) > 0)
   {
-    if (Length < sizeof(rtc::RtpHeader) || !DataDestinationPtr->Open())
+    if (Length < sizeof(rtc::RtpHeader))
       continue;
+    if (ConnectionMode == EBridgeConnectionType::LockedMode)
+    {
+      // we gather all packages and submit them together, we will also discard packages
+      // that are out of order
+    }
+    else
+    {
+      // TOOD if this check fails we might run into \0 at the end of the string.
+      const auto& destination = WebRTCTracks[SocketConnection->NumberData[0]];
+      const auto& byte_data = SocketConnection->BinaryData;
+      if(std::holds_alternative<std::shared_ptr<ApplicationTrack>>(destination))
+      {
+        std::get<std::shared_ptr<ApplicationTrack>>(destination)->Send(byte_data.data(), byte_data.size());
+      }
+      else
+      {
+        std::get< std::shared_ptr<rtc::DataChannel> >(destination)->send(byte_data.data(), byte_data.size());
+      }
+    }
     // This is a roundabout reinterpret_cast without having to actually do one
-    DataDestinationPtr->Send(DataSourcePtr->BinaryData.data(),Length);
+    //DataDestinationPtr->Send(SocketConnection->BinaryData.data(),Length);
   }
 }
 
 WebRTCBridge::Bridge::Bridge()
 {
   BridgeThread = std::async(std::launch::async, &Bridge::BridgeRun,this);
-
   ListenerThread = std::async(std::launch::async,&Bridge::Listen, this);
 }
 
@@ -105,6 +143,10 @@ void WebRTCBridge::Bridge::BridgeSynchronize(Adapter* Instigator, nlohmann::json
         throw std::exception("An unexpected error occured while parsing the Bridge response");
       }
     }
+    if(Answer["type"] == "icecandidate")
+    {
+      
+    }
     Instigator->OnInformation(Answer);
   }
 }
@@ -119,34 +161,77 @@ void WebRTCBridge::Bridge::CreateTask(std::function<void()>&& Task)
 
 void WebRTCBridge::Bridge::BridgeSubmit(Adapter* Instigator, std::variant<rtc::binary, std::string> Message) const
 {
+  json Transmission = { {"id",Instigator->ID} };
+  // we need to break this up because of json lib compatibility
+  if (std::holds_alternative<std::string>(Message))
+  {
+    Transmission["data"] = std::get<std::string>(Message);
+  }
+  else
+  {
+    Transmission["data"] = std::get<rtc::binary>(Message);
+  }
+  BridgeConnection.DataOut->Send(Transmission);
 }
 
 void WebRTCBridge::Bridge::BridgeRun()
 {
+  std::unique_lock<std::mutex> lock(QueueAccess);
+  while (true)
+  {
+    TaskAvaliable.wait(lock, [this] {
+      return (CommInstructQueue.size());
+      });
+    if (CommInstructQueue.size() > 0)
+    {
+      auto Task = std::move(CommInstructQueue.front());
+      lock.unlock();
+      Task();
+
+      // locking at the end of the loop is necessary because next
+      // top start of this scope requiers there to be a locked lock.
+      lock.lock();
+    }
+  }
 }
 
 void WebRTCBridge::Bridge::Listen()
 {
   std::unique_lock<std::mutex> lock(CommandAccess);
-  while (true)
+  if(ConnectionMode == EBridgeConnectionType::BridgeMode)
   {
-    CommandAvailable.wait(lock, [this]
-      {
-        return bNeedInfo && this->BridgeConnection.In->Peek() > 0;
-      });
-    bool isMessage = false;
-    try
+    while(true)
     {
-      // all of these things must be available and also present
-      // on the same layer of the json signal
-      auto message = json::parse(this->BridgeConnection.In->Reception);
-      std::string type = message["type"];
-      auto app_id = message["id"].get<int>();
-      EndpointById[app_id]->OnInformation(message);
+      CommandAvailable.wait(lock, [this]
+        {
+          return this->BridgeConnection.In->Peek() > 0;
+        });
+      bool isMessage = false;
+      
     }
-    catch (...)
+  }
+  else
+  {
+    while (true)
     {
+      CommandAvailable.wait(lock, [this]
+        {
+          return bNeedInfo && this->BridgeConnection.In->Peek() > 0;
+        });
+      bool isMessage = false;
+      try
+      {
+        // all of these things must be available and also present
+        // on the same layer of the json signal
+        auto message = json::parse(this->BridgeConnection.In->Reception);
+        std::string type = message["type"];
+        auto app_id = message["id"].get<int>();
+        EndpointById[app_id]->OnInformation(message);
+      }
+      catch (...)
+      {
 
+      }
     }
   }
 }

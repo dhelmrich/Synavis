@@ -17,6 +17,7 @@ namespace WebRTCBridge
   class WEBRTCBRIDGE_EXPORT Adapter
   {
   public:
+    virtual ~Adapter() = default;
     friend class Bridge;
     using json = nlohmann::json;
     void SetupWebRTC();
