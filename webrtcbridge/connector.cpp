@@ -46,6 +46,7 @@ void WebRTCBridge::Connector::OnInformation(json message)
       std::string sdp = message["sdp"];
       rtc::Description desc(sdp);
       Bridge->ConfigureUpstream(this, message);
+      
       for (unsigned i = 0; i < desc.mediaCount(); ++i)
       {
         auto medium = desc.media(i);
@@ -85,9 +86,11 @@ void WebRTCBridge::Connector::OnInformation(json message)
         else
         {
           auto app = std::get<rtc::Description::Application*>(medium);
-          
+          auto channel = pc_->createDataChannel(app->description());
+          channel->onOpen([this]{});
         }
       }
+
     }
   }
 }
@@ -126,7 +129,10 @@ void WebRTCBridge::Connector::OnDataChannel(std::shared_ptr<rtc::DataChannel> in
   // since it might imply that a client is either able to consume data or not
   // and subsequently also has an inclination of producing commands
   Adapter::OnDataChannel(inChannel);
-  
+  Bridge->CreateTask(std::bind(&Bridge::BridgeSynchronize, Bridge, this, json({
+    {"DataChannel",{{"id",inChannel->id()},"label",inChannel->label()}},
+    {"ID",this->ID}
+  }), true));
   
 }
 
@@ -137,11 +143,12 @@ WebRTCBridge::Connector::Connector() : Adapter()
 
 void WebRTCBridge::Connector::OnPackage(rtc::binary inPackage)
 {
-  
+  Bridge->BridgeSubmit(this, std::move(inPackage));
 }
 
 void WebRTCBridge::Connector::OnChannelMessage(std::string inMessage)
 {
+  
 }
 
 WebRTCBridge::Connector::~Connector()

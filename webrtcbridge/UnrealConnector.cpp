@@ -27,6 +27,8 @@ void WebRTCBridge::UnrealConnector::OnInformation(json message)
 
 void WebRTCBridge::UnrealConnector::OnPackage(rtc::binary inPackage)
 {
+  rtc::RtpHeader* header = reinterpret_cast<rtc::RtpHeader*>(inPackage.data());
+  
 }
 
 void WebRTCBridge::UnrealConnector::OnChannelMessage(std::string inMessage)

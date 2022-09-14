@@ -45,6 +45,22 @@ bool WebRTCBridge::ApplicationTrack::Open()
   return Track->isOpen();
 }
 
+WebRTCBridge::GeneralizedDataChannel::GeneralizedDataChannel(std::shared_ptr<rtc::DataChannel> inChannel)
+{
+}
+
+void WebRTCBridge::GeneralizedDataChannel::Send(std::byte* Data, unsigned Length)
+{
+}
+
+void WebRTCBridge::GeneralizedDataChannel::ConfigureInput(std::function<void(rtc::message_variant)>&& Handler)
+{
+}
+
+bool WebRTCBridge::GeneralizedDataChannel::Open()
+{
+}
+
 WebRTCBridge::NoBufferThread::NoBufferThread(std::shared_ptr<BridgeSocket> inDataSource)
     : SocketConnection(inDataSource)
 {
@@ -143,11 +159,14 @@ void WebRTCBridge::Bridge::BridgeSynchronize(Adapter* Instigator, nlohmann::json
         throw std::exception("An unexpected error occured while parsing the Bridge response");
       }
     }
-    if(Answer["type"] == "icecandidate")
+    if(Answer["type"] == "ok")
     {
       
     }
-    Instigator->OnInformation(Answer);
+    else if(Answer["type"] == "todo")
+    {
+      Instigator->OnInformation(Answer);
+    }
   }
 }
 
@@ -198,40 +217,26 @@ void WebRTCBridge::Bridge::BridgeRun()
 void WebRTCBridge::Bridge::Listen()
 {
   std::unique_lock<std::mutex> lock(CommandAccess);
-  if(ConnectionMode == EBridgeConnectionType::BridgeMode)
+  while (true)
   {
-    while(true)
+    CommandAvailable.wait(lock, [this]
+      {
+        return bNeedInfo && this->BridgeConnection.In->Peek() > 0;
+      });
+    bool isMessage = false;
+    try
     {
-      CommandAvailable.wait(lock, [this]
-        {
-          return this->BridgeConnection.In->Peek() > 0;
-        });
-      bool isMessage = false;
+      // all of these things must be available and also present
+      // on the same layer of the json signal
+      auto message = json::parse(this->BridgeConnection.In->StringData);
+      std::string type = message["type"];
+      auto app_id = message["id"].get<int>();
       
+      EndpointById[app_id]->OnInformation(message);
     }
-  }
-  else
-  {
-    while (true)
+    catch (...)
     {
-      CommandAvailable.wait(lock, [this]
-        {
-          return bNeedInfo && this->BridgeConnection.In->Peek() > 0;
-        });
-      bool isMessage = false;
-      try
-      {
-        // all of these things must be available and also present
-        // on the same layer of the json signal
-        auto message = json::parse(this->BridgeConnection.In->Reception);
-        std::string type = message["type"];
-        auto app_id = message["id"].get<int>();
-        EndpointById[app_id]->OnInformation(message);
-      }
-      catch (...)
-      {
 
-      }
     }
   }
 }
@@ -253,6 +258,7 @@ bool WebRTCBridge::Bridge::EstablishedConnection()
 
 void WebRTCBridge::Bridge::FindBridge()
 {
+  
 }
 
 void WebRTCBridge::Bridge::StartSignalling(std::string IP, int Port, bool keepAlive, bool useAuthentification)
@@ -289,6 +295,15 @@ void WebRTCBridge::Bridge::StartSignalling(std::string IP, int Port, bool keepAl
   }
   std::cout << "Waiting for Signalling Websocket to Connect." << std::endl;
   Notifier.wait();
+}
+
+void WebRTCBridge::Bridge::SubmitToSignalling(json Message, Adapter* Endpoint)
+{
+  if(SignallingConnection->isOpen())
+  {
+    Message["ID"] = Endpoint->ID;
+    SignallingConnection->send(Message);
+  }
 }
 
 void WebRTCBridge::Bridge::UseConfig(std::string filename)

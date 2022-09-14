@@ -42,6 +42,27 @@ void WebRTCBridge::Provider::FindBridge()
   lock.release();
 }
 
+std::shared_ptr<WebRTCBridge::UnrealConnector> WebRTCBridge::Provider::CreateConnection()
+{
+}
+
+uint32_t WebRTCBridge::Provider::SignalNewEndpoint()
+{
+}
+
+void WebRTCBridge::Provider::RemoteMessage(json Message)
+{
+  if(Message["type"] == "offer")
+  {
+    auto connection = CreateConnection();
+  }
+  else if(Message["type"] == "connected")
+  {
+    json data{{"type","playerConnected"}};
+    SignallingConnection->send(data.dump());
+  }
+}
+
 void WebRTCBridge::Provider::OnSignallingMessage(std::string Message)
 {
   json Content;
@@ -53,13 +74,21 @@ void WebRTCBridge::Provider::OnSignallingMessage(std::string Message)
     {
       throw std::exception("Could not extract ID from SS response.");
     }
+    else
+    {
+      EndpointById[id]->OnInformation(Content);
+    }
+    
     if(Content["type"] == "answer")
     {
       EndpointById[id]->OnInformation(Content);
+      // answer must be relayed!!
+      BridgeSynchronize(EndpointById[id].get(), Content, false);
     }
     else if(Content["type"] == "icecandidate")
     {
       std::string candidate = Content["candidate"];
+
     }
   }
   catch(...)
@@ -70,5 +99,5 @@ void WebRTCBridge::Provider::OnSignallingMessage(std::string Message)
 
 void WebRTCBridge::Provider::OnSignallingData(rtc::binary Message)
 {
-
+  // I would not know what to do here
 }

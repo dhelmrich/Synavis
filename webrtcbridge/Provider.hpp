@@ -23,5 +23,7 @@ namespace WebRTCBridge
   public:
     void OnSignallingMessage(std::string Message) override;
     void OnSignallingData(rtc::binary Message) override;
+    uint32_t SignalNewEndpoint() override;
+    void RemoteMessage(json Message) override;
   };
 }

@@ -229,7 +229,7 @@ namespace WebRTCBridge
     DirectMode
   };
 
-  class ApplicationTrack
+  class WEBRTCBRIDGE_EXPORT ApplicationTrack
   {
   public:
     const static rtc::SSRC SSRC = 42;
@@ -244,10 +244,20 @@ namespace WebRTCBridge
     bool Open();
   };
 
+  class WEBRTCBRIDGE_EXPORT GeneralizedDataChannel
+  {
+  public:
+    GeneralizedDataChannel(std::shared_ptr<rtc::DataChannel> inChannel);
+    std::shared_ptr<rtc::DataChannel> Track;
+    void Send(std::byte* Data, unsigned int Length);
+    void ConfigureInput(std::function<void(rtc::message_variant)>&& Handler);
+    bool Open();
+  };
+
   using StreamVariant = std::variant<std::shared_ptr<rtc::DataChannel>,
     std::shared_ptr<ApplicationTrack>>;
 
-  class NoBufferThread
+  class WEBRTCBRIDGE_EXPORT NoBufferThread
   {
   public:
     const int ReceptionSize = 208 * 1024 * 1024;
@@ -281,6 +291,8 @@ namespace WebRTCBridge
     virtual void FindBridge();
     virtual void StartSignalling(std::string IP, int Port, bool keepAlive = true, bool useAuthentification = false);
 
+    void SubmitToSignalling(json Message, Adapter* Endpoint);
+
     inline bool FindID(const json& Jason, int& ID)
     {
       decltype(Jason.begin()) id_entry;
@@ -298,9 +310,12 @@ namespace WebRTCBridge
       return false;
     }
 
-
+    // This method should be used to signal to the provider
+    // that a new application has connected.
+    virtual uint32_t SignalNewEndpoint() = NULL;
 
     virtual void OnSignallingMessage(std::string Message) = NULL;
+    virtual void RemoteMessage(json Message) = NULL;
     virtual void OnSignallingData(rtc::binary Message) = NULL;
 
   protected:
@@ -337,6 +352,7 @@ namespace WebRTCBridge
       // There should be no order logic behind the packages, they should just be sent as-is!
       std::shared_ptr<BridgeSocket> DataOut;
     } BridgeConnection;
+    
 
     std::condition_variable TaskAvaliable;
 

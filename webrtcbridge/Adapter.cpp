@@ -3,6 +3,7 @@
 void WebRTCBridge::Adapter::SetupWebRTC()
 {
   pc_ = std::make_shared<rtc::PeerConnection>();
+  
   pc_->onStateChange([this](rtc::PeerConnection::State inState)
   {
     
@@ -20,8 +21,15 @@ void WebRTCBridge::Adapter::SetupWebRTC()
   });
   pc_->onDataChannel([this](auto channel)
   {
+    
+    json desc = {{"label",channel->label()},
+    { "id",channel->id()},
+    {"protocol",channel->protocol()},
+    {"maxmessagesize",channel->maxMessageSize()}};
+    Bridge->BridgeRun(std::bind(&Bridge::BridgeSynchronize, Bridge, this, desc, false));
     channel->onMessage([this](auto messageorpackage)
     {
+      
       if(std::holds_alternative<std::string>(messageorpackage))
       {
         OnChannelMessage(std::get<std::string>(messageorpackage));
@@ -41,6 +49,7 @@ std::string WebRTCBridge::Adapter::GetConnectionString()
 
 std::string WebRTCBridge::Adapter::GenerateSDP()
 {
+  
 }
 
 std::string WebRTCBridge::Adapter::Offer()
@@ -55,6 +64,7 @@ std::string WebRTCBridge::Adapter::Answer()
 
 void WebRTCBridge::Adapter::OnInformation(json message)
 {
+  
 }
 
 std::string WebRTCBridge::Adapter::PushSDP(std::string)
