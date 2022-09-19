@@ -1,4 +1,4 @@
-# In progress project -  do not rely on this project!
+# In progress project -  do not use in production!
 
 **Update 2022-03-01** Dependencies are now all updated and should work without issue. Gstreamer can still read the frames from the rtp relay, and you should be able to access them via opencv with gstreamer. libdatachannel has an example on how this works. We are working on enhancing compatability with vanilla opencv.
 
