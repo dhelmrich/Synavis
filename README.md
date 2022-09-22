@@ -1,5 +1,7 @@
 # In progress project -  do not use in production!
 
+**Update 2022-09-22** I am moving an external complete workflow implementation that is quite hacky onto a proper library in a branch of this project. I will do semi-regular updates when framework design is done and at some steps of the way towards a full first release.
+
 **Update 2022-03-01** Dependencies are now all updated and should work without issue. Gstreamer can still read the frames from the rtp relay, and you should be able to access them via opencv with gstreamer. libdatachannel has an example on how this works. We are working on enhancing compatability with vanilla opencv.
 
 # What will happen to this project going forward
