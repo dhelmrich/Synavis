@@ -1,4 +1,6 @@
 #pragma once
+#ifndef WEBRTCBRIDGE_HPP
+#define WEBRTCBRIDGE_HPP
 #include <json.hpp>
 #include <span>
 #include <variant>
@@ -29,6 +31,7 @@ namespace WebRTCBridge
   // forward definitions
   class Adapter;
 
+ 
 
   struct WEBRTCBRIDGE_EXPORT BridgeSocket
   {
@@ -198,6 +201,19 @@ namespace WebRTCBridge
       return std::span<N>(Reception, ReceivedLength / sizeof(N));
     }
   };
+
+#pragma pack(1)
+  struct BridgeRTPHeader
+  {
+    // Extension Header
+    uint16_t profile_id{1667};
+    uint16_t length{sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint32_t) };
+
+    // Actual extension values
+    uint16_t player_id;
+    uint16_t streamer_id;
+    uint32_t meta;
+  };
   
   enum class WEBRTCBRIDGE_EXPORT EClientMessageType
   {
@@ -229,38 +245,24 @@ namespace WebRTCBridge
     DirectMode
   };
 
-  class WEBRTCBRIDGE_EXPORT ApplicationTrack
+  enum class WEBRTCBRIDGE_EXPORT EDataReceptionPolicy
   {
-  public:
-    const static rtc::SSRC SSRC = 42;
-    ApplicationTrack(std::shared_ptr<rtc::Track> inTrack);
-    void ConfigureInput(std::function<void(rtc::message_variant)>&& Handler);
-    void ConfigureOutput(rtc::Description::Media* inConfig);
-    std::shared_ptr<rtc::Track> Track;
-    std::shared_ptr<rtc::RtcpSrReporter> SendReporter;
-    rtc::Description::Video video_{"video",
-      rtc::Description::Direction::SendOnly};
-    void Send(std::byte* Data, unsigned int Length);
-    bool Open();
-  };
-
-  class WEBRTCBRIDGE_EXPORT GeneralizedDataChannel
-  {
-  public:
-    GeneralizedDataChannel(std::shared_ptr<rtc::DataChannel> inChannel);
-    std::shared_ptr<rtc::DataChannel> Track;
-    void Send(std::byte* Data, unsigned int Length);
-    void ConfigureInput(std::function<void(rtc::message_variant)>&& Handler);
-    bool Open();
+    TempFile = (std::uint8_t)EBridgeConnectionType::DirectMode + 1u,
+    BinaryCallback,
+    SynchronizedMetadata,
+    AsynchronousMetadata,
+    JsonCallback,
+    Loss
   };
 
   using StreamVariant = std::variant<std::shared_ptr<rtc::DataChannel>,
-    std::shared_ptr<ApplicationTrack>>;
+    std::shared_ptr<rtc::Track>>;
 
   class WEBRTCBRIDGE_EXPORT NoBufferThread
   {
   public:
     const int ReceptionSize = 208 * 1024 * 1024;
+    uint32_t RtpDestinationHeader{};
     EBridgeConnectionType ConnectionMode{ EBridgeConnectionType::DirectMode };
     NoBufferThread(std::shared_ptr<BridgeSocket> inSocketConnection);
     std::size_t AddRTC(StreamVariant inRTC);
@@ -282,14 +284,18 @@ namespace WebRTCBridge
     virtual void BridgeSynchronize(Adapter* Instigator,
                                    nlohmann::json Message, bool bFailIfNotResolved = false);
     void CreateTask(std::function<void(void)>&& Task);
-    void BridgeSubmit(Adapter* Instigator, std::variant<rtc::binary, std::string> Message) const;
+    void BridgeSubmit(Adapter* Instigator, StreamVariant origin, std::variant<rtc::binary, std::string> Message) const;
+    virtual void InitConnection();
+    void SetHeaderByteStart(uint32_t Byte);
+
     virtual void BridgeRun();
     virtual void Listen();
     virtual bool CheckSignallingActive();
 
-    virtual bool EstablishedConnection();
+    virtual bool EstablishedConnection(bool Shallow = false);
     virtual void FindBridge();
     virtual void StartSignalling(std::string IP, int Port, bool keepAlive = true, bool useAuthentification = false);
+    void ConfigureTrackOutput(std::shared_ptr<rtc::Track> OutputStream, rtc::Description::Media* Media);
 
     void SubmitToSignalling(json Message, Adapter* Endpoint);
 
@@ -348,7 +354,7 @@ namespace WebRTCBridge
     {
       std::shared_ptr<BridgeSocket> In;
       std::shared_ptr<BridgeSocket> Out;
-      // Data out is being called without lockign!
+      // Data out is being called without locking!
       // There should be no order logic behind the packages, they should just be sent as-is!
       std::shared_ptr<BridgeSocket> DataOut;
     } BridgeConnection;
@@ -356,7 +362,13 @@ namespace WebRTCBridge
 
     std::condition_variable TaskAvaliable;
 
+    // this will be set the first time an SDP is transmitted
+    // this will be asymmetric because UE has authority
+    // over the header layout
+    uint32_t RtpDestinationHeader{};
+
     int NextID{ 0 };
 
   };
 }
+#endif

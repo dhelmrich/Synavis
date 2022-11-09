@@ -1,4 +1,6 @@
 #pragma once
+#ifndef WEBRTC_PROVIDER_HPP
+#define WEBRTC_PROVIDER_HPP
 #include <rtc/rtc.hpp>
 #include <json.hpp>
 #include "WebRTCBridge.hpp"
@@ -13,17 +15,18 @@ namespace WebRTCBridge
 
   class WEBRTCBRIDGE_EXPORT Provider : public Bridge
   {
+  public:
     using json = nlohmann::json;
 
     virtual void FindBridge() override;
 
     std::shared_ptr<UnrealConnector> CreateConnection();
-
-
-  public:
+    
+    
     void OnSignallingMessage(std::string Message) override;
     void OnSignallingData(rtc::binary Message) override;
     uint32_t SignalNewEndpoint() override;
     void RemoteMessage(json Message) override;
   };
 }
+#endif

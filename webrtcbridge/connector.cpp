@@ -18,8 +18,8 @@ void WebRTCBridge::Connector::SetupApplicationConnection()
 
   rtc::Description::Video V2A("video",rtc::Description::Direction::SendOnly);
   V2A.addH264Codec(96);
-  V2A.addSSRC(ApplicationTrack::SSRC,"video-send");
-  VideoToApplication = std::make_shared<ApplicationTrack>(pc_->addTrack(V2A));
+  V2A.addSSRC(42,"video-send");
+  this->ToApplication.push_back(pc_->addTrack(V2A));
 
   rtc::Description::Audio A2A("audio", rtc::Description::Direction::SendOnly);
   
@@ -27,9 +27,11 @@ void WebRTCBridge::Connector::SetupApplicationConnection()
 
 void WebRTCBridge::Connector::AwaitSignalling()
 {
+  // todo: wait for signalling to boot up, use future from onOpen
+  //       or a flag of the class set by onopen
 }
 
-void WebRTCBridge::Connector::OnInformation(json message)
+void WebRTCBridge::Connector::OnRemoteInformation(json message)
 {
   if (message.find("type") != message.end())
   {
@@ -41,12 +43,16 @@ void WebRTCBridge::Connector::OnInformation(json message)
      * device that UE runs on and only contain video/audio/data transmission information
      * that is relevant for our webrtc startup
      */
-    if (message["type"] == "answer")
+    if (message["type"] == "answer" || message["type"] == "offer")
     {
       std::string sdp = message["sdp"];
       rtc::Description desc(sdp);
-      Bridge->ConfigureUpstream(this, message);
-      
+      // todo: make sure that extmaps contain a compound endpoint+track id
+      auto extensions = message["extensions"];
+      for(auto entry : extensions)
+      {
+        
+      }
       for (unsigned i = 0; i < desc.mediaCount(); ++i)
       {
         auto medium = desc.media(i);
@@ -79,20 +85,26 @@ void WebRTCBridge::Connector::OnInformation(json message)
           auto track = pc_->addTrack(*metadata);
 
           // all of these tracks are TO APPLICATION and can be initialized as output
-          auto managed_track = std::make_shared<ApplicationTrack>(std::move(track));
-          managed_track->ConfigureOutput(metadata);
-          ToApplication.push_back(std::move(managed_track));
+          Bridge->ConfigureTrackOutput(track, metadata);
+          ToApplication.push_back(std::move(track));
         }
         else
         {
           auto app = std::get<rtc::Description::Application*>(medium);
           auto channel = pc_->createDataChannel(app->description());
-          channel->onOpen([this]{});
+          channel->onOpen([this]
+          {
+            
+          });
         }
       }
-
     }
   }
+}
+
+void WebRTCBridge::Connector::SetReceptionPolicy(EDataReceptionPolicy inPolicy)
+{
+  this->Policy = inPolicy;
 }
 
 
@@ -100,19 +112,13 @@ void WebRTCBridge::Connector::OnGatheringStateChange(rtc::PeerConnection::Gather
 {
   if(inState == rtc::PeerConnection::GatheringState::Complete)
   {
-    
+    // todo: be ready to receive at this point, but events will triggered by the framework anyway
   }
 }
 
 void WebRTCBridge::Connector::OnTrack(std::shared_ptr<rtc::Track> inTrack)
 {
-  auto managed_track = std::make_shared<ApplicationTrack>(std::move(inTrack));
-  managed_track->ConfigureInput([this](auto message)
-    {
-      Bridge->BridgeSubmit(this, std::move(message));
-    });
-  // these tracks are always FROM APPLICATION and can be initialized as input
-  FromApplication.push_back(std::move(managed_track));
+  FromApplication.push_back(std::move(inTrack));
 }
 
 void WebRTCBridge::Connector::OnLocalDescription(rtc::Description inDescription)
@@ -128,12 +134,6 @@ void WebRTCBridge::Connector::OnDataChannel(std::shared_ptr<rtc::DataChannel> in
   // Data Channels in webRTC are generally both directions. This is important
   // since it might imply that a client is either able to consume data or not
   // and subsequently also has an inclination of producing commands
-  Adapter::OnDataChannel(inChannel);
-  Bridge->CreateTask(std::bind(&Bridge::BridgeSynchronize, Bridge, this, json({
-    {"DataChannel",{{"id",inChannel->id()},"label",inChannel->label()}},
-    {"ID",this->ID}
-  }), true));
-  
 }
 
 WebRTCBridge::Connector::Connector() : Adapter()
@@ -141,14 +141,18 @@ WebRTCBridge::Connector::Connector() : Adapter()
 
 }
 
-void WebRTCBridge::Connector::OnPackage(rtc::binary inPackage)
+void WebRTCBridge::Connector::OnChannelPackage(rtc::binary inPackage)
 {
-  Bridge->BridgeSubmit(this, std::move(inPackage));
 }
 
 void WebRTCBridge::Connector::OnChannelMessage(std::string inMessage)
 {
-  
+  // todo: channel message contains string content, needs to be observed, might contain related data
+}
+
+std::string WebRTCBridge::Connector::GetConnectionString()
+{
+  return this->config_.dump();
 }
 
 WebRTCBridge::Connector::~Connector()
@@ -158,7 +162,6 @@ WebRTCBridge::Connector::~Connector()
 WebRTCBridge::Connector::Connector(Connector&& other)
 {
 }
-
 
 void WebRTCBridge::Connector::StartFrameReception()
 {

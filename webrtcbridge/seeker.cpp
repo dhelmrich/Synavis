@@ -47,51 +47,54 @@ bool WebRTCBridge::Seeker::CheckSignallingActive()
   return false;
 }
 
-
-
-bool WebRTCBridge::Seeker::EstablishedConnection()
+bool WebRTCBridge::Seeker::EstablishedConnection(bool Shallow)
 {
-  BridgeConnection.In = std::make_shared<BridgeSocket>();
-  BridgeConnection.Out = std::make_shared<BridgeSocket>();
-  BridgeConnection.Out->Address = Config["LocalAddress"];
-  BridgeConnection.Out->Port = Config["LocalPort"];
-  BridgeConnection.In->Address = Config["RemoteAddress"];
-  BridgeConnection.In->Port = Config["RemotePort"];
-  if(BridgeConnection.Out->Connect() && BridgeConnection.In->Connect())
+  if(Shallow)
   {
-    std::unique_lock<std::mutex> lock(QueueAccess);
-    lock.lock();
-    int PingPongSuccessful = -1;
-    CommInstructQueue.push([this,&PingPongSuccessful]
-    {
-      BridgeConnection.Out->Send(json({{"ping",int()}}).dump());
-      int reception{0};
-      while((reception = BridgeConnection.In->Peek()) == 0)
-      {
-        std::this_thread::yield();
-      }
-      try
-      {
-        if(json::parse(BridgeConnection.In->StringData)["ping"] == 1)
-        {
-          PingPongSuccessful = 1;
-        }
-      }catch(...)
-      {
-        PingPongSuccessful = 0;
-      }
-    });
-    lock.release();
-    while(PingPongSuccessful == -1) std::this_thread::yield();
-    return PingPongSuccessful == 1;
+    return Bridge::EstablishedConnection(Shallow);
   }
   else
   {
-    return false;
+    BridgeConnection.In = std::make_shared<BridgeSocket>();
+    BridgeConnection.Out = std::make_shared<BridgeSocket>();
+    BridgeConnection.Out->Address = Config["LocalAddress"];
+    BridgeConnection.Out->Port = Config["LocalPort"];
+    BridgeConnection.In->Address = Config["RemoteAddress"];
+    BridgeConnection.In->Port = Config["RemotePort"];
+    if(BridgeConnection.Out->Connect() && BridgeConnection.In->Connect())
+    {
+      std::unique_lock<std::mutex> lock(QueueAccess);
+      lock.lock();
+      int PingPongSuccessful = -1;
+      CommInstructQueue.push([this,&PingPongSuccessful]
+      {
+        BridgeConnection.Out->Send(json({{"ping",int()}}).dump());
+        int reception{0};
+        while((reception = BridgeConnection.In->Peek()) == 0)
+        {
+          std::this_thread::yield();
+        }
+        try
+        {
+          if(json::parse(BridgeConnection.In->StringData)["ping"] == 1)
+          {
+            PingPongSuccessful = 1;
+          }
+        }catch(...)
+        {
+          PingPongSuccessful = 0;
+        }
+      });
+      lock.release();
+      while(PingPongSuccessful == -1) std::this_thread::yield();
+      return PingPongSuccessful == 1;
+    }
+    else
+    {
+      return false;
+    }
   }
 }
-
-
 
 void WebRTCBridge::Seeker::FindBridge()
 {
@@ -140,7 +143,6 @@ void WebRTCBridge::Seeker::RecoverConnection()
 {
 }
 
-
 std::shared_ptr<WebRTCBridge::Connector> WebRTCBridge::Seeker::CreateConnection()
 {
   // structural wrapper to forego the need to create a fractured shared pointer
@@ -149,10 +151,7 @@ std::shared_ptr<WebRTCBridge::Connector> WebRTCBridge::Seeker::CreateConnection(
   std::shared_ptr<WebRTCBridge::Connector> Connection{std::move(t),&t->cont };
 
   Connection->Bridge = std::shared_ptr<Seeker>(this);
-  Connection->ID = ++NextID;
-
-  Connection->Upstream = std::make_shared<BridgeSocket>
-  (std::move(BridgeSocket::GetFreeSocket(Config["LocalAddress"])));
+  Connection->SetID(this,++NextID);
   
   return Connection;
 
@@ -167,9 +166,6 @@ void WebRTCBridge::Seeker::DestroyConnection(std::shared_ptr<Connector> Connecto
 
 void WebRTCBridge::Seeker::ConfigureUpstream(Connector* Instigator, const json& Answer)
 {
-  Instigator->Upstream->Address = Config["RemoteAddress"];
-  Instigator->Upstream->Port = Config["RemotePort"];
-  Instigator->Upstream->Connect();
 
 }
 
@@ -222,7 +218,7 @@ void WebRTCBridge::Seeker::OnSignallingMessage(std::string Message)
     {
       std::cout << "From onMessage SS thread: Could not find connector for ice candidate." << std::endl;
     }
-    Endpoint->OnInformation(content);
+    Endpoint->OnRemoteInformation(content);
   }
 }
 

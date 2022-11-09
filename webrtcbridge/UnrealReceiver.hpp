@@ -1,4 +1,6 @@
-
+#pragma once
+#ifndef WEBRTC_UNREAL_RECEIVER_HPP
+#define WEBRTC_UNREAL_RECEIVER_HPP
 // FORWARD DEFINITIONS
 #include <rtc/rtc.hpp>
 #include <json.hpp>
@@ -119,3 +121,4 @@ private:
 };
 
 }
+#endif

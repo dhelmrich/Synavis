@@ -46,7 +46,7 @@ target_include_directories(${PYPROJECT}
 )
 
 target_link_libraries(${projectname} PRIVATE datachannel-static nlohmann_json::nlohmann_json )
-target_link_libraries(${PYPROJECT} PRIVATE datachannel-static nlohmann_json::nlohmann_json ${PYTHON_LIBRARIES})
+target_link_libraries(${PYPROJECT} PRIVATE ${projectname} datachannel-static nlohmann_json::nlohmann_json ${PYTHON_LIBRARIES})
 set_target_properties(${PYPROJECT} PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/)
 
 generate_export_header(${projectname}

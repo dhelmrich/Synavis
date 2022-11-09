@@ -1,4 +1,6 @@
-#pragma once 
+#pragma once
+#ifndef WEBRTC_SEEKER_HPP
+#define WEBRTC_SEEKER_HPP
 #include "rtc/rtc.hpp"
 #include <json.hpp>
 #include <vector>
@@ -23,12 +25,12 @@ namespace WebRTCBridge
   public:
     using json = nlohmann::json;
     Seeker();
-    virtual ~Seeker() override;
+    ~Seeker();
 
     // This methods checks whether the SigServ is reachable
     virtual bool CheckSignallingActive();
     
-    virtual bool EstablishedConnection() override;
+    virtual bool EstablishedConnection(bool Shallow = false) override;
     virtual void FindBridge() override;
     virtual void RecoverConnection();
 
@@ -45,3 +47,4 @@ namespace WebRTCBridge
   }; 
   
 }
+#endif

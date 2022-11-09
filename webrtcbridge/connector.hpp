@@ -1,4 +1,6 @@
 #pragma once
+#ifndef CONNECTOR_HPP
+#define CONNECTOR_HPP
 
 #include "rtc/rtc.hpp"
 #include <json.hpp>
@@ -18,11 +20,11 @@ namespace WebRTCBridge
   struct BridgeSocket;
   class NoBufferThread;
   class ApplicationTrack;
+
+
   /*!
    * @class Connector
-   * A class to connect the application-side to the Unreal server-side bridge
-   * This class is intended to be used inside an Apptainer/Container environment
-   * Previoud knowledge about IP environment needed
+   * A class that contains a whole unreal mimick to serve as webrtc peer.
    *
    */
   class WEBRTCBRIDGE_EXPORT Connector : public Adapter
@@ -38,26 +40,8 @@ namespace WebRTCBridge
     void SetupApplicationConnection();
     void AwaitSignalling();
 
-    virtual void OnInformation(json message) override;
-
-
-    // Data streams to other Bridge
-    // Bridge Pointer is also Shared, which means that
-    // the Seeker class has to resolve the object destruction of
-    // connections, which is intended anyways.
-    std::shared_ptr<class Seeker> Bridge;
-    std::shared_ptr<BridgeSocket> Upstream;
-    std::shared_ptr<BridgeSocket> Downstream;
-
-    // WebRTC Connectivity
-    std::optional<std::shared_ptr<rtc::PeerConnection>> ApplicationConnection;
-    std::optional<NoBufferThread> TransmissionThread;
-
-    // Data streams to Application
-    std::shared_ptr<ApplicationTrack> VideoToApplication;
-    std::shared_ptr<ApplicationTrack> AudioToApplication;
-    std::shared_ptr<rtc::DataChannel> DataToApplication;
-    std::shared_ptr<rtc::DataChannel> DataFromApplication;
+    virtual void OnRemoteInformation(json message) override;
+    void SetReceptionPolicy(EDataReceptionPolicy inPolicy);
 
     // Data streams in total
     std::vector<StreamVariant> FromApplication;
@@ -72,19 +56,12 @@ namespace WebRTCBridge
 
   protected:
     Connector();
+    EDataReceptionPolicy Policy{ EDataReceptionPolicy::SynchronizedMetadata };
   public:
-    void OnPackage(rtc::binary inPackage) override;
+    void OnChannelPackage(rtc::binary inPackage) override;
     void OnChannelMessage(std::string inMessage) override;
-  private:
-    rtc::Configuration rtcconfig_;
-    std::shared_ptr<rtc::PeerConnection> pc_;
-    std::shared_ptr<rtc::DataChannel> vdc_;
-    json config_;
-    unsigned int MessagesReceived{0};
-    unsigned int IceCandidatesReceived{0};
-    int ID{};
-
-    std::optional<rtc::Description> Offer_;
+    std::string GetConnectionString() override;
   };
 
 }
+#endif

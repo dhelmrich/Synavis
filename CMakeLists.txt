@@ -53,6 +53,7 @@ if(NOT pybind11_POPULATED)
 endif()
 
 add_subdirectory(webrtcbridge)
+add_subdirectory(externtest)
 
 
 

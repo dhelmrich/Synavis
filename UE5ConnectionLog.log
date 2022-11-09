@@ -181,7 +181,8 @@ a=max-message-size:262144
 "}
 13:43:39.669 -> Streamer: {"type":"iceCandidate","playerId":101,"candidate":{"sdpMid":"0","sdpMLineIndex":0,"candidate":"candidate:496779843 1 udp 2122260223 134.94.172.176 51005 typ host generation 0 ufrag mzUL network-id 1"}}
 13:43:39.669 <- player 101: {"type":"iceCandidate","candidate":{"sdpMid":"0","sdpMLineIndex":0,"candidate":"candidate:496779843 1 udp 2122260223 134.94.172.176 51005 typ host generation 0 ufrag mzUL network-id 1"}}
-13:43:39.693 -> player 101: {"type":"answer","sdp":"v=0
+13:43:39.693 -> player 101: {"type":"answer","sdp":"
+v=0
 o=mozilla...THIS_IS_SDPARTA-99.0 917049855031136902 0 IN IP4 0.0.0.0
 s=-
 t=0 0

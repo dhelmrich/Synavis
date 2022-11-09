@@ -2,6 +2,7 @@
 #include "Adapter.hpp"
 
 #include <fstream>
+#include <span>
 
 int WebRTCBridge::BridgeSocket::Receive(bool invalidIsFailure)
 {
@@ -10,55 +11,6 @@ int WebRTCBridge::BridgeSocket::Receive(bool invalidIsFailure)
 #elif __linux__
   return 0;
 #endif
-}
-
-WebRTCBridge::ApplicationTrack::ApplicationTrack(std::shared_ptr<rtc::Track> inTrack)
-      : Track(inTrack) {}
-
-void WebRTCBridge::ApplicationTrack::ConfigureInput(std::function<void(rtc::message_variant)>&& Handler)
-{
-  Track->onMessage(Handler);
-}
-      
-void WebRTCBridge::ApplicationTrack::Send(std::byte* Data, unsigned Length)
-{
-  auto rtp = reinterpret_cast<rtc::RtpHeader*>(Data);
-  rtp->setSsrc(SSRC);
-  Track->send(Data, Length);
-}
-
-void WebRTCBridge::ApplicationTrack::ConfigureOutput(rtc::Description::Media* inConfig)
-{
-  auto ssrc_vector = inConfig->getSSRCs();
-  // as a start, because I am unsure about the vector, I will just get the first
-  auto ssrc = ssrc_vector[0];
-  std::string name{ inConfig->getCNameForSsrc(ssrc).value_or("") };
-
-  for (auto it = inConfig->beginMaps(); it != inConfig->endMaps(); ++it)
-  {
-    auto map = *it;
-  }
-}
-
-bool WebRTCBridge::ApplicationTrack::Open()
-{
-  return Track->isOpen();
-}
-
-WebRTCBridge::GeneralizedDataChannel::GeneralizedDataChannel(std::shared_ptr<rtc::DataChannel> inChannel)
-{
-}
-
-void WebRTCBridge::GeneralizedDataChannel::Send(std::byte* Data, unsigned Length)
-{
-}
-
-void WebRTCBridge::GeneralizedDataChannel::ConfigureInput(std::function<void(rtc::message_variant)>&& Handler)
-{
-}
-
-bool WebRTCBridge::GeneralizedDataChannel::Open()
-{
 }
 
 WebRTCBridge::NoBufferThread::NoBufferThread(std::shared_ptr<BridgeSocket> inDataSource)
@@ -96,11 +48,17 @@ void WebRTCBridge::NoBufferThread::Run()
     else
     {
       // TOOD if this check fails we might run into \0 at the end of the string.
+
       const auto& destination = WebRTCTracks[SocketConnection->NumberData[0]];
       const auto& byte_data = SocketConnection->BinaryData;
-      if(std::holds_alternative<std::shared_ptr<ApplicationTrack>>(destination))
+
+      rtc::RtpHeader* head = reinterpret_cast<rtc::RtpHeader*>(byte_data.data());
+      auto target = head->getExtensionHeader() + this->RtpDestinationHeader;
+
+
+      if(std::holds_alternative<std::shared_ptr<rtc::Track>>(destination))
       {
-        std::get<std::shared_ptr<ApplicationTrack>>(destination)->Send(byte_data.data(), byte_data.size());
+        std::get<std::shared_ptr<rtc::Track>>(destination)->send(byte_data.data(), byte_data.size());
       }
       else
       {
@@ -114,8 +72,15 @@ void WebRTCBridge::NoBufferThread::Run()
 
 WebRTCBridge::Bridge::Bridge()
 {
+  std::cout << "An instance of the WebRTCBridge was started, we are starting the threads..." << std::endl;
   BridgeThread = std::async(std::launch::async, &Bridge::BridgeRun,this);
+  std::cout << "Bridge Thread started" << std::endl;
   ListenerThread = std::async(std::launch::async,&Bridge::Listen, this);
+  std::cout << "Listener Thread Started" << std::endl;
+
+  BridgeConnection.In = std::make_shared<BridgeSocket>();
+  BridgeConnection.Out = std::make_shared<BridgeSocket>();
+  BridgeConnection.DataOut = std::make_shared<BridgeSocket>();
 }
 
 WebRTCBridge::Bridge::~Bridge()
@@ -165,7 +130,7 @@ void WebRTCBridge::Bridge::BridgeSynchronize(Adapter* Instigator, nlohmann::json
     }
     else if(Answer["type"] == "todo")
     {
-      Instigator->OnInformation(Answer);
+      Instigator->OnRemoteInformation(Answer);
     }
   }
 }
@@ -178,19 +143,44 @@ void WebRTCBridge::Bridge::CreateTask(std::function<void()>&& Task)
   lock.unlock();
 }
 
-void WebRTCBridge::Bridge::BridgeSubmit(Adapter* Instigator, std::variant<rtc::binary, std::string> Message) const
+void WebRTCBridge::Bridge::BridgeSubmit(Adapter* Instigator, StreamVariant origin, std::variant<rtc::binary, std::string> Message) const
 {
-  json Transmission = { {"id",Instigator->ID} };
   // we need to break this up because of json lib compatibility
   if (std::holds_alternative<std::string>(Message))
   {
+    json Transmission = { {"id",Instigator->ID} };
     Transmission["data"] = std::get<std::string>(Message);
+    BridgeConnection.DataOut->Send(Transmission);
   }
   else
   {
-    Transmission["data"] = std::get<rtc::binary>(Message);
+
+    auto data = std::get<rtc::binary>(Message);
+    if(data.size() > RtpDestinationHeader + 13)
+    {
+      auto* p_proxy = reinterpret_cast<uint16_t*>((data.data() + RtpDestinationHeader));
+      *p_proxy = Instigator->ID;
+    }
+    BridgeConnection.DataOut->Send(data);
   }
-  BridgeConnection.DataOut->Send(Transmission);
+}
+
+void WebRTCBridge::Bridge::InitConnection()
+{
+  if(Config["RemoteAddress"].is_number())
+  {
+    
+  }
+  else
+  {
+    BridgeConnection.In->Address = Config["RemoteAddress"];
+  }
+  BridgeConnection.In->Port = Config["RemotePort"];
+}
+
+void WebRTCBridge::Bridge::SetHeaderByteStart(uint32_t Byte)
+{
+  this->DataInThread->RtpDestinationHeader = Byte;
 }
 
 void WebRTCBridge::Bridge::BridgeRun()
@@ -232,7 +222,7 @@ void WebRTCBridge::Bridge::Listen()
       std::string type = message["type"];
       auto app_id = message["id"].get<int>();
       
-      EndpointById[app_id]->OnInformation(message);
+      EndpointById[app_id]->OnRemoteInformation(message);
     }
     catch (...)
     {
@@ -246,11 +236,15 @@ bool WebRTCBridge::Bridge::CheckSignallingActive()
   return SignallingConnection->isOpen();
 }
 
-bool WebRTCBridge::Bridge::EstablishedConnection()
+bool WebRTCBridge::Bridge::EstablishedConnection(bool Shallow)
 {
   using namespace std::chrono_literals;
   auto status_bridge_thread = BridgeThread.wait_for(0ms);
   auto status_command_thread = ListenerThread.wait_for(0ms);
+  if(!Shallow)
+  {
+    // check connection validity here and actually ping connected bridges
+  }
   return (BridgeConnection.In->Valid && BridgeConnection.Out->Valid
          && status_bridge_thread != std::future_status::ready
          && status_command_thread != std::future_status::ready);
@@ -295,6 +289,10 @@ void WebRTCBridge::Bridge::StartSignalling(std::string IP, int Port, bool keepAl
   }
   std::cout << "Waiting for Signalling Websocket to Connect." << std::endl;
   Notifier.wait();
+}
+
+void WebRTCBridge::Bridge::ConfigureTrackOutput(std::shared_ptr<rtc::Track> OutputStream, rtc::Description::Media* Media)
+{
 }
 
 void WebRTCBridge::Bridge::SubmitToSignalling(json Message, Adapter* Endpoint)
