@@ -54,6 +54,7 @@ endif()
 
 add_subdirectory(webrtcbridge)
 add_subdirectory(externtest)
+add_subdirectory(native_modules)
 
 
 
