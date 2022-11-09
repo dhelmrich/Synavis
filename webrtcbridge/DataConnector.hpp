@@ -19,6 +19,8 @@ public:
   using json = nlohmann::json;
 
   DataConnector();
+  ~DataConnector();
+  
   void SendData(rtc::binary Data);
   void SendMessage(std::string Message);
 
@@ -29,6 +31,8 @@ protected:
 
   rtc::Configuration rtcconfig_;
   std::shared_ptr<rtc::PeerConnection> pc_;
+  rtc::WebSocket ss_;
+  unsigned int MessagesReceived{ 0 };
   json config_;
 
 };
