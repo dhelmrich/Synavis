@@ -17,26 +17,27 @@ class WEBRTCBRIDGE_EXPORT DataConnector : std::enable_shared_from_this<DataConne
 {
 public:
   using json = nlohmann::json;
-
   DataConnector();
   ~DataConnector();
-  
+  void StartSignalling();
   void SendData(rtc::binary Data);
   void SendMessage(std::string Message);
-
+  EConnectionState GetState();
   std::function<void(rtc::binary)> DataReceptionCallback;
   std::shared_ptr<rtc::DataChannel> DataChannel;
 
 protected:
-
+  EConnectionState state_;
   rtc::Configuration rtcconfig_;
+  rtc::Configuration webconfig_;
   std::shared_ptr<rtc::PeerConnection> pc_;
-  rtc::WebSocket ss_;
+  std::shared_ptr<rtc::WebSocket> ss_;
   unsigned int MessagesReceived{ 0 };
-  json config_;
-
+  json config_{
+    {"SignallingIP", int()},
+    {"SignallingPort",int()}
+  };
 };
-
 
 }
 #endif

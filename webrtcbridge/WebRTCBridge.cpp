@@ -150,11 +150,10 @@ void WebRTCBridge::Bridge::BridgeSubmit(Adapter* Instigator, StreamVariant origi
   {
     json Transmission = { {"id",Instigator->ID} };
     Transmission["data"] = std::get<std::string>(Message);
-    BridgeConnection.DataOut->Send(Transmission);
+    BridgeConnection.Out->Send(Transmission);
   }
   else
   {
-
     auto data = std::get<rtc::binary>(Message);
     if(data.size() > RtpDestinationHeader + 13)
     {
@@ -167,15 +166,12 @@ void WebRTCBridge::Bridge::BridgeSubmit(Adapter* Instigator, StreamVariant origi
 
 void WebRTCBridge::Bridge::InitConnection()
 {
-  if(Config["RemoteAddress"].is_number())
-  {
-    
-  }
-  else
-  {
-    BridgeConnection.In->Address = Config["RemoteAddress"];
-  }
+  BridgeConnection.In->Address = Config["RemoteAddress"];
   BridgeConnection.In->Port = Config["RemotePort"];
+  if(!BridgeConnection.In->Connect())
+  {
+    throw std::exception("Unexpected error when connecting to an incoming socket:");
+  }
 }
 
 void WebRTCBridge::Bridge::SetHeaderByteStart(uint32_t Byte)
@@ -293,6 +289,7 @@ void WebRTCBridge::Bridge::StartSignalling(std::string IP, int Port, bool keepAl
 
 void WebRTCBridge::Bridge::ConfigureTrackOutput(std::shared_ptr<rtc::Track> OutputStream, rtc::Description::Media* Media)
 {
+
 }
 
 void WebRTCBridge::Bridge::SubmitToSignalling(json Message, Adapter* Endpoint)

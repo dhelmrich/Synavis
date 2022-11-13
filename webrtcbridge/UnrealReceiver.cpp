@@ -374,7 +374,6 @@ void UnrealReceiver::RegisterWithSignalling()
           IceCandidatesReceived++;
         }
       }
-      // 
     }
   });
   ss_.onClosed([this]()
