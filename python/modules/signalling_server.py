@@ -1,4 +1,4 @@
-from json import JSONDecoder
+from json import JSONDecoder, JSONEncoder
 from urllib import request
 from flask import Flask, render_template, request, session, abort, url_for
 from flask_socketio import SocketIO, send, emit, join_room, leave_room
@@ -30,12 +30,17 @@ class Media :
 #end class
 
 def ParseSDP(spd: str) :
+  extmap_startswith = "a=extmap"
+  extmap_skiplength = len(extmap_startswith)
   lines = spd.splitlines(False)
   categories = []
   medias = [i for i in range(len(lines)) if lines[i].startswith("m=")]
-  maplines = [[lines[i] for i in range(j,len(lines)) if lines[i].startswith("a=extmap") and "hpc-bridge" in lines[i]] for j in medias]
-
+  maplines = [[lines[i] for i in range(j,len(lines)) if lines[i].startswith(extmap_startswith) and "hpc-bridge" in lines[i]] for j in medias]
   print(maplines)
+  for stream in medias :
+    if len(maplines[stream]) > 0 :
+      categories.append[(lines[medias.split(0)[2:]], int(maplines.split()[0][extmap_skiplength:]))]
+  return categories
 #enddef
 
 @socketio.on('join')
@@ -91,6 +96,11 @@ def signalling(json):
     if "sdp" in content :
       sdp = content["sdp"]
       metamap = ParseSDP(sdp)
+      data = json()
+      data["type"] = "extmap"
+      data["extmap"] = JSONEncoder(metamap)
+      for player in PlayerSessions :
+        emit(data.dump(), room = player)
     #endif
   #endif
 #enddef

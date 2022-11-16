@@ -21,6 +21,7 @@ namespace WebRTCBridge
   {
   public:
     virtual ~Adapter() = default;
+
     friend class Bridge;
     using json = nlohmann::json;
     void SetupWebRTC();
@@ -57,7 +58,7 @@ namespace WebRTCBridge
     unsigned int IceCandidatesReceived{0};
     unsigned int ExtMapOffset{ 0 };
     int ID{};
-
+    Adapter() = default;
     json generated_offer_;
     json generated_answer_;
 

@@ -39,6 +39,7 @@ target_include_directories(${PYPROJECT}
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
   PUBLIC ${CMAKE_CURRENT_BINARY_DIR}
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/include
+  ${CMAKE_BINARY_DIR}/_deps/pybind11_json-src/include/pybind11_json/
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/deps/json/single_include/nlohmann/
   ${CMAKE_BINARY_DIR}/_deps/pybind11-src/include
   ${CMAKE_SOURCE_DIR}/unrealbridge

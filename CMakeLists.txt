@@ -38,7 +38,6 @@ if(NOT libdatachannel)
   add_subdirectory(${libdatachannel_SOURCE_DIR} ${libdatachannel_BINARY_DIR} EXCLUDE_FROM_ALL)
 endif()
 
-include(FetchContent)
 FetchContent_Declare(
     pybind11
     GIT_REPOSITORY https://github.com/pybind/pybind11
@@ -46,10 +45,23 @@ FetchContent_Declare(
     GIT_SHALLOW True
 )
 
+FetchContent_Declare(
+    pybind11_json
+    GIT_REPOSITORY https://github.com/pybind/pybind11_json.git
+    GIT_TAG        0.2.13
+    GIT_SHALLOW True
+)
+
 FetchContent_GetProperties(pybind11)
 if(NOT pybind11_POPULATED)
     FetchContent_Populate(pybind11)
     add_subdirectory(${pybind11_SOURCE_DIR} ${pybind11_BINARY_DIR})
+endif()
+
+FetchContent_GetProperties(pybind11_json)
+if(NOT pybind11_json_POPULATED)
+    FetchContent_Populate(pybind11_json)
+    add_subdirectory(${pybind11_json_SOURCE_DIR} ${pybind11_json_BINARY_DIR})
 endif()
 
 add_subdirectory(webrtcbridge)

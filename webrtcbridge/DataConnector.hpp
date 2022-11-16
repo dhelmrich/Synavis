@@ -13,16 +13,18 @@
 namespace WebRTCBridge
 {
 
-class WEBRTCBRIDGE_EXPORT DataConnector : std::enable_shared_from_this<DataConnector>
+class WEBRTCBRIDGE_EXPORT DataConnector : public std::enable_shared_from_this<DataConnector>
 {
 public:
   using json = nlohmann::json;
   DataConnector();
   ~DataConnector();
   void StartSignalling();
-  void SendData(rtc::binary Data);
+  virtual void SendData(rtc::binary Data);
   void SendMessage(std::string Message);
   EConnectionState GetState();
+  void SetCallback(std::function<void(rtc::binary)> Callback);
+  void SetMessageCallback(std::function<void(std::string)> Callback);
   std::function<void(rtc::binary)> DataReceptionCallback;
   std::shared_ptr<rtc::DataChannel> DataChannel;
 

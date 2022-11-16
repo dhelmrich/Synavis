@@ -7,11 +7,14 @@
 #include <pybind11/cast.h>
 #include <pybind11/iostream.h>
 #include <pybind11/stl_bind.h>
+#include <pybind11_json.hpp>
 #include <functional>
 #include <numeric>
 #include <iostream>
 #include <string>
 #include <vector>
+
+#include "DataConnector.hpp"
 namespace py = pybind11;
 
 #include "UnrealReceiver.hpp"
@@ -113,14 +116,24 @@ namespace WebRTCBridge{
   template < typename T = UnrealConnector> class PyUnrealConnector : public PyAdapter<T>
   {
   public:
-    
     void OnRemoteInformation(T::json message) override { PYBIND11_OVERRIDE(void, T, OnRemoteInformation, message); }
     void OnDataChannel(std::shared_ptr<rtc::DataChannel> inChannel) override { PYBIND11_OVERRIDE(void, T, OnDataChannel, inChannel);}
+  };
+
+  template < typename T = DataConnector > class PyDataConnector : public T
+  {
+    using T::T;
+    using T::json;
+    void SendData(rtc::binary Data) override { PYBIND11_OVERRIDE(void, T, SendData, Data); }
+
   };
 
   PYBIND11_MODULE(PyWebRTCBridge, m)
   {
     py::class_<rtc::PeerConnection> pc(m, "PeerConnection");
+
+    py::class_<DataConnector, PyDataConnector<>, std::shared_ptr<DataConnector>>(m, "DataConnector")
+      .def(py::init<>());
 
     py::enum_<rtc::PeerConnection::GatheringState>(pc, "GatheringState")
       .value("New", rtc::PeerConnection::GatheringState::New)
