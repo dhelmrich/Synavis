@@ -1,16 +1,250 @@
 #include "WebRTCBridge.hpp"
 #include "Adapter.hpp"
 
+#include <variant>
 #include <fstream>
 #include <span>
 
 int WebRTCBridge::BridgeSocket::Receive(bool invalidIsFailure)
 {
 #ifdef _WIN32
-  return 0;
+  int length = sizeof(Remote);
+  auto size = recvfrom(Sock,Reception,MAX_RTP_SIZE,0,reinterpret_cast<sockaddr*>(&Remote),&length);
+  //auto size = recv(Sock,Reception,MAX_RTP_SIZE,0);
+  if(size < 0)
+  {
+    std::cout << "Encountered error!" << std::endl;
+    return 0;
+  }
+  StringData = std::string_view(Reception,size);
+  return size;
 #elif __linux__
+#include <sys/socket.h>
+  socklen_t length = static_cast<socklen_t>(sizeof(Remote));
+  auto size = recvfrom(Sock, Reception, MAX_RTP_SIZE, 0, reinterpret_cast<struct sockaddr*>(&Remote), &length);
+  if(size < 0)
+  {
+    std::cout << "Encountered error!" << std::endl;
+    return 0;
+  }
+  StringData = std::string_view(Reception,size);
   return 0;
 #endif
+}
+
+void WebRTCBridge::BridgeSocket::SetAddress(std::string inAddress)
+{ this->Address = inAddress; }
+
+std::string WebRTCBridge::BridgeSocket::GetAddress()
+{ return this->Address; }
+
+void WebRTCBridge::BridgeSocket::SetBlockingEnabled(bool Blocking)
+{
+  unsigned long Mode = !Blocking;
+#ifdef _WIN32
+  ioctlsocket(Sock, FIONBIO, &Mode);
+#endif
+}
+
+WebRTCBridge::BridgeSocket::BridgeSocket():Reception(new char[MAX_RTP_SIZE])
+{
+}
+
+WebRTCBridge::BridgeSocket::~BridgeSocket()
+{
+    
+#ifdef _WIN32
+  auto result = shutdown(Sock,SD_BOTH);
+  if (result == SOCKET_ERROR) {
+    closesocket(Sock);
+    WSACleanup();
+  }
+#elif defined __linux__
+      shutdown(Sock,2);
+#endif
+  delete[] Reception;
+}
+
+int WebRTCBridge::BridgeSocket::GetSocketPort()
+{return Port;}
+
+void WebRTCBridge::BridgeSocket::SetSocketPort(int Port)
+{this->Port = Port;}
+
+bool WebRTCBridge::BridgeSocket::Connect()
+{
+  if(Address == "localhost")
+  {
+    Address = "127.0.0.1";
+  }
+#ifdef _WIN32
+  int size = sizeof(Addr);
+  WSADATA wsaData;
+  auto iResult = WSAStartup(MAKEWORD(2,2), &wsaData);
+  if ( iResult != 0 )
+  {
+    return false;
+  }
+  // we are employing connectionless sockets for the transmission
+  // as we are using a constant udp stream that we are forwarding
+  // The important note here is that the stream is connectionless
+  // and we are doing this because we do not want any recv/rep pattern
+  // breaking the logical flow of the program
+  // the bridge itself is also never waiting for answers and as such,
+  // will use a lazy-style send/receive pattern that will will be able
+  // to parse answers without needing a strict order of things to do
+  // ...
+  // this is also why there are so many threads in this program.
+  // ...
+  // That being said, I am also not super keen on this setup, so any
+  // suggestion is always welcome.IPPROTO_HOPOPTS
+  Sock = socket(AF_INET,SOCK_DGRAM,IPPROTO_UDP);
+  Addr.sin_addr.s_addr=inet_addr(Address.c_str());
+  Addr.sin_port = htons(Port);
+  Addr.sin_family = AF_INET;
+  //getsockname(NULL,reinterpret_cast<sockaddr*>(&Addr),&size);
+  //Port = *reinterpret_cast<int*>(info.sa_data);
+  if(Outgoing)
+  {
+    if(connect(Sock,reinterpret_cast<sockaddr*>(&Addr),sizeof(sockaddr_in)) == SOCKET_ERROR)
+    {
+      closesocket(Sock);
+      WSACleanup();
+      return false;
+    }
+    else
+    {
+      return Sock != INVALID_SOCKET;
+    }
+  }
+  else
+  {
+    if(bind(Sock,reinterpret_cast<sockaddr*>(&Addr),sizeof(sockaddr_in)) == SOCKET_ERROR)
+    {
+      closesocket(Sock);
+      WSACleanup();
+      return false;
+    }
+    else
+    {
+      return Sock != INVALID_SOCKET;
+    }
+  }
+#elif defined __linux__
+  Sock = socket(AF_INET, SOCK_DGRAM, 0);
+  if (Sock < 0)
+  {
+    return false; 
+  }
+  bzero((char*)&Addr, sizeof(Addr));
+  Addr.sin_family = AF_INET;
+  Addr.sin_addr.s_addr = INADDR_ANY;
+  Addr.sin_port = htons(Port);
+  if (bind(Sock, (struct sockaddr*)&Addr,
+    sizeof(Addr)) < 0)
+  {
+    return false;
+  }
+  return true;
+#endif
+    
+}
+
+int WebRTCBridge::BridgeSocket::ReadSocketFromBinding()
+{
+#ifdef _WIN32
+  int size = sizeof(info);
+  getsockname(Sock,&info,&size);
+  Port = *reinterpret_cast<int*>(info.sa_data);
+  return Port;
+#elif defined __linux__
+#endif
+  return 0;
+}
+
+WebRTCBridge::BridgeSocket WebRTCBridge::BridgeSocket::GetFreeSocket(std::string adr)
+{
+  BridgeSocket s;
+  s.Address = adr;
+  s.Valid = false;
+      
+#ifdef _WIN32
+  int size = sizeof(Addr);
+  s.Sock = socket(AF_INET,SOCK_DGRAM,0);
+  s.Addr.sin_addr.s_addr = inet_addr(adr.c_str());
+  s.Addr.sin_port = htons(s.Port);
+  s.Addr.sin_family = AF_INET;
+  getsockname(s.Sock,&s.info,&size);
+  s.Port = *reinterpret_cast<int*>(s.info.sa_data);
+  return s;
+#elif __linux__
+  s.Sock = socket(AF_INET, SOCK_DGRAM, 0);
+  if (s.Sock < 0)
+  {
+    return s; 
+  }
+  bzero((char*)&s.Addr, sizeof(Addr));
+  s.Port = 0;
+
+  s.Addr.sin_family = AF_INET;
+  s.Addr.sin_addr.s_addr = INADDR_ANY;
+  s.Addr.sin_port = htons(s.Port);
+  if (bind(s.Sock, (struct sockaddr*)&s.Addr,
+    sizeof(s.Addr)) < 0)
+    throw std::runtime_error("Could not connect to socket.");
+#endif
+
+  s.Valid = true;
+  return s;
+}
+
+int WebRTCBridge::BridgeSocket::Peek()
+{
+  SetBlockingEnabled(false);
+#ifdef _WIN32
+  auto size = recv(Sock,Reception,MAX_RTP_SIZE,MSG_PEEK);
+  if(size < 0 && WSAGetLastError() == WSAEWOULDBLOCK)
+  {
+    return 0;
+  }
+  else
+  {
+    StringData = std::string_view(Reception,size);
+  }
+  SetBlockingEnabled(true);
+#elif defined __linux__
+  int size = 0;
+#endif
+  return size;
+}
+
+void WebRTCBridge::BridgeSocket::Send(std::variant<rtc::binary, std::string> message)
+{
+  if(Outgoing)
+  {
+    const char* buffer;
+    int length;
+    if(std::holds_alternative<std::string>(message))
+    {
+      buffer = std::get<std::string>(message).c_str();
+      length = static_cast<int>(std::get<std::string>(message).length());
+    }
+    else if (std::holds_alternative<rtc::binary>(message))
+    {
+      buffer = reinterpret_cast<const char*>(std::get<rtc::binary>(message).data());
+      length = static_cast<int>(std::get<rtc::binary>(message).size());
+    }
+    int status;
+    if((status = send(Sock,buffer,length,0)) == 0)
+    //if((status = sendto(Sock, buffer, length, 0, reinterpret_cast<sockaddr*>(&Addr), sizeof(sockaddr_in))) == 0)
+    {
+      std::cout << "What:" << status << std::endl;
+      exit(-1);
+    }
+    else
+    {
+    }
+  }
 }
 
 WebRTCBridge::NoBufferThread::NoBufferThread(std::shared_ptr<BridgeSocket> inDataSource)
@@ -121,7 +355,7 @@ void WebRTCBridge::Bridge::BridgeSynchronize(Adapter* Instigator, nlohmann::json
     {
       if (bFailIfNotResolved)
       {
-        throw std::exception("An unexpected error occured while parsing the Bridge response");
+        throw std::runtime_error("An unexpected error occured while parsing the Bridge response");
       }
     }
     if(Answer["type"] == "ok")
@@ -170,7 +404,7 @@ void WebRTCBridge::Bridge::InitConnection()
   BridgeConnection.In->Port = Config["RemotePort"];
   if(!BridgeConnection.In->Connect())
   {
-    throw std::exception("Unexpected error when connecting to an incoming socket:");
+    throw std::runtime_error("Unexpected error when connecting to an incoming socket:");
   }
 }
 
@@ -305,8 +539,37 @@ void WebRTCBridge::Bridge::UseConfig(std::string filename)
 {
   std::ifstream file(filename);
   auto fileConfig = json::parse(file);
+  UseConfig(fileConfig);
+}
+
+void WebRTCBridge::Bridge::UseConfig(json fileConfig)
+{
   bool complete = true;
   for(auto key : Config)
     if(fileConfig.find(key) == fileConfig.end())
       complete = false;
+  if(complete)
+  {
+    Config = fileConfig;
+  }
 }
+
+#ifdef _WIN32
+bool ParseTimeFromString(std::string Source, std::chrono::utc_time<std::chrono::system_clock::duration>& Destination)
+{
+  std::string format = "%Y-%m-%d %X";
+  std::istringstream ss(Source);
+  if(ss >> std::chrono::parse(format,Destination))
+    return true;
+  return false;
+}
+#elif defined __linux__
+bool ParseTimeFromString(std::string Source, std::chrono::time_point<std::chrono::system_clock>& Destination)
+{
+  std::string format = "%Y-%m-%d %X";
+  std::istringstream ss(Source);
+  if(ss >> date::parse(format,Destination))
+    return true;
+  else return false;
+}
+#endif

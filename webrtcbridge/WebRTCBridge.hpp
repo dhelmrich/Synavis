@@ -4,27 +4,27 @@
 #include <json.hpp>
 #include <span>
 #include <variant>
+#include <chrono>
 #include <rtc/rtc.hpp>
 #include "WebRTCBridge/export.hpp"
 
 #define MAX_RTP_SIZE 208 * 1024
 
-#ifdef _WIN32
+#if defined _WIN32
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <winsock2.h>
 #include <ws2tcpip.h>
+
+bool ParseTimeFromString(std::string Source, std::chrono::utc_time<std::chrono::system_clock::duration>& Destination);
+
 #elif __linux__
 #include <sys/socket.h>
 #include <sys/types.h> 
 #include <netinet/in.h>
+#include <date/date.h>
+bool ParseTimeFromString(std::string Source, std::chrono::time_point<std::chrono::system_clock>& Destination);
 
-void error(const char *msg)
-{
-    perror(msg);
-    exit(1);
-}
 #endif
-
 
 namespace WebRTCBridge
 {
@@ -33,40 +33,37 @@ namespace WebRTCBridge
 
  
 
-  struct WEBRTCBRIDGE_EXPORT BridgeSocket
+  class WEBRTCBRIDGE_EXPORT BridgeSocket
   {
-
+  public:
     bool Valid = false;
     bool Outgoing = false;
     std::string Address;
+    void SetAddress(std::string inAddress);
+    std::string GetAddress();
+    void SetBlockingEnabled(bool Blocking = true);
     char* Reception;
     std::span<std::byte> BinaryData;
     std::span<std::size_t> NumberData;
     std::string_view StringData;
 
     std::size_t ReceivedLength;
-    BridgeSocket():Reception(new char[MAX_RTP_SIZE]){}
+    BridgeSocket();
     BridgeSocket(BridgeSocket&& other)=default;
-    ~BridgeSocket()
-    {
-    
-#ifdef _WIN32
-      closesocket(Sock);
-#elif defined __linux__
-      shutdown(Sock,2);
-#endif
-
-    }
+    ~BridgeSocket();
     int Port;
-   
+    int GetSocketPort();
+    void SetSocketPort(int Port);
+
 #ifdef _WIN32
     SOCKET Sock{INVALID_SOCKET};
     sockaddr info;
-    sockaddr_in Addr;
+    struct sockaddr_in Addr, Remote;
 #elif __linux__
     int Sock, newsockfd;
     socklen_t clilen;
-    struct sockaddr_in serv_addr, cli_addr;
+    struct sockaddr_in Addr;
+    struct sockaddr_in Remote;
     int n;
 #endif
 
@@ -74,131 +71,21 @@ namespace WebRTCBridge
     // in the input case, the address should be set to the remote end
     // it will automatically call either bind or connect
     // remember that this class is connectionless
-    bool Connect()
-    {
-    #ifdef _WIN32
-      int size = sizeof(Addr);
-      // we are employing connectionless sockets for the transmission
-      // as we are using a constant udp stream that we are forwarding
-      // The important note here is that the stream is connectionless
-      // and we are doing this because we do not want any recv/rep pattern
-      // breaking the logical flow of the program
-      // the bridge itself is also never waiting for answers and as such,
-      // will use a lazy-style send/receive pattern that will will be able
-      // to parse answers without needing a strict order of things to do
-      // ...
-      // this is also why there are so many threads in this program.
-      // ...
-      // That being said, I am also not super keen on this setup, so any
-      // suggestion is always welcome.
-      Sock = socket(AF_INET,SOCK_DGRAM,IPPROTO_UDP);
-      Addr.sin_addr.s_addr = inet_addr(Address.c_str());
-      Addr.sin_port = htons(Port);
-      Addr.sin_family = AF_INET;
-      getsockname(Sock,&info,&size);
-      Port = *reinterpret_cast<int*>(info.sa_data);
-      if(Outgoing)
-      {
-        if(bind(Sock,&info,sizeof(info)) == SOCKET_ERROR)
-        {
-          closesocket(Sock);
-          WSACleanup();
-          return false;
-        }
-        else
-        {
-          return true;
-        }
-      }
-      else
-      {
-        if(connect(Sock,&info,sizeof(info)) == SOCKET_ERROR)
-        {
-          closesocket(Sock);
-          WSACleanup();
-          return false;
-        }
-        else
-        {
-          return true;
-        }
-      }
-    #elif defined __linux__
-      s.Sock = socket(AF_INET, SOCK_DGRAM, 0);
-      if (s.Sock < 0)
-      {
-        return s; 
-      }
-      bzero((char*)&s.serv_addr, sizeof(serv_addr));
-      serv_addr.sin_family = AF_INET;
-      serv_addr.sin_addr.s_addr = INADDR_ANY;
-      serv_addr.sin_port = htons(s.Port);
-      if (bind(Sock, (struct sockaddr*)&s.serv_addr,
-        sizeof(serv_addr)) < 0)
-      {
-        return false;
-      }
-    #endif
+    bool Connect();
 
-      return true;
-    }
 
-    bool Test()
-    {
-      
-    }
+    int ReadSocketFromBinding();
 
-    int ReadSocketFromBinding()
-    {
-#ifdef _WIN32
-#elif defined __linux__
-#endif
-    }
-
-    static BridgeSocket GetFreeSocket(std::string adr = "127.0.0.1")
-    {
-      BridgeSocket s;
-      s.Address = adr;
-      s.Valid = false;
-      
-    #ifdef _WIN32
-      int size = sizeof(Addr);
-      s.Sock = socket(AF_INET,SOCK_DGRAM,0);
-      s.Addr.sin_addr.s_addr = inet_addr(adr.c_str());
-      s.Addr.sin_port = htons(s.Port);
-      s.Addr.sin_family = AF_INET;
-      getsockname(s.Sock,&s.info,&size);
-      s.Port = *reinterpret_cast<int*>(s.info.sa_data);
-      return s;
-    #elif __linux__
-      s.Sock = socket(AF_INET, SOCK_DGRAM, 0);
-      if (s.Sock < 0)
-      {
-        return s; 
-      }
-      bzero((char*)&s.serv_addr, sizeof(serv_addr));
-      s.portno = 0;
-
-      s.serv_addr.sin_family = AF_INET;
-      s.serv_addr.sin_addr.s_addr = INADDR_ANY;
-      s.serv_addr.sin_port = htons(s.Port);
-      if (bind(s.Sock, (struct sockaddr*)&s.serv_addr,
-        sizeof(s.serv_addr)) < 0)
-        error("ERROR on binding");
-    #endif
-
-      s.Valid = true;
-      return s;
-    }
+    static BridgeSocket GetFreeSocket(std::string adr = "127.0.0.1");
 
     int Peek();
-    int Receive(bool invalidIsFailure = false);
-    void Send(std::variant<rtc::binary, std::string> message);
+    virtual int Receive(bool invalidIsFailure = false);
+    virtual void Send(std::variant<rtc::binary, std::string> message);
 
     template < typename N >
     std::span<N> Reinterpret()
     {
-      return std::span<N>(Reception, ReceivedLength / sizeof(N));
+      return std::span<N>(reinterpret_cast<N*>(Reception), ReceivedLength / sizeof(N));
     }
   };
 
@@ -214,6 +101,7 @@ namespace WebRTCBridge
     uint16_t streamer_id;
     uint32_t meta;
   };
+#pragma pop
   
   enum class WEBRTCBRIDGE_EXPORT EClientMessageType
   {
@@ -277,12 +165,13 @@ namespace WebRTCBridge
   class WEBRTCBRIDGE_EXPORT Bridge
   {
   public:
+    using json = nlohmann::json;
     Bridge();
     virtual ~Bridge();
     void UseConfig(std::string filename);
-    using json = nlohmann::json;
+    void UseConfig(json Config);
     virtual void BridgeSynchronize(Adapter* Instigator,
-                                   nlohmann::json Message, bool bFailIfNotResolved = false);
+                                   json Message, bool bFailIfNotResolved = false);
     void CreateTask(std::function<void(void)>&& Task);
     void BridgeSubmit(Adapter* Instigator, StreamVariant origin, std::variant<rtc::binary, std::string> Message) const;
     virtual void InitConnection();
@@ -318,11 +207,11 @@ namespace WebRTCBridge
 
     // This method should be used to signal to the provider
     // that a new application has connected.
-    virtual uint32_t SignalNewEndpoint() = NULL;
+    virtual uint32_t SignalNewEndpoint() = 0;
 
-    virtual void OnSignallingMessage(std::string Message) = NULL;
-    virtual void RemoteMessage(json Message) = NULL;
-    virtual void OnSignallingData(rtc::binary Message) = NULL;
+    virtual void OnSignallingMessage(std::string Message) = 0;
+    virtual void RemoteMessage(json Message) = 0;
+    virtual void OnSignallingData(rtc::binary Message) = 0;
 
   protected:
 

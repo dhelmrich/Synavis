@@ -19,11 +19,13 @@ string(TOLOWER ${projectname} PROJECTNAME_LOWER)
 project (${projectname} VERSION 0.0.1)
 
 set(ROOTDIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 
 
 include(FetchContent)
 include(ExternalProject)
+
+
 
 # Fetch libdatachannel
 FetchContent_Declare(
@@ -38,11 +40,25 @@ if(NOT libdatachannel)
   add_subdirectory(${libdatachannel_SOURCE_DIR} ${libdatachannel_BINARY_DIR} EXCLUDE_FROM_ALL)
 endif()
 
-FetchContent_Declare(
-    pybind11
-    GIT_REPOSITORY https://github.com/pybind/pybind11
-    GIT_TAG        v2.8
+if(UNIX)
+  FetchContent_Declare(
+    date
+    GIT_REPOSITORY https://github.com/HowardHinnant/date.git
+    GIT_TAG        v3.0.1
     GIT_SHALLOW True
+  )
+  FetchContent_GetProperties(date)
+  if(NOT date_POPULATED)
+      FetchContent_Populate(date)
+      add_subdirectory(${date_SOURCE_DIR} ${date_BINARY_DIR})
+  endif()
+endif()
+
+FetchContent_Declare(
+  pybind11
+  GIT_REPOSITORY https://github.com/pybind/pybind11.git
+  GIT_TAG        v2.8
+  GIT_SHALLOW True
 )
 
 FetchContent_Declare(

@@ -12,6 +12,8 @@
 #include "WebRTCBridge.hpp"
 #include "WebRTCBridge/export.hpp"
 
+#include "Adapter.hpp"
+
 namespace WebRTCBridge
 {
 struct WEBRTCBRIDGE_EXPORT SaveRTP

@@ -1,37 +1,17 @@
-#include "seeker.hpp"
+#include "Seeker.hpp"
 
 #include <variant>
 #include <memory>
+#include <chrono>
+#ifdef __linux__
+#include <date/date.h>
+#endif
 
-#include "connector.hpp"
+#ifdef __linux__
+#include <date/tz.h>
+#endif
 
-int WebRTCBridge::BridgeSocket::Peek()
-{
-return -1;
-}
-
-void WebRTCBridge::BridgeSocket::Send(std::variant<rtc::binary, std::string> message)
-{
-  if(Outgoing)
-  {
-    const char* buffer;
-    int length;
-    if(std::holds_alternative<std::string>(message))
-    {
-      buffer = std::get<std::string>(message).c_str();
-      length = (int)std::get<std::string>(message).length();
-    }
-    else if (std::holds_alternative<rtc::binary>(message))
-    {
-      buffer = reinterpret_cast<const char*>(std::get<rtc::binary>(message).data());
-      length = (int)std::get<rtc::binary>(message).size();
-    }
-    if(send(Sock,buffer,length,0) == SOCKET_ERROR)
-    {
-      
-    }
-  }
-}
+#include "Connector.hpp"
 
 WebRTCBridge::Seeker::Seeker() : Bridge()
 {
@@ -101,11 +81,25 @@ void WebRTCBridge::Seeker::FindBridge()
   // THis is a wait function.
   std::unique_lock<std::mutex> lock(QueueAccess);
   lock.lock();
+#ifdef _WIN32
   std::chrono::utc_time<std::chrono::system_clock::duration> localutctime;
   localutctime = std::chrono::utc_clock::now();
+  auto timestring = [localutctime]() -> std::string{
+    std::stringstream ss;
+    ss << std::format("{:%Y-%m-%d %X}",localutctime);
+   return ss.str();} ();
+#elif defined __linux__
+  std::string timestring(26,'\0');
+  auto localutctime = std::chrono::system_clock::now();
+  
+  timestring = [localutctime]() -> std::string{
+    std::stringstream ss;
+    ss << date::format("{:%Y-%m-%d %X}",localutctime);
+   return ss.str();} ();
+#endif
   json Offer = {{"Port",Config["LocalPort"]},
+  {"Session",timestring}};
 
-  {"Session",std::format("{:%Y-%m-%d %X}",localutctime)}};
   BridgeConnection.Out->Send(Offer.dump());
   auto messagelength = BridgeConnection.In->Receive(true);
   if(messagelength <= 0)
@@ -119,13 +113,19 @@ void WebRTCBridge::Seeker::FindBridge()
     {
       Answer = json::parse(BridgeConnection.In->StringData);
       std::string timecode = Answer["Session"];
+#ifdef _WIN32
       std::chrono::utc_time<std::chrono::system_clock::duration> remoteutctime;
-      std::string format("%Y-%m-%d %X");
-      std::stringstream ss(timecode);
-      if(ss >> std::chrono::parse(format,remoteutctime))
+      bool result = ParseTimeFromString(timecode, remoteutctime);
+#elif defined __linux__
+      std::chrono::system_clock::time_point remotetime;
+      bool result = ParseTimeFromString(timecode, remotetime);
+      std::chrono::system_clock SystemClock;
+      auto timepoint = SystemClock.now();
+#endif
+      if(result)
       {
         // we are checking this for consistency reasons
-        if(remoteutctime > localutctime)
+        if(timepoint > remotetime)
         {
           std::cout << "Found the connection successfully." << std::endl;
         }
@@ -150,7 +150,7 @@ std::shared_ptr<WebRTCBridge::Connector> WebRTCBridge::Seeker::CreateConnection(
   auto t = std::make_shared<Wrap>();
   std::shared_ptr<WebRTCBridge::Connector> Connection{std::move(t),&t->cont };
 
-  Connection->Bridge = std::shared_ptr<Seeker>(this);
+  Connection->OwningBridge = std::shared_ptr<Seeker>(this);
   Connection->SetID(this,++NextID);
   
   return Connection;
@@ -191,7 +191,6 @@ void WebRTCBridge::Seeker::OnSignallingMessage(std::string Message)
   if(content["type"] == "offer")
   {
     std::cout << "I received an offer and this is the most crucial step in bridge setup!" << std::endl;
-    std::string sdp = content["sdp"];
 
     // we MUST fail if this is not resolved as the sdp description
     // has to be SYNCHRONOUSLY valid on both ends of the bridge!
@@ -200,7 +199,7 @@ void WebRTCBridge::Seeker::OnSignallingMessage(std::string Message)
     // depends on what we are hearing back from unreal in terms of
     // payloads and ssrc info
     auto NewConnection = CreateConnection();
-    CreateTask(std::bind(&Seeker::BridgeSynchronize, this, NewConnection.get(), sdp, true));
+    CreateTask(std::bind(&Seeker::BridgeSynchronize, this, NewConnection.get(), content, true));
   }
   else if(content["type"] == "iceCandidate")
   {
@@ -211,18 +210,29 @@ void WebRTCBridge::Seeker::OnSignallingMessage(std::string Message)
       Endpoint = std::dynamic_pointer_cast<Connector>(fetch_object);
       if(!Endpoint)
       {
-        throw std::exception("Tried to cast an adapter to a connector and failed.");
+        throw std::runtime_error("Tried to cast an adapter to a Connector and failed.");
       }
     }
     catch( ... )
     {
-      std::cout << "From onMessage SS thread: Could not find connector for ice candidate." << std::endl;
+      std::cout << "From onMessage SS thread: Could not find Connector for ice candidate." << std::endl;
     }
     Endpoint->OnRemoteInformation(content);
   }
 }
 
 void WebRTCBridge::Seeker::OnSignallingData(rtc::binary Message)
+{
+}
+
+uint32_t WebRTCBridge::Seeker::SignalNewEndpoint()
+{
+  // we do not need to do anything, in terms of default behavior, since the new endpoint is signalled
+  // to the bridge first.
+  return 0;
+}
+
+void WebRTCBridge::Seeker::RemoteMessage(json Message)
 {
 }
 

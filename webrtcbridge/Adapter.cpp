@@ -21,7 +21,7 @@ void WebRTCBridge::Adapter::SetupWebRTC()
     // TODO i need the ID either during SDP sync or at this moment
     track->onMessage([this,track](auto messageorpackage)
     {
-      Bridge->BridgeSubmit(this, track, messageorpackage);
+      OwningBridge->BridgeSubmit(this, track, messageorpackage);
       if (std::holds_alternative<std::string>(messageorpackage))
       {
         json message = { {"id",this->ID},{"message",std::get<std::string>(messageorpackage)} };
@@ -41,7 +41,7 @@ void WebRTCBridge::Adapter::SetupWebRTC()
     {"protocol",channel->protocol()},
     {"maxmessagesize",channel->maxMessageSize()}};
 
-    Bridge->CreateTask(std::bind(&Bridge::BridgeSynchronize, Bridge.get(), this, desc, false));
+    OwningBridge->CreateTask(std::bind(&Bridge::BridgeSynchronize, OwningBridge.get(), this, desc, false));
 
     channel->onMessage([this](auto messageorpackage)
     {
@@ -112,7 +112,7 @@ rtc::PeerConnection* WebRTCBridge::Adapter::GetPeerConnection()
 
 void WebRTCBridge::Adapter::SetID(WebRTCBridge::Bridge* Instigator, uint32_t ID)
 {
-  if(Bridge && Bridge->EstablishedConnection(true))
+  if(OwningBridge && OwningBridge->EstablishedConnection(true))
   {
     this->ID = ID;
   }

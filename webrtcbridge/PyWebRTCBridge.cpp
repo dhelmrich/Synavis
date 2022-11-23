@@ -103,7 +103,6 @@ namespace WebRTCBridge{
   public:
     using T::json;
     using T::T;
-    using T::~T;
     
     void OnRemoteInformation(T::json message) override { PYBIND11_OVERRIDE(void, T, OnRemoteInformation, message);  }
     void OnGatheringStateChange(rtc::PeerConnection::GatheringState inState) override { PYBIND11_OVERRIDE(void, T, OnGatheringStateChange, inState); };
@@ -124,18 +123,36 @@ namespace WebRTCBridge{
   {
     using T::T;
     using T::json;
-    void SendData(rtc::binary Data) override { PYBIND11_OVERRIDE(void, T, SendData, Data); }
+    void SendData(rtc::binary Data) override { PYBIND11_OVERRIDE_PURE(void, T, SendData, Data); }
 
+  };
+
+  template < typename T = BridgeSocket > class PyBridgeSocket : public T
+  {
+    using T::T;
+    using T::Peek;
+    int Receive(bool invalidIsFailure = false) override
+    {
+      PYBIND11_OVERLOAD(int, BridgeSocket, Receive, invalidIsFailure);
+    }
   };
 
   PYBIND11_MODULE(PyWebRTCBridge, m)
   {
-    py::class_<rtc::PeerConnection> pc(m, "PeerConnection");
+    py::class_<rtc::PeerConnection> (m, "PeerConnection");
+
+    py::class_<BridgeSocket, PyBridgeSocket<>, std::shared_ptr<BridgeSocket>> (m, "BridgeSocket")
+      .def(py::init<>())
+      .def_property("Address", &BridgeSocket::GetAddress,&BridgeSocket::SetAddress)
+      .def_property("Port",&BridgeSocket::GetSocketPort,&BridgeSocket::SetSocketPort)
+      .def("Connect",&BridgeSocket::Connect)
+      .def("Peek",&BridgeSocket::Peek)
+      .def("ReinterpretInt",&BridgeSocket::Reinterpret<int>);
 
     py::class_<DataConnector, PyDataConnector<>, std::shared_ptr<DataConnector>>(m, "DataConnector")
       .def(py::init<>());
 
-    py::enum_<rtc::PeerConnection::GatheringState>(pc, "GatheringState")
+    py::enum_<rtc::PeerConnection::GatheringState>(m, "GatheringState")
       .value("New", rtc::PeerConnection::GatheringState::New)
       .value("InProgress", rtc::PeerConnection::GatheringState::InProgress)
       .value("Complete", rtc::PeerConnection::GatheringState::Complete);

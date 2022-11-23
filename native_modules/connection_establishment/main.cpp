@@ -13,11 +13,10 @@
 
 int main()
 {
-
-  auto Bridge = std::make_shared<WebRTCBridge::Provider>();
+  auto BridgeProvider = std::make_shared<WebRTCBridge::Provider>();
   
   std::cout << "Testing connection" << std::endl;
-  if (Bridge->EstablishedConnection())
+  if (BridgeProvider->EstablishedConnection())
   {
     std::cout << "Shallow testing of Bridge Connections Successful" << std::endl;
   }

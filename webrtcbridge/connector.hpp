@@ -12,12 +12,12 @@
 
 
 #include "WebRTCBridge/export.hpp"
-#include "seeker.hpp"
+#include "Seeker.hpp"
 #include "Adapter.hpp"
 
 namespace WebRTCBridge
 {
-  struct BridgeSocket;
+  class BridgeSocket;
   class NoBufferThread;
   class ApplicationTrack;
 

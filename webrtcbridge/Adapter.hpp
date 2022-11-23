@@ -9,6 +9,10 @@
 
 #include "WebRTCBridge.hpp"
 
+#ifndef __forceinline
+#define __forceinline inline
+#endif
+
 namespace WebRTCBridge
 {
     template<typename... Ts>
@@ -28,27 +32,27 @@ namespace WebRTCBridge
     void CheckBridgeExtention(const std::string& SDP);
     
     // this is a helper function that should not be considered stable or without fault
-    virtual std::string GetConnectionString() = NULL;
+    virtual std::string GetConnectionString() = 0;
     virtual std::string GenerateSDP();
     virtual std::string Offer();
     virtual std::string Answer();
     virtual std::string PushSDP(std::string);
     rtc::PeerConnection* GetPeerConnection();
     void SetID(Bridge* Instigator, uint32_t ID);
-    virtual void OnGatheringStateChange(rtc::PeerConnection::GatheringState inState) = NULL;
-    virtual void OnTrack(std::shared_ptr<rtc::Track> inTrack) = NULL;
-    virtual void OnLocalDescription(rtc::Description inDescription) = NULL;
-    virtual void OnLocalCandidate(rtc::Candidate inCandidate) = NULL;
+    virtual void OnGatheringStateChange(rtc::PeerConnection::GatheringState inState) = 0;
+    virtual void OnTrack(std::shared_ptr<rtc::Track> inTrack) = 0;
+    virtual void OnLocalDescription(rtc::Description inDescription) = 0;
+    virtual void OnLocalCandidate(rtc::Candidate inCandidate) = 0;
     virtual void OnDataChannel(std::shared_ptr<rtc::DataChannel> inChannel) = 0;
-    virtual void OnRemoteInformation(json message) = NULL;
-    virtual void OnChannelPackage(rtc::binary inPackage) = NULL;
-    virtual void OnChannelMessage(std::string inMessage) = NULL;
+    virtual void OnRemoteInformation(json message) = 0;
+    virtual void OnChannelPackage(rtc::binary inPackage) = 0;
+    virtual void OnChannelMessage(std::string inMessage) = 0;
 
     // Data streams to other Bridge
     // Bridge Pointer is also Shared, which means that
     // the Seeker class has to resolve the object destruction of
     // connections, which is intended anyways.
-    std::shared_ptr<Bridge> Bridge;
+    std::shared_ptr<Bridge> OwningBridge;
 
   protected:
     rtc::Configuration rtcconfig_;

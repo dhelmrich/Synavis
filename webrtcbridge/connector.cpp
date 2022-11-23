@@ -1,4 +1,4 @@
-#include "connector.hpp"
+#include "Connector.hpp"
 
 #include "rtc/peerconnection.hpp"
 #include "rtc/rtcpsrreporter.hpp"
@@ -85,7 +85,7 @@ void WebRTCBridge::Connector::OnRemoteInformation(json message)
           auto track = pc_->addTrack(*metadata);
 
           // all of these tracks are TO APPLICATION and can be initialized as output
-          Bridge->ConfigureTrackOutput(track, metadata);
+          OwningBridge->ConfigureTrackOutput(track, metadata);
           ToApplication.push_back(std::move(track));
         }
         else

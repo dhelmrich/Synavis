@@ -8,10 +8,6 @@
 #include <bitset>
 #include <rtc/rtc.hpp>
 
-#include "Adapter.hpp"
-
-#define MAX_RTP_SIZE 10000
-
 #ifdef _WIN32
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <winsock2.h>
@@ -20,11 +16,6 @@
 #include <sys/types.h> 
 #include <netinet/in.h>
 
-void error(const char *msg)
-{
-    perror(msg);
-    exit(1);
-}
 #endif
 
 namespace WebRTCBridge
@@ -57,18 +48,18 @@ UnrealReceiver::UnrealReceiver()
   addr.sin_port = htons(5332);
   addr.sin_family = AF_INET;
 #elif __linux__
-  int sockfd, portno;
+  int sock, portno;
   socklen_t clilen;
   char buffer[MAX_RTP_SIZE];
-  struct sockaddr_in serv_addr, cli_addr;
+  struct sockaddr_in addr, cli_addr;
   int n;
-  sockfd = socket(AF_INET, SOCK_STREAM, 0);
+  sock = socket(AF_INET, SOCK_STREAM, 0);
   portno = 5332;
-  serv_addr.sin_family = AF_INET;
-  serv_addr.sin_addr.s_addr = INADDR_ANY;
-  serv_addr.sin_port = htons(portno);
-  bind(sockfd, (struct sockaddr *) &serv_addr,
-              sizeof(serv_addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = INADDR_ANY;
+  addr.sin_port = htons(portno);
+  bind(sock, (struct sockaddr *) &addr,
+              sizeof(addr));
   
 #endif
   
@@ -165,7 +156,7 @@ UnrealReceiver::UnrealReceiver()
       sendto(sock, reinterpret_cast<const char*>(package.data()), int(package.size()), 0,
         reinterpret_cast<const struct sockaddr*>(&addr), sizeof(addr));
 #elif __linux__
-      write(sockfd,package,package.size());
+      write(sock,reinterpret_cast<const void*>(package.data()),package.size());
 #endif
       
       Messages.push_back(std::move(rtp));

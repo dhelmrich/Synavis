@@ -1,6 +1,20 @@
 #include "Provider.hpp"
 #include "UnrealConnector.hpp"
 
+#include <chrono>
+#ifdef __linux__
+#include <date/date.h>
+#include <date/tz.h>
+std::string FormatTime(std::chrono::time_point<std::chrono::system_clock> t)
+{
+  return date::format("{:%Y-%m-%d %X}",t);
+}
+#elif _WIN32
+std::string FormatTime(std::chrono::utc_time<std::chrono::system_clock::duration> t)
+{
+  return std::format("{:%Y-%m-%d %X}",t);
+}
+#endif
 
 void WebRTCBridge::Provider::FindBridge()
 {
@@ -20,10 +34,11 @@ void WebRTCBridge::Provider::FindBridge()
     {
       Offer = json::parse(BridgeConnection.In->StringData);
       std::string timecode = Offer["Session"];
-      std::chrono::utc_time<std::chrono::system_clock::duration> remoteutc;
-      std::string format("%Y-%m-%d %X");
-      std::stringstream ss(timecode);
-      if(ss >> std::chrono::parse(format,remoteutc))
+      bool result;
+#ifdef _WIN32
+      std::chrono::utc_time<std::chrono::system_clock::duration> remoteutctime;
+      result = ParseTimeFromString(timecode, remoteutctime);
+      if(result)
       {
         std::cout << "I received remote port info: " << Offer["Port"] << "." << std::endl;
         Config["RemotePort"] = Offer["Port"];
@@ -33,6 +48,20 @@ void WebRTCBridge::Provider::FindBridge()
         json Answer = { {"Port",Config["LocalPort"]},
         {"Session",std::format("{:%Y-%m-%d %X}",localutctime)} };
       }
+#elif defined __linux__
+      std::chrono::system_clock::time_point remotetime;
+      result = ParseTimeFromString(timecode, remotetime);
+      if(result)
+      {
+        std::cout << "I received remote port info: " << Offer["Port"] << "." << std::endl;
+        Config["RemotePort"] = Offer["Port"];
+        Config["RemoteAddr"] = Offer["Address"];
+        std::chrono::system_clock localsystemtime;
+        auto localnowtime = localsystemtime.now();
+        json Answer = { {"Port",Config["LocalPort"]},
+        {"Session",FormatTime(localnowtime)} };
+      }
+#endif
     }
     catch(...)
     {
@@ -48,7 +77,7 @@ std::shared_ptr<WebRTCBridge::UnrealConnector> WebRTCBridge::Provider::CreateCon
   struct Wrap { Wrap() : cont(WebRTCBridge::UnrealConnector()) {} WebRTCBridge::UnrealConnector cont; };
   auto t = std::make_shared<Wrap>();
   std::shared_ptr<WebRTCBridge::UnrealConnector> Connection{ std::move(t), &t->cont };
-  Connection->Bridge = std::shared_ptr<Provider>(this);
+  Connection->OwningBridge = std::shared_ptr<Provider>(this);
   Connection->SetID(this,++NextID);
   return Connection;
 }
@@ -108,7 +137,7 @@ void WebRTCBridge::Provider::OnSignallingMessage(std::string Message)
     int id;
     if (!FindID(Content, id))
     {
-      throw std::exception("Could not extract ID from SS response.");
+      throw std::runtime_error("Could not extract ID from SS response.");
     }
     else
     {

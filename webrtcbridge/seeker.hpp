@@ -18,14 +18,14 @@
 namespace WebRTCBridge
 {
   class Connector;
-  struct BridgeSocket;
+  class BridgeSocket;
 
   class WEBRTCBRIDGE_EXPORT Seeker : public Bridge, std::enable_shared_from_this<Seeker>
   {
   public:
     using json = nlohmann::json;
     Seeker();
-    ~Seeker();
+    ~Seeker() override;
 
     // This methods checks whether the SigServ is reachable
     virtual bool CheckSignallingActive();
@@ -44,6 +44,8 @@ namespace WebRTCBridge
     
     void OnSignallingMessage(std::string Message) override;
     void OnSignallingData(rtc::binary Message) override;
+    uint32_t SignalNewEndpoint() override;
+    void RemoteMessage(json Message) override;
   }; 
   
 }
