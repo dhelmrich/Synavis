@@ -38,3 +38,5 @@ build*/*
 *.obj
 *.zip
 out*/*
+.vs/*
+.vscode/*
