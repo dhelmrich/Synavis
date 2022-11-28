@@ -96,6 +96,10 @@ void WebRTCBridge::Connector::OnRemoteInformation(json message)
           {
             
           });
+          channel->onMessage([](auto dataormessage)
+          {
+            
+          });
         }
       }
     }

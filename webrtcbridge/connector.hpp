@@ -47,7 +47,6 @@ namespace WebRTCBridge
     std::vector<StreamVariant> FromApplication;
     std::vector<StreamVariant> ToApplication;
 
-
     virtual void OnGatheringStateChange(rtc::PeerConnection::GatheringState inState) override;
     virtual void OnTrack(std::shared_ptr<rtc::Track> inTrack) override;
     virtual void OnLocalDescription(rtc::Description inDescription) override;

@@ -31,7 +31,12 @@ namespace WebRTCBridge
   // forward definitions
   class Adapter;
 
- 
+  class WEBRTCBRIDGE_EXPORT JSONScheme
+  {
+  public:
+  protected:
+  private:
+  };
 
   class WEBRTCBRIDGE_EXPORT BridgeSocket
   {

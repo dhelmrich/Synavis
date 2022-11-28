@@ -47,7 +47,7 @@ print("Slept through decoupling")
 with open("pixelstreaming.sdp","w") as f :
   f.write(Receiver.SessionDescriptionProtocol())
 print("I wrote the sdp file, you can start ffmpeg now!")
-"""
+
 
 
 # had .video after input
@@ -73,7 +73,7 @@ if not result:
 else :
   frame_convert = np.frombuffer(result,np.uint8).reshape([height,width,3])
   cv2.imshow("test",frame_convert)
-"""
+
 
 #img = decoder.decode(firstframe)
 #print(firstframe)

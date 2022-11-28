@@ -115,13 +115,22 @@ void WebRTCBridge::Seeker::FindBridge()
       std::string timecode = Answer["Session"];
 #ifdef _WIN32
       std::chrono::utc_time<std::chrono::system_clock::duration> remoteutctime;
+      std::chrono::utc_time<std::chrono::system_clock::duration> localutctime;
+      localutctime = std::chrono::utc_clock::now();
       bool result = ParseTimeFromString(timecode, remoteutctime);
+      if(result)
+      {
+        // we are checking this for consistency reasons
+        if(localutctime > remoteutctime)
+        {
+          std::cout << "Found the connection successfully." << std::endl;
+        }
+      }
 #elif defined __linux__
       std::chrono::system_clock::time_point remotetime;
       bool result = ParseTimeFromString(timecode, remotetime);
       std::chrono::system_clock SystemClock;
       auto timepoint = SystemClock.now();
-#endif
       if(result)
       {
         // we are checking this for consistency reasons
@@ -130,6 +139,7 @@ void WebRTCBridge::Seeker::FindBridge()
           std::cout << "Found the connection successfully." << std::endl;
         }
       }
+#endif
     }
     catch(...)
     {
@@ -219,10 +229,25 @@ void WebRTCBridge::Seeker::OnSignallingMessage(std::string Message)
     }
     Endpoint->OnRemoteInformation(content);
   }
+  else if(content["type"] == "connected")
+  {
+    // symmetric to the offer entry, but we do not create a connection here
+    int id;
+    if(!FindID(Message,id))
+    {
+      json response = {{"type","error"}, {"what","Could not extract ID from connection notice."}};
+      SignallingConnection->send(response.dump());
+    }
+    else
+    {
+      CreateTask(std::bind(&Seeker::BridgeSynchronize, this, nullptr, content, true));
+    }
+  }
 }
 
 void WebRTCBridge::Seeker::OnSignallingData(rtc::binary Message)
 {
+
 }
 
 uint32_t WebRTCBridge::Seeker::SignalNewEndpoint()
@@ -234,5 +259,18 @@ uint32_t WebRTCBridge::Seeker::SignalNewEndpoint()
 
 void WebRTCBridge::Seeker::RemoteMessage(json Message)
 {
+  if(Message["type"] == "offer")
+  {
+    int id;
+    if (!FindID(Message, id))
+    {
+      BridgeSynchronize(nullptr, nullptr, json({{"type","error"},{"what","Could not deduce ID from message."}}, false));
+    }
+    // this is the answer to "connected"
+    // the remote end will already have setup a connection here.
+    auto NewConnection = CreateConnection();
+    NewConnection->OnRemoteInformation(Message);
+    EndpointById[id] = NewConnection;
+  }
 }
 

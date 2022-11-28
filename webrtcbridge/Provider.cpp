@@ -97,7 +97,7 @@ void WebRTCBridge::Provider::RemoteMessage(json Message)
     // todo I need a new ID here, and possibly the creation of the new connection
     // The signalling server can also keep track of IDs
     SignallingConnection->send(data.dump());
-
+    // this automatically signals a new endpoint
   }
   else if (Message["type"] == "offer" || Message["type"] == "answer")
   {

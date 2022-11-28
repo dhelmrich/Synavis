@@ -323,7 +323,10 @@ WebRTCBridge::Bridge::~Bridge()
 
 void WebRTCBridge::Bridge::BridgeSynchronize(Adapter* Instigator, nlohmann::json Message, bool bFailIfNotResolved)
 {
-  Message["id"] = Instigator->ID;
+  if(Instigator != nullptr)
+    Message["id"] = Instigator->ID;
+  else
+    Message["id"] = -1;
   std::string Transmission = Message.dump();
   BridgeConnection.Out->Send(Transmission);
   auto messagelength = BridgeConnection.In->Receive(true);
@@ -523,7 +526,11 @@ void WebRTCBridge::Bridge::StartSignalling(std::string IP, int Port, bool keepAl
 
 void WebRTCBridge::Bridge::ConfigureTrackOutput(std::shared_ptr<rtc::Track> OutputStream, rtc::Description::Media* Media)
 {
+  // this is from media to track, as there is no direct function of configuring the track using the media
+  // and the specific implementation of the rtc is largely hidden behind templated constructs.
 
+  // there is nothing to be done here most likely, since the reporter hinge on the RTPPacketization
+  // which we cannot provide as we do not actually packetize any frames
 }
 
 void WebRTCBridge::Bridge::SubmitToSignalling(json Message, Adapter* Endpoint)

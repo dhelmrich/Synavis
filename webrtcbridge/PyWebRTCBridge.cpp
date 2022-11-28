@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "DataConnector.hpp"
+#include "MediaReceiver.hpp"
 namespace py = pybind11;
 
 #include "UnrealReceiver.hpp"
@@ -137,6 +138,11 @@ namespace WebRTCBridge{
     }
   };
 
+  template < typename T = MediaReceiver > class PyMediaReceiver : public T
+  {
+    
+  };
+
   PYBIND11_MODULE(PyWebRTCBridge, m)
   {
     py::class_<rtc::PeerConnection> (m, "PeerConnection");
@@ -164,6 +170,8 @@ namespace WebRTCBridge{
       .def("EstablishedConnection", (bool(Bridge::*)(bool)) & PyBridge<Bridge>::EstablishedConnection)
       .def("FindBridge", &Bridge::FindBridge)
       .def("CreateTask",&Bridge::CreateTask);
+
+    py::class_<Provider, PyProvider<Provider>, std::shared_ptr<Provider>>(m, "Brider");
 
     py::class_<Adapter, PyAdapter<Adapter>, std::shared_ptr<Adapter>>(m, "Adapter")
       .def("GenerateSDP", &Adapter::GenerateSDP)
