@@ -5,6 +5,7 @@
 #include <span>
 #include <string>
 #include <iostream>
+#include <thread>
 
 #include "Provider.hpp"
 #include "Seeker.hpp"
@@ -17,7 +18,6 @@ void ProviderMain()
 
 void SeekerMain()
 {
-
   auto BridgeSeeker = std::make_shared<WebRTCBridge::Seeker>();
   std::cout << "Seeker Thread started" << std::endl;
 }

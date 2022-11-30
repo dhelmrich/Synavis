@@ -5,6 +5,7 @@
 #include <fstream>
 #include <span>
 
+
 int WebRTCBridge::BridgeSocket::Receive(bool invalidIsFailure)
 {
 #ifdef _WIN32
@@ -43,6 +44,20 @@ void WebRTCBridge::BridgeSocket::SetBlockingEnabled(bool Blocking)
   unsigned long Mode = !Blocking;
 #ifdef _WIN32
   ioctlsocket(Sock, FIONBIO, &Mode);
+#elif defined __linux__
+
+  int flags = fcntl(Sock, F_GETFL, 0);
+  if (flags >= 0)
+  {
+    if(Blocking)
+    {
+      flags &= (~O_NONBLOCK);
+    }
+    else
+      flags |= O_NONBLOCK;
+    fcntl(Sock, F_SETFL, flags);
+  }
+
 #endif
 }
 
@@ -70,6 +85,16 @@ int WebRTCBridge::BridgeSocket::GetSocketPort()
 
 void WebRTCBridge::BridgeSocket::SetSocketPort(int Port)
 {this->Port = Port;}
+
+std::string WebRTCBridge::BridgeSocket::What()
+{
+#ifdef _WIN32
+#elif defined __linux__
+
+return strerror(errno);
+
+#endif
+}
 
 bool WebRTCBridge::BridgeSocket::Connect()
 {
@@ -132,19 +157,52 @@ bool WebRTCBridge::BridgeSocket::Connect()
   }
 #elif defined __linux__
   Sock = socket(AF_INET, SOCK_DGRAM, 0);
+  int state{-1};
   if (Sock < 0)
   {
+    std::cout << "failed at establishing the socket" << std::endl;
     return false; 
   }
   bzero((char*)&Addr, sizeof(Addr));
   Addr.sin_family = AF_INET;
-  Addr.sin_addr.s_addr = INADDR_ANY;
-  Addr.sin_port = htons(Port);
-  if (bind(Sock, (struct sockaddr*)&Addr,
-    sizeof(Addr)) < 0)
+  //Addr.sin_addr.s_addr <-- via parsing
+  if(inet_aton(Address.c_str(), &Addr.sin_addr) == 0)
   {
+    std::cout << "failed at parsing IP" << std::endl;
     return false;
   }
+  Addr.sin_port = htons(Port);
+  if(Outgoing)
+  {
+    if(connect(Sock,reinterpret_cast<sockaddr*>(&Addr),sizeof(sockaddr_in)) < 0)
+    {
+      std::cout << "failed at connecting" << std::endl;
+      return false;
+    }
+  }
+  else
+  {
+    bzero((char*)&Remote, sizeof(Remote));
+    Remote.sin_family = AF_INET;
+    Remote.sin_addr.s_addr = htonl(INADDR_ANY);
+    
+    if(inet_aton(Address.c_str(), &Addr.sin_addr) == 0)
+    {
+      std::cout << "failed at parsing IP" << std::endl;
+      return false;
+    }
+    
+    Remote.sin_port = htons(Port);
+    const int option = 1;
+    setsockopt(Sock, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(int));
+    if ((state = bind(Sock, reinterpret_cast<struct sockaddr*>(&Remote),
+      sizeof(sockaddr_in))) < 0)
+    {
+      std::cout << "[Receiver Thread]: Failed at binding with state: " << strerror(errno) << std::endl;
+      return false;
+    }
+  }
+  Valid = true;
   return true;
 #endif
     
@@ -200,8 +258,8 @@ WebRTCBridge::BridgeSocket WebRTCBridge::BridgeSocket::GetFreeSocket(std::string
 
 int WebRTCBridge::BridgeSocket::Peek()
 {
-  SetBlockingEnabled(false);
 #ifdef _WIN32
+  SetBlockingEnabled(false);
   auto size = recv(Sock,Reception,MAX_RTP_SIZE,MSG_PEEK);
   if(size < 0 && WSAGetLastError() == WSAEWOULDBLOCK)
   {
@@ -213,14 +271,24 @@ int WebRTCBridge::BridgeSocket::Peek()
   }
   SetBlockingEnabled(true);
 #elif defined __linux__
-  int size = 0;
+  SetBlockingEnabled(false);
+  auto size = recv(Sock, Reception, MAX_RTP_SIZE, 0 );
+  if(size < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+  {
+    return 0;
+  }
+  else
+  {
+    StringData = std::string_view(Reception, size);
+  }
+  SetBlockingEnabled(true);
 #endif
   return size;
 }
 
-void WebRTCBridge::BridgeSocket::Send(std::variant<rtc::binary, std::string> message)
+bool WebRTCBridge::BridgeSocket::Send(std::variant<rtc::binary, std::string> message)
 {
-  if(Outgoing)
+  if(Outgoing && this->Valid)
   {
     const char* buffer;
     int length;
@@ -235,15 +303,20 @@ void WebRTCBridge::BridgeSocket::Send(std::variant<rtc::binary, std::string> mes
       length = static_cast<int>(std::get<rtc::binary>(message).size());
     }
     int status;
-    if((status = send(Sock,buffer,length,0)) == 0)
+    if((status = send(Sock,buffer,length,0)) < 0)
     //if((status = sendto(Sock, buffer, length, 0, reinterpret_cast<sockaddr*>(&Addr), sizeof(sockaddr_in))) == 0)
     {
-      std::cout << "What:" << status << std::endl;
-      exit(-1);
+      return false;
     }
     else
     {
+      return true;
     }
+  }
+  else
+  {
+    std::cout << "no" << std::endl;
+    return false;
   }
 }
 

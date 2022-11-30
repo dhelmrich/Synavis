@@ -5,6 +5,8 @@
 #include <span>
 #include <string>
 #include <iostream>
+#include <future>
+#include <thread>
 
 #include "Provider.hpp"
 
@@ -26,7 +28,10 @@ void Sender()
   while(true)
   {
     std::this_thread::sleep_for(1000ms);
-    BridgeSocket->Send("Hello!");
+    if(!BridgeSocket->Send("Hello!"))
+    {
+      std::cout << "[Sender Thread]: What? " << BridgeSocket->What() << "!" << std::endl;
+    }
     std::cout << "[Sender Thread]: Send Hello!" << std::endl;
   }
 }
@@ -48,10 +53,10 @@ void Receiver()
   }
   while(true)
   {
-    std::this_thread::sleep_for(5000ms);
-    std::cout << "[Receiver Thread]: Going to peek now!" << std::endl;
-    auto siz = BridgeSocket->Receive();
-    std::cout << "[Receiver Thread]: BridgeSocket returned " << siz << std::endl;
+    std::this_thread::sleep_for(50ms);
+    //std::cout << "[Receiver Thread]: Going to peek now!" << std::endl;
+    auto siz = BridgeSocket->Peek();
+    //std::cout << "[Receiver Thread]: BridgeSocket returned " << siz << std::endl;
     if(siz > 0)
     {
       std::cout << "[Receiver Thread]: Stringview is " << BridgeSocket->StringData.size() << " large and contains " << BridgeSocket->StringData << std::endl;

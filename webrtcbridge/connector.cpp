@@ -22,7 +22,6 @@ void WebRTCBridge::Connector::SetupApplicationConnection()
   this->ToApplication.push_back(pc_->addTrack(V2A));
 
   rtc::Description::Audio A2A("audio", rtc::Description::Direction::SendOnly);
-  
 }
 
 void WebRTCBridge::Connector::AwaitSignalling()

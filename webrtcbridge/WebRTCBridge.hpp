@@ -21,7 +21,9 @@ bool ParseTimeFromString(std::string Source, std::chrono::utc_time<std::chrono::
 #include <sys/socket.h>
 #include <sys/types.h> 
 #include <netinet/in.h>
+#include <arpa/inet.h>
 #include <date/date.h>
+#include <fcntl.h>
 bool ParseTimeFromString(std::string Source, std::chrono::time_point<std::chrono::system_clock>& Destination);
 
 #endif
@@ -60,6 +62,8 @@ namespace WebRTCBridge
     int GetSocketPort();
     void SetSocketPort(int Port);
 
+    std::string What();
+
 #ifdef _WIN32
     SOCKET Sock{INVALID_SOCKET};
     sockaddr info;
@@ -85,7 +89,7 @@ namespace WebRTCBridge
 
     int Peek();
     virtual int Receive(bool invalidIsFailure = false);
-    virtual void Send(std::variant<rtc::binary, std::string> message);
+    virtual bool Send(std::variant<rtc::binary, std::string> message);
 
     template < typename N >
     std::span<N> Reinterpret()
