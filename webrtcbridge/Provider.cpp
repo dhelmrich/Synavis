@@ -128,6 +128,47 @@ void WebRTCBridge::Provider::RemoteMessage(json Message)
   }
 }
 
+bool WebRTCBridge::Provider::EstablishedConnection(bool Shallow)
+{
+  if(Shallow)
+  {
+    Bridge::EstablishedConnection(Shallow);
+  }
+  else
+  {
+    std::unique_lock<std::mutex> lock(QueueAccess);
+    lock.lock();
+    int PingSuccessful = -1;
+    CommInstructQueue.push([this,&PingSuccessful]
+    {
+      int reception{0};
+      while((reception = BridgeConnection.In->Peek()) == 0)
+      {
+        std::this_thread::yield();
+      }
+      try
+      {
+        if(json::parse(BridgeConnection.In->StringData)["ping"] == 1)
+        {
+          BridgeConnection.Out->Send(json({{"ping",int(1)}}).dump());
+          PingSuccessful = 1;
+        }
+      }catch(...)
+      {
+        PingSuccessful = 0;
+      }
+    });
+    lock.release();
+    while(PingSuccessful == -1) std::this_thread::yield();
+    return PingSuccessful == 1;
+  }
+}
+
+void WebRTCBridge::Provider::InitConnection()
+{
+  Bridge::InitConnection();
+}
+
 void WebRTCBridge::Provider::OnSignallingMessage(std::string Message)
 {
   json Content;

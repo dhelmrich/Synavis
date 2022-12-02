@@ -190,7 +190,7 @@ namespace WebRTCBridge
     virtual void Listen();
     virtual bool CheckSignallingActive();
 
-    virtual bool EstablishedConnection(bool Shallow = false);
+    virtual bool EstablishedConnection(bool Shallow = true);
     virtual void FindBridge();
     virtual void StartSignalling(std::string IP, int Port, bool keepAlive = true, bool useAuthentification = false);
     void ConfigureTrackOutput(std::shared_ptr<rtc::Track> OutputStream, rtc::Description::Media* Media);

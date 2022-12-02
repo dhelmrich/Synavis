@@ -35,44 +35,31 @@ bool WebRTCBridge::Seeker::EstablishedConnection(bool Shallow)
   }
   else
   {
-    BridgeConnection.In = std::make_shared<BridgeSocket>();
-    BridgeConnection.Out = std::make_shared<BridgeSocket>();
-    BridgeConnection.Out->Address = Config["LocalAddress"];
-    BridgeConnection.Out->Port = Config["LocalPort"];
-    BridgeConnection.In->Address = Config["RemoteAddress"];
-    BridgeConnection.In->Port = Config["RemotePort"];
-    if(BridgeConnection.Out->Connect() && BridgeConnection.In->Connect())
+    std::unique_lock<std::mutex> lock(QueueAccess);
+    lock.lock();
+    int PingPongSuccessful = -1;
+    CommInstructQueue.push([this,&PingPongSuccessful]
     {
-      std::unique_lock<std::mutex> lock(QueueAccess);
-      lock.lock();
-      int PingPongSuccessful = -1;
-      CommInstructQueue.push([this,&PingPongSuccessful]
+      BridgeConnection.Out->Send(json({{"ping",int()}}).dump());
+      int reception{0};
+      while((reception = BridgeConnection.In->Peek()) == 0)
       {
-        BridgeConnection.Out->Send(json({{"ping",int()}}).dump());
-        int reception{0};
-        while((reception = BridgeConnection.In->Peek()) == 0)
+        std::this_thread::yield();
+      }
+      try
+      {
+        if(json::parse(BridgeConnection.In->StringData)["ping"] == 1)
         {
-          std::this_thread::yield();
+          PingPongSuccessful = 1;
         }
-        try
-        {
-          if(json::parse(BridgeConnection.In->StringData)["ping"] == 1)
-          {
-            PingPongSuccessful = 1;
-          }
-        }catch(...)
-        {
-          PingPongSuccessful = 0;
-        }
-      });
-      lock.release();
-      while(PingPongSuccessful == -1) std::this_thread::yield();
-      return PingPongSuccessful == 1;
-    }
-    else
-    {
-      return false;
-    }
+      }catch(...)
+      {
+        PingPongSuccessful = 0;
+      }
+    });
+    lock.release();
+    while(PingPongSuccessful == -1) std::this_thread::yield();
+    return PingPongSuccessful == 1;
   }
 }
 
@@ -272,5 +259,10 @@ void WebRTCBridge::Seeker::RemoteMessage(json Message)
     NewConnection->OnRemoteInformation(Message);
     EndpointById[id] = NewConnection;
   }
+}
+
+void WebRTCBridge::Seeker::InitConnection()
+{
+  Bridge::InitConnection();
 }
 

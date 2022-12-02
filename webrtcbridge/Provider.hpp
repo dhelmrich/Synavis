@@ -27,6 +27,8 @@ namespace WebRTCBridge
     void OnSignallingData(rtc::binary Message) override;
     uint32_t SignalNewEndpoint() override;
     void RemoteMessage(json Message) override;
+    bool EstablishedConnection(bool Shallow = true) override;
+    void InitConnection() override;
   };
 }
 #endif

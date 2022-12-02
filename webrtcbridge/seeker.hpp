@@ -30,7 +30,7 @@ namespace WebRTCBridge
     // This methods checks whether the SigServ is reachable
     virtual bool CheckSignallingActive();
     
-    virtual bool EstablishedConnection(bool Shallow = false) override;
+    virtual bool EstablishedConnection(bool Shallow = true) override;
     virtual void FindBridge() override;
     virtual void RecoverConnection();
 
@@ -46,6 +46,7 @@ namespace WebRTCBridge
     void OnSignallingData(rtc::binary Message) override;
     uint32_t SignalNewEndpoint() override;
     void RemoteMessage(json Message) override;
+    void InitConnection() override;
   }; 
   
 }

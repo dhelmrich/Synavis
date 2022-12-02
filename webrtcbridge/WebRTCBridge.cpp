@@ -5,6 +5,7 @@
 #include <fstream>
 #include <span>
 
+// std::cout << "" << std::endl;
 
 int WebRTCBridge::BridgeSocket::Receive(bool invalidIsFailure)
 {
@@ -89,9 +90,15 @@ void WebRTCBridge::BridgeSocket::SetSocketPort(int Port)
 std::string WebRTCBridge::BridgeSocket::What()
 {
 #ifdef _WIN32
+  std::string message;
+  message.resize(256,'\0');
+  FormatMessage(
+          FORMAT_MESSAGE_FROM_SYSTEM|FORMAT_MESSAGE_IGNORE_INSERTS,
+          0, WSAGetLastError(), 0, message.data(), 256, 0);
+  return message;
 #elif defined __linux__
 
-return strerror(errno);
+  return strerror(errno);
 
 #endif
 }
@@ -105,9 +112,11 @@ bool WebRTCBridge::BridgeSocket::Connect()
 #ifdef _WIN32
   int size = sizeof(Addr);
   WSADATA wsaData;
+  std::cout << "WSASTARTUP" << std::endl;
   auto iResult = WSAStartup(MAKEWORD(2,2), &wsaData);
   if ( iResult != 0 )
   {
+    std::cout << "STARTUP FAILED" << std::endl;
     return false;
   }
   // we are employing connectionless sockets for the transmission
@@ -123,12 +132,14 @@ bool WebRTCBridge::BridgeSocket::Connect()
   // ...
   // That being said, I am also not super keen on this setup, so any
   // suggestion is always welcome.IPPROTO_HOPOPTS
+  std::cout << "CREATING SOCKET" << std::endl;
   Sock = socket(AF_INET,SOCK_DGRAM,IPPROTO_UDP);
   Addr.sin_addr.s_addr=inet_addr(Address.c_str());
   Addr.sin_port = htons(Port);
   Addr.sin_family = AF_INET;
   //getsockname(NULL,reinterpret_cast<sockaddr*>(&Addr),&size);
   //Port = *reinterpret_cast<int*>(info.sa_data);
+  std::cout << "CONNECTING SOCKET" << std::endl;
   if(Outgoing)
   {
     if(connect(Sock,reinterpret_cast<sockaddr*>(&Addr),sizeof(sockaddr_in)) == SOCKET_ERROR)
@@ -476,12 +487,36 @@ void WebRTCBridge::Bridge::BridgeSubmit(Adapter* Instigator, StreamVariant origi
 
 void WebRTCBridge::Bridge::InitConnection()
 {
-  BridgeConnection.In->Address = Config["RemoteAddress"];
-  BridgeConnection.In->Port = Config["RemotePort"];
+  std::cout << "Init connectioN" << std::endl;
+  BridgeConnection.In->Outgoing = false;
+  BridgeConnection.In->Address = Config["RemoteAddress"].get<std::string>();
+  BridgeConnection.In->Port = Config["RemotePort"].get<int>();
+  std::cout << "Init Bridge In" << std::endl;
   if(!BridgeConnection.In->Connect())
   {
-    throw std::runtime_error("Unexpected error when connecting to an incoming socket:");
+    std::cout << "Unexpected error when connecting to an incoming socket:"
+     << std::endl << BridgeConnection.In->What() << std::endl;
   }
+  BridgeConnection.Out->Outgoing = true;
+  BridgeConnection.Out->Address = Config["LocalAddress"].get<std::string>();
+  BridgeConnection.Out->Port = Config["LocalPort"].get<int>();
+  std::cout << "Init Bridge Out" << std::endl;
+  if(!BridgeConnection.Out->Connect())
+  {
+    std::cout << "Unexpected error when connecting to an incoming socket:"
+     << std::endl << BridgeConnection.In->What() << std::endl;
+  }
+  /*
+  BridgeConnection.DataOut->Outgoing = true;
+  BridgeConnection.DataOut->Address = Config["LocalAddress"].get<std::string>();
+  BridgeConnection.DataOut->Port = Config["LocalPort"].get<int>();
+  std::cout << "Init Bridge Data Out" << std::endl;
+  if(!BridgeConnection.DataOut->Connect())
+  {
+    std::cout << "Unexpected error when connecting to an incoming socket:"
+     << std::endl << BridgeConnection.In->What() << std::endl;
+  }
+  */
 }
 
 void WebRTCBridge::Bridge::SetHeaderByteStart(uint32_t Byte)
@@ -624,6 +659,8 @@ void WebRTCBridge::Bridge::UseConfig(std::string filename)
 
 void WebRTCBridge::Bridge::UseConfig(json fileConfig)
 {
+  this->Config = fileConfig;
+  return;
   bool complete = true;
   for(auto key : Config)
     if(fileConfig.find(key) == fileConfig.end())
