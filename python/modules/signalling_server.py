@@ -1,12 +1,43 @@
 from json import JSONDecoder, JSONEncoder
 from urllib import request
-from flask import Flask, render_template, request, session, abort, url_for
-from flask_socketio import SocketIO, send, emit, join_room, leave_room
+from flask import Flask, render_template, request, session, abort, url_for, Response
+import eventlet
+import eventlet.wsgi
+import socketio as server_handler
+#from flask_socketio import SocketIO, send, emit, join_room, leave_room
 import json
 from enum import Enum
 
+socketio = server_handler.Server()
 app = Flask(__name__)
-socketio = SocketIO(app)
+app.config['transports'] = 'websocket'
+#socketio = SocketIO(app, logger=True, engineio_logger=True, debug=True)
+
+@app.route('/')
+def starter():
+  #return success
+  print("index was called: ")
+  print("Requested URL was ", request.base_url)
+  print("Origin ", request.origin)
+  return {}
+
+@app.route('/main')
+def main():
+  #return success
+  print("index was called: ")
+  print("Requested URL was ", request.base_url)
+  print("Origin ", request.origin)
+  return {}
+
+
+
+@app.errorhandler(404)
+def page_not_found(error):
+  print("error was called: ", error)
+  print("Requested URL was ", request.base_url)
+  print("Origin ", request.origin)
+  exit(-1)
+  return '{"type":"fail"}', 404
 
 class EndpointType(Enum) :
   Streamer = 1
@@ -43,25 +74,28 @@ def ParseSDP(spd: str) :
   return categories
 #enddef
 
+@socketio.event
+def event_response(message) :
+  print(message)
+  return '', 101
+
 @socketio.on('join')
 def on_join(data):
+  print("A endpoint joined")
   room = request.sid
   join_room(room)
+  return '', 201
 #enddef
 
 
 @socketio.on('leave')
 def on_leave(data):
+  print("An endpoint disconnected")
   username = data['username']
   room = data['room']
   leave_room(room)
   send(username + ' has left the room.', to=room)
 #enddef
-
-# Flask constructor takes the name of 
-# current module (__name__) as argument.
-app = Flask(__name__)
-socketio = SocketIO(app)
 
 Sessions = {}
 
@@ -74,12 +108,17 @@ def test_connect(auth):
   emit('my response', {'data': 'Connected'})
   id = request.sid
   orig = request.origin
+  return 
 #enddef
 
 @socketio.on('disconnect')
 def test_disconnect():
     print('Client disconnected')
 #enddef
+
+@socketio.on('message', namespace='/')
+def messgage(sid, data):
+    socketio.emit('message', data=data)
 
 @socketio.on('json')
 def signalling(json):
@@ -103,13 +142,18 @@ def signalling(json):
         emit(data.dump(), room = player)
     #endif
   #endif
+  return '', 201
 #enddef
 
   
 if __name__ == '__main__' :
-  #socketio.run(app)
-  with open("../../sdp.txt","r") as f:
-    sdp = f.read()
-    ParseSDP(sdp)
+  #from waitress import serve
+  #serve(app, host="0.0.0.0", port=5000)
+  mware = server_handler.Middleware(socketio, app)
+  eventlet.wsgi.server(eventlet.listen(('', 8888)), mware)
+  #socketio.run(app, debug=True, host="127.0.0.1",port=8888)
+  #with open("../../sdp.txt","r") as f:
+  #  sdp = f.read()
+  #  ParseSDP(sdp)
 #endif main
   
