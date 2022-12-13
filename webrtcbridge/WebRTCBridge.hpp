@@ -33,6 +33,8 @@ namespace WebRTCBridge
   // forward definitions
   class Adapter;
 
+  long TimeSince(std::chrono::system_clock::time_point t);
+
   class WEBRTCBRIDGE_EXPORT JSONScheme
   {
   public:
@@ -152,6 +154,13 @@ namespace WebRTCBridge
     Loss
   };
 
+  enum class WEBRTCBRIDGE_EXPORT EMessageTimeoutPolicy
+  {
+    None = (std::uint8_t)EDataReceptionPolicy::Loss + 1u,
+    Critical,
+    All
+  };
+
   using StreamVariant = std::variant<std::shared_ptr<rtc::DataChannel>,
     std::shared_ptr<rtc::Track>>;
 
@@ -177,6 +186,9 @@ namespace WebRTCBridge
     using json = nlohmann::json;
     Bridge();
     virtual ~Bridge();
+    virtual std::string Prefix();
+    void SetTimeoutPolicy(EMessageTimeoutPolicy inPolicy, std::chrono::system_clock::duration inTimeout);
+    EMessageTimeoutPolicy GetTimeoutPolicy();
     void UseConfig(std::string filename);
     void UseConfig(json Config);
     virtual void BridgeSynchronize(Adapter* Instigator,
@@ -185,18 +197,14 @@ namespace WebRTCBridge
     void BridgeSubmit(Adapter* Instigator, StreamVariant origin, std::variant<rtc::binary, std::string> Message) const;
     virtual void InitConnection();
     void SetHeaderByteStart(uint32_t Byte);
-
     virtual void BridgeRun();
     virtual void Listen();
     virtual bool CheckSignallingActive();
-
     virtual bool EstablishedConnection(bool Shallow = true);
     virtual void FindBridge();
     virtual void StartSignalling(std::string IP, int Port, bool keepAlive = true, bool useAuthentification = false);
     void ConfigureTrackOutput(std::shared_ptr<rtc::Track> OutputStream, rtc::Description::Media* Media);
-
     void SubmitToSignalling(json Message, Adapter* Endpoint);
-
     inline bool FindID(const json& Jason, int& ID)
     {
       decltype(Jason.begin()) id_entry;
@@ -213,17 +221,16 @@ namespace WebRTCBridge
       }
       return false;
     }
-
     // This method should be used to signal to the provider
     // that a new application has connected.
     virtual uint32_t SignalNewEndpoint() = 0;
-
     virtual void OnSignallingMessage(std::string Message) = 0;
     virtual void RemoteMessage(json Message) = 0;
     virtual void OnSignallingData(rtc::binary Message) = 0;
-
+    void Stop();
   protected:
-
+    EMessageTimeoutPolicy TimeoutPolicy;
+    std::chrono::system_clock::duration Timeout;
     json Config{
       {
         {"LocalPort", int()},
@@ -231,7 +238,6 @@ namespace WebRTCBridge
         {"LocalAddress",int()},
         {"RemoteAddress",int()}
       }};
-
     std::unordered_map<int,std::shared_ptr<Adapter>> EndpointById;
     std::future<void> BridgeThread;
     std::mutex QueueAccess;
@@ -241,13 +247,10 @@ namespace WebRTCBridge
     std::queue<std::variant<rtc::binary, std::string>> CommandBuffer;
     std::condition_variable CommandAvailable;
     bool bNeedInfo{false};
-
     // Signalling Server
     std::shared_ptr<rtc::WebSocket> SignallingConnection;
     EBridgeConnectionType ConnectionMode{ EBridgeConnectionType::BridgeMode };
-
     std::shared_ptr<NoBufferThread> DataInThread;
-    
     struct
     {
       std::shared_ptr<BridgeSocket> In;
@@ -256,17 +259,15 @@ namespace WebRTCBridge
       // There should be no order logic behind the packages, they should just be sent as-is!
       std::shared_ptr<BridgeSocket> DataOut;
     } BridgeConnection;
-    
-
     std::condition_variable TaskAvaliable;
-
     // this will be set the first time an SDP is transmitted
     // this will be asymmetric because UE has authority
     // over the header layout
     uint32_t RtpDestinationHeader{};
 
     int NextID{ 0 };
-
+  private:
+    bool Run = true;
   };
 }
 #endif

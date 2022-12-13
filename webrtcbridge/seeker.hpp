@@ -47,6 +47,7 @@ namespace WebRTCBridge
     uint32_t SignalNewEndpoint() override;
     void RemoteMessage(json Message) override;
     void InitConnection() override;
+    std::string Prefix() override;
   }; 
   
 }

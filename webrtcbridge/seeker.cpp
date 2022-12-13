@@ -29,45 +29,68 @@ bool WebRTCBridge::Seeker::CheckSignallingActive()
 
 bool WebRTCBridge::Seeker::EstablishedConnection(bool Shallow)
 {
+  using namespace std::chrono_literals;
   if(Shallow)
   {
     return Bridge::EstablishedConnection(Shallow);
   }
   else
   {
-    std::unique_lock<std::mutex> lock(QueueAccess);
-    lock.lock();
     int PingPongSuccessful = -1;
-    CommInstructQueue.push([this,&PingPongSuccessful]
-    {
-      BridgeConnection.Out->Send(json({{"ping",int()}}).dump());
-      int reception{0};
-      while((reception = BridgeConnection.In->Peek()) == 0)
+    std::chrono::system_clock::time_point precheck = std::chrono::system_clock::now();
+    std::cout << this->Prefix() << "Saving time point for ping" << std::endl;
+    CreateTask([this,&PingPongSuccessful]
       {
-        std::this_thread::yield();
-      }
-      try
-      {
-        if(json::parse(BridgeConnection.In->StringData)["ping"] == 1)
+        std::cout << this->Prefix() << "Sending ping" << std::endl;
+        auto sent = BridgeConnection.Out->Send(json({{"ping",int()}}).dump());
+        if(!sent)
         {
-          PingPongSuccessful = 1;
+          std::cout << this->Prefix() << "I was too weak to send :( " << std::endl;
         }
-      }catch(...)
-      {
-        PingPongSuccessful = 0;
-      }
-    });
-    lock.release();
-    while(PingPongSuccessful == -1) std::this_thread::yield();
+        int reception{0};
+        std::chrono::system_clock::time_point resend_check = std::chrono::system_clock::now();
+        while((reception = BridgeConnection.In->Peek()) == 0)
+        {
+          //std::this_thread::yield();
+          std::this_thread::sleep_for(10ms);
+          if(TimeSince(resend_check) > 10000)
+          {
+            auto sent = BridgeConnection.Out->Send(json({{"ping",int()}}).dump());
+          }
+        }
+      
+        try
+        {
+          std::cout << this->Prefix() << "Received something that might be a pong" << std::endl;
+          if(json::parse(BridgeConnection.In->StringData)["ping"] == 1)
+          {
+            PingPongSuccessful = 1;
+          }
+        }catch(...)
+        {
+          PingPongSuccessful = 0;
+        }
+      });
+    
+    while(PingPongSuccessful == -1)
+    {
+      std::chrono::system_clock::time_point sysnow = std::chrono::system_clock::now();
+      auto orig_diff = sysnow - precheck;
+      auto diff = std::chrono::duration_cast<std::chrono::seconds>(orig_diff);
+      if(diff < Timeout || TimeoutPolicy < EMessageTimeoutPolicy::Critical)
+        std::this_thread::yield();
+      else
+        break;
+    }
     return PingPongSuccessful == 1;
   }
 }
 
 void WebRTCBridge::Seeker::FindBridge()
 {
+  std::cout << this->Prefix() << "Find Bridge" << std::endl;
   // THis is a wait function.
-  std::unique_lock<std::mutex> lock(QueueAccess);
-  lock.lock();
+  const std::lock_guard<std::mutex> lock(QueueAccess);
 #ifdef _WIN32
   std::chrono::utc_time<std::chrono::system_clock::duration> localutctime;
   localutctime = std::chrono::utc_clock::now();
@@ -110,7 +133,7 @@ void WebRTCBridge::Seeker::FindBridge()
         // we are checking this for consistency reasons
         if(localutctime > remoteutctime)
         {
-          std::cout << "Found the connection successfully." << std::endl;
+          std::cout << this->Prefix() << "Found the connection successfully." << std::endl;
         }
       }
 #elif defined __linux__
@@ -123,7 +146,7 @@ void WebRTCBridge::Seeker::FindBridge()
         // we are checking this for consistency reasons
         if(timepoint > remotetime)
         {
-          std::cout << "Found the connection successfully." << std::endl;
+          std::cout << this->Prefix() << "Found the connection successfully." << std::endl;
         }
       }
 #endif
@@ -133,7 +156,6 @@ void WebRTCBridge::Seeker::FindBridge()
       
     }
   }
-  lock.release();
 }
 
 void WebRTCBridge::Seeker::RecoverConnection()
@@ -182,12 +204,12 @@ void WebRTCBridge::Seeker::OnSignallingMessage(std::string Message)
   int ID;
   if(!FindID(content,ID))
   {
-    std::cout << "From onMessage SignallingServer Thread: Could not identify player id from input, discarding this message." << std::endl;
+    std::cout << this->Prefix() << "From onMessage SignallingServer Thread: Could not identify player id from input, discarding this message." << std::endl;
 
   }
   if(content["type"] == "offer")
   {
-    std::cout << "I received an offer and this is the most crucial step in bridge setup!" << std::endl;
+    std::cout << this->Prefix() << "I received an offer and this is the most crucial step in bridge setup!" << std::endl;
 
     // we MUST fail if this is not resolved as the sdp description
     // has to be SYNCHRONOUSLY valid on both ends of the bridge!
@@ -212,7 +234,7 @@ void WebRTCBridge::Seeker::OnSignallingMessage(std::string Message)
     }
     catch( ... )
     {
-      std::cout << "From onMessage SS thread: Could not find Connector for ice candidate." << std::endl;
+      std::cout << this->Prefix() << "From onMessage SS thread: Could not find Connector for ice candidate." << std::endl;
     }
     Endpoint->OnRemoteInformation(content);
   }
@@ -264,5 +286,10 @@ void WebRTCBridge::Seeker::RemoteMessage(json Message)
 void WebRTCBridge::Seeker::InitConnection()
 {
   Bridge::InitConnection();
+}
+
+std::string WebRTCBridge::Seeker::Prefix()
+{
+  return "[SeekerThread]: ";
 }
 

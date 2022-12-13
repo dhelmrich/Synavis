@@ -34,6 +34,14 @@ int WebRTCBridge::BridgeSocket::Receive(bool invalidIsFailure)
 #endif
 }
 
+long WebRTCBridge::TimeSince(std::chrono::system_clock::time_point t)
+{
+  std::chrono::system_clock::time_point sysnow = std::chrono::system_clock::now();
+  auto orig_diff = sysnow - t;
+  auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(orig_diff);
+  return diff.count();
+}
+
 void WebRTCBridge::BridgeSocket::SetAddress(std::string inAddress)
 { this->Address = inAddress; }
 
@@ -112,11 +120,9 @@ bool WebRTCBridge::BridgeSocket::Connect()
 #ifdef _WIN32
   int size = sizeof(Addr);
   WSADATA wsaData;
-  std::cout << "WSASTARTUP" << std::endl;
   auto iResult = WSAStartup(MAKEWORD(2,2), &wsaData);
   if ( iResult != 0 )
   {
-    std::cout << "STARTUP FAILED" << std::endl;
     return false;
   }
   // we are employing connectionless sockets for the transmission
@@ -132,14 +138,12 @@ bool WebRTCBridge::BridgeSocket::Connect()
   // ...
   // That being said, I am also not super keen on this setup, so any
   // suggestion is always welcome.IPPROTO_HOPOPTS
-  std::cout << "CREATING SOCKET" << std::endl;
   Sock = socket(AF_INET,SOCK_DGRAM,IPPROTO_UDP);
   Addr.sin_addr.s_addr=inet_addr(Address.c_str());
   Addr.sin_port = htons(Port);
   Addr.sin_family = AF_INET;
   //getsockname(NULL,reinterpret_cast<sockaddr*>(&Addr),&size);
   //Port = *reinterpret_cast<int*>(info.sa_data);
-  std::cout << "CONNECTING SOCKET" << std::endl;
   if(Outgoing)
   {
     if(connect(Sock,reinterpret_cast<sockaddr*>(&Addr),sizeof(sockaddr_in)) == SOCKET_ERROR)
@@ -150,7 +154,8 @@ bool WebRTCBridge::BridgeSocket::Connect()
     }
     else
     {
-      return Sock != INVALID_SOCKET;
+      this->Valid = Sock != INVALID_SOCKET;
+      return this->Valid;
     }
   }
   else
@@ -163,7 +168,8 @@ bool WebRTCBridge::BridgeSocket::Connect()
     }
     else
     {
-      return Sock != INVALID_SOCKET;
+      this->Valid = Sock != INVALID_SOCKET;
+      return this->Valid;
     }
   }
 #elif defined __linux__
@@ -171,7 +177,7 @@ bool WebRTCBridge::BridgeSocket::Connect()
   int state{-1};
   if (Sock < 0)
   {
-    std::cout << "failed at establishing the socket" << std::endl;
+    std::cout << "[BridgeSocket]: failed at establishing the socket" << std::endl;
     return false; 
   }
   bzero((char*)&Addr, sizeof(Addr));
@@ -326,7 +332,6 @@ bool WebRTCBridge::BridgeSocket::Send(std::variant<rtc::binary, std::string> mes
   }
   else
   {
-    std::cout << "no" << std::endl;
     return false;
   }
 }
@@ -390,11 +395,11 @@ void WebRTCBridge::NoBufferThread::Run()
 
 WebRTCBridge::Bridge::Bridge()
 {
-  std::cout << "An instance of the WebRTCBridge was started, we are starting the threads..." << std::endl;
+  std::cout << Prefix() << "An instance of the WebRTCBridge was started, we are starting the threads..." << std::endl;
   BridgeThread = std::async(std::launch::async, &Bridge::BridgeRun,this);
-  std::cout << "Bridge Thread started" << std::endl;
+  std::cout << Prefix() << "Bridge Thread started" << std::endl;
   ListenerThread = std::async(std::launch::async,&Bridge::Listen, this);
-  std::cout << "Listener Thread Started" << std::endl;
+  std::cout << Prefix() << "Listener Thread Started" << std::endl;
 
   BridgeConnection.In = std::make_shared<BridgeSocket>();
   BridgeConnection.Out = std::make_shared<BridgeSocket>();
@@ -403,6 +408,18 @@ WebRTCBridge::Bridge::Bridge()
 
 WebRTCBridge::Bridge::~Bridge()
 {
+}
+
+std::string WebRTCBridge::Bridge::Prefix()
+{
+  return "[WebRTCBridge]: ";
+}
+
+void WebRTCBridge::Bridge::SetTimeoutPolicy(EMessageTimeoutPolicy inPolicy,
+  std::chrono::system_clock::duration inTimeout)
+{
+  this->Timeout = inTimeout;
+  this->TimeoutPolicy = inPolicy;
 }
 
 void WebRTCBridge::Bridge::BridgeSynchronize(Adapter* Instigator, nlohmann::json Message, bool bFailIfNotResolved)
@@ -459,9 +476,8 @@ void WebRTCBridge::Bridge::BridgeSynchronize(Adapter* Instigator, nlohmann::json
 void WebRTCBridge::Bridge::CreateTask(std::function<void()>&& Task)
 {
   std::unique_lock<std::mutex> lock(QueueAccess);
-  lock.lock();
   CommInstructQueue.push(Task);
-  lock.unlock();
+  this->TaskAvaliable.notify_all();
 }
 
 void WebRTCBridge::Bridge::BridgeSubmit(Adapter* Instigator, StreamVariant origin, std::variant<rtc::binary, std::string> Message) const
@@ -487,33 +503,34 @@ void WebRTCBridge::Bridge::BridgeSubmit(Adapter* Instigator, StreamVariant origi
 
 void WebRTCBridge::Bridge::InitConnection()
 {
-  std::cout << "Init connectioN" << std::endl;
+  std::cout << Prefix() << "Init connection" << std::endl;
   BridgeConnection.In->Outgoing = false;
-  BridgeConnection.In->Address = Config["RemoteAddress"].get<std::string>();
-  BridgeConnection.In->Port = Config["RemotePort"].get<int>();
-  std::cout << "Init Bridge In" << std::endl;
+  
+  BridgeConnection.In->Address = Config[0].at("RemoteAddress").get<std::string>();
+  BridgeConnection.In->Port = Config[0].at("RemotePort").get<int>();
+  std::cout << Prefix() << "Init Bridge In" << std::endl;
   if(!BridgeConnection.In->Connect())
   {
-    std::cout << "Unexpected error when connecting to an incoming socket:"
+    std::cout << Prefix() << "Unexpected error when connecting to an incoming socket:"
      << std::endl << BridgeConnection.In->What() << std::endl;
   }
   BridgeConnection.Out->Outgoing = true;
-  BridgeConnection.Out->Address = Config["LocalAddress"].get<std::string>();
-  BridgeConnection.Out->Port = Config["LocalPort"].get<int>();
-  std::cout << "Init Bridge Out" << std::endl;
+  BridgeConnection.Out->Address = Config[0].at("LocalAddress").get<std::string>();
+  BridgeConnection.Out->Port = Config[0].at("LocalPort").get<int>();
+  std::cout << Prefix() << "Init Bridge Out" << std::endl;
   if(!BridgeConnection.Out->Connect())
   {
-    std::cout << "Unexpected error when connecting to an incoming socket:"
+    std::cout << Prefix() << "Unexpected error when connecting to an incoming socket:"
      << std::endl << BridgeConnection.In->What() << std::endl;
   }
   /*
   BridgeConnection.DataOut->Outgoing = true;
   BridgeConnection.DataOut->Address = Config["LocalAddress"].get<std::string>();
   BridgeConnection.DataOut->Port = Config["LocalPort"].get<int>();
-  std::cout << "Init Bridge Data Out" << std::endl;
+  std::cout << Prefix() << "Init Bridge Data Out" << std::endl;
   if(!BridgeConnection.DataOut->Connect())
   {
-    std::cout << "Unexpected error when connecting to an incoming socket:"
+    std::cout << Prefix() << "Unexpected error when connecting to an incoming socket:"
      << std::endl << BridgeConnection.In->What() << std::endl;
   }
   */
@@ -526,34 +543,45 @@ void WebRTCBridge::Bridge::SetHeaderByteStart(uint32_t Byte)
 
 void WebRTCBridge::Bridge::BridgeRun()
 {
+  using namespace std::chrono_literals;
   std::unique_lock<std::mutex> lock(QueueAccess);
-  while (true)
+  while (Run)
   {
+    // while((CommInstructQueue.size() == 0) && Run)
+    // {
+    //   std::cout << Prefix() << "BridgeThread entered while Run loop" << std::endl;
+    //   lock.unlock(); // end critical section
+    //   std::this_thread::sleep_for(10ms);
+    //   lock.lock(); // enter critical section
+    // }
     TaskAvaliable.wait(lock, [this] {
-      return (CommInstructQueue.size());
+      std::cout << Prefix() << "BridgeThread entered while Run loop" << std::endl;
+      return (CommInstructQueue.size() > 0) || !Run;
       });
+    if(!Run) return;
     if (CommInstructQueue.size() > 0)
     {
       auto Task = std::move(CommInstructQueue.front());
       lock.unlock();
       Task();
-
       // locking at the end of the loop is necessary because next
-      // top start of this scope requiers there to be a locked lock.
+      // top start of this scope requires there to be a locked lock.
       lock.lock();
     }
   }
+  std::cout << Prefix() << "BridgeThread ended!" << std::endl;
 }
 
 void WebRTCBridge::Bridge::Listen()
 {
   std::unique_lock<std::mutex> lock(CommandAccess);
-  while (true)
+  while (Run)
   {
     CommandAvailable.wait(lock, [this]
       {
-        return bNeedInfo && this->BridgeConnection.In->Peek() > 0;
+        return (bNeedInfo && this->BridgeConnection.In->Peek() > 0) || !Run;
       });
+    if(!Run) return;
     bool isMessage = false;
     try
     {
@@ -628,7 +656,7 @@ void WebRTCBridge::Bridge::StartSignalling(std::string IP, int Port, bool keepAl
   {
     SignallingConnection->open(IP + std::to_string(Port));
   }
-  std::cout << "Waiting for Signalling Websocket to Connect." << std::endl;
+  std::cout << Prefix() << "Waiting for Signalling Websocket to Connect." << std::endl;
   Notifier.wait();
 }
 
@@ -648,6 +676,16 @@ void WebRTCBridge::Bridge::SubmitToSignalling(json Message, Adapter* Endpoint)
     Message["ID"] = Endpoint->ID;
     SignallingConnection->send(Message);
   }
+}
+
+void WebRTCBridge::Bridge::Stop()
+{
+  Run = false;
+}
+
+WebRTCBridge::EMessageTimeoutPolicy WebRTCBridge::Bridge::GetTimeoutPolicy()
+{
+  return this->TimeoutPolicy;
 }
 
 void WebRTCBridge::Bridge::UseConfig(std::string filename)

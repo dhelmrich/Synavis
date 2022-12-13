@@ -18,10 +18,10 @@ std::string FormatTime(std::chrono::utc_time<std::chrono::system_clock::duration
 
 void WebRTCBridge::Provider::FindBridge()
 {
+  std::cout << this->Prefix() << "Find Bridge" << std::endl;
+  const std::lock_guard<std::mutex> lock(QueueAccess);
   // THis is the unreal bridge side, it would be expedient if we didn't have
   // to know the port here and could set it up automatically
-  std::unique_lock<std::mutex> lock(QueueAccess);
-  lock.lock();
   auto messagelength = BridgeConnection.In->Receive(true);
   if(messagelength <= 0)
   {
@@ -40,7 +40,7 @@ void WebRTCBridge::Provider::FindBridge()
       result = ParseTimeFromString(timecode, remoteutctime);
       if(result)
       {
-        std::cout << "I received remote port info: " << Offer["Port"] << "." << std::endl;
+        std::cout << Prefix() << "I received remote port info: " << Offer["Port"] << "." << std::endl;
         Config["RemotePort"] = Offer["Port"];
         Config["RemoteAddr"] = Offer["Address"];
         std::chrono::utc_time<std::chrono::system_clock::duration> localutctime;
@@ -53,7 +53,7 @@ void WebRTCBridge::Provider::FindBridge()
       result = ParseTimeFromString(timecode, remotetime);
       if(result)
       {
-        std::cout << "I received remote port info: " << Offer["Port"] << "." << std::endl;
+        std::cout << Prefix() << "I received remote port info: " << Offer["Port"] << "." << std::endl;
         Config["RemotePort"] = Offer["Port"];
         Config["RemoteAddr"] = Offer["Address"];
         std::chrono::system_clock localsystemtime;
@@ -68,7 +68,6 @@ void WebRTCBridge::Provider::FindBridge()
       
     }
   }
-  lock.release();
 }
 
 std::shared_ptr<WebRTCBridge::UnrealConnector> WebRTCBridge::Provider::CreateConnection()
@@ -130,36 +129,49 @@ void WebRTCBridge::Provider::RemoteMessage(json Message)
 
 bool WebRTCBridge::Provider::EstablishedConnection(bool Shallow)
 {
+  using namespace std::chrono_literals;
   if(Shallow)
   {
-    Bridge::EstablishedConnection(Shallow);
+    return Bridge::EstablishedConnection(Shallow);
   }
   else
   {
-    std::unique_lock<std::mutex> lock(QueueAccess);
-    lock.lock();
     int PingSuccessful = -1;
-    CommInstructQueue.push([this,&PingSuccessful]
-    {
-      int reception{0};
-      while((reception = BridgeConnection.In->Peek()) == 0)
+    std::chrono::system_clock::time_point precheck = std::chrono::system_clock::now();
+    std::cout << Prefix() << "Sending the request to wait for ping" << std::endl;
+    CreateTask([this,&PingSuccessful]
       {
-        std::this_thread::yield();
-      }
-      try
-      {
-        if(json::parse(BridgeConnection.In->StringData)["ping"] == 1)
+        int reception{0};
+        reception = BridgeConnection.In->Receive();
+        // while((reception = BridgeConnection.In->Peek()) == 0)
+        // {
+        //   std::this_thread::yield();
+        // }
+        try
         {
-          BridgeConnection.Out->Send(json({{"ping",int(1)}}).dump());
-          PingSuccessful = 1;
+          std::cout << Prefix() << "Received something that might be a ping:" << std::endl;
+          std::cout << BridgeConnection.In->StringData << std::endl;
+          if(json::parse(BridgeConnection.In->StringData)["ping"] == 0)
+          {
+            std::cout << Prefix() << "Sending pong!" << std::endl;
+            BridgeConnection.Out->Send(json({{"ping",int(1)}}).dump());
+            PingSuccessful = 1;
+          }
+        }catch(...)
+        {
+          PingSuccessful = 0;
         }
-      }catch(...)
-      {
-        PingSuccessful = 0;
-      }
-    });
-    lock.release();
-    while(PingSuccessful == -1) std::this_thread::yield();
+      });
+    while(PingSuccessful == -1)
+    {
+      std::chrono::system_clock::time_point sysnow = std::chrono::system_clock::now();
+      auto orig_diff = sysnow - precheck;
+      auto diff = std::chrono::duration_cast<std::chrono::seconds>(orig_diff);
+      if(diff < Timeout || TimeoutPolicy < EMessageTimeoutPolicy::Critical)
+        std::this_thread::yield();
+      else
+        break;
+    }
     return PingSuccessful == 1;
   }
 }
@@ -167,6 +179,11 @@ bool WebRTCBridge::Provider::EstablishedConnection(bool Shallow)
 void WebRTCBridge::Provider::InitConnection()
 {
   Bridge::InitConnection();
+}
+
+std::string WebRTCBridge::Provider::Prefix()
+{
+  return "[ProviderThread]: ";
 }
 
 void WebRTCBridge::Provider::OnSignallingMessage(std::string Message)

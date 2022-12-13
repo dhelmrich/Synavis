@@ -29,6 +29,7 @@ namespace WebRTCBridge
     void RemoteMessage(json Message) override;
     bool EstablishedConnection(bool Shallow = true) override;
     void InitConnection() override;
+    std::string Prefix() override;
   };
 }
 #endif
