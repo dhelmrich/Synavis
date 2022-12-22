@@ -236,7 +236,8 @@ namespace WebRTCBridge
         {"LocalPort", int()},
         {"RemotePort",int()},
         {"LocalAddress",int()},
-        {"RemoteAddress",int()}
+        {"RemoteAddress",int()},
+        {"Signalling",int()}
       }};
     std::unordered_map<int,std::shared_ptr<Adapter>> EndpointById;
     std::future<void> BridgeThread;

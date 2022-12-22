@@ -145,7 +145,8 @@ namespace WebRTCBridge{
 
   PYBIND11_MODULE(PyWebRTCBridge, m)
   {
-    py::class_<rtc::PeerConnection> (m, "PeerConnection");
+    py::class_<rtc::PeerConnection> (m, "PeerConnection")
+    ;
 
     py::class_<BridgeSocket, PyBridgeSocket<>, std::shared_ptr<BridgeSocket>> (m, "BridgeSocket")
       .def(py::init<>())
@@ -153,15 +154,18 @@ namespace WebRTCBridge{
       .def_property("Port",&BridgeSocket::GetSocketPort,&BridgeSocket::SetSocketPort)
       .def("Connect",&BridgeSocket::Connect)
       .def("Peek",&BridgeSocket::Peek)
-      .def("ReinterpretInt",&BridgeSocket::Reinterpret<int>);
+      .def("ReinterpretInt",&BridgeSocket::Reinterpret<int>)
+    ;
 
     py::class_<DataConnector, PyDataConnector<>, std::shared_ptr<DataConnector>>(m, "DataConnector")
-      .def(py::init<>());
+      .def(py::init<>())
+    ; 
 
     py::enum_<rtc::PeerConnection::GatheringState>(m, "GatheringState")
       .value("New", rtc::PeerConnection::GatheringState::New)
       .value("InProgress", rtc::PeerConnection::GatheringState::InProgress)
-      .value("Complete", rtc::PeerConnection::GatheringState::Complete);
+      .value("Complete", rtc::PeerConnection::GatheringState::Complete)
+    ;
 
     py::class_<Bridge, PyBridge<Bridge>, std::shared_ptr<Bridge>>(m, "Bridge")
       .def("BridgeRun", &Bridge::BridgeRun)
@@ -169,15 +173,15 @@ namespace WebRTCBridge{
       .def("CheckSignallingActive", &Bridge::CheckSignallingActive)
       .def("EstablishedConnection", (bool(Bridge::*)(bool)) & PyBridge<Bridge>::EstablishedConnection)
       .def("FindBridge", &Bridge::FindBridge)
-      .def("CreateTask",&Bridge::CreateTask);
-
-    py::class_<Provider, PyProvider<Provider>, std::shared_ptr<Provider>>(m, "Brider");
+      .def("CreateTask",&Bridge::CreateTask)
+    ;
 
     py::class_<Adapter, PyAdapter<Adapter>, std::shared_ptr<Adapter>>(m, "Adapter")
       .def("GenerateSDP", &Adapter::GenerateSDP)
       .def("Offer", (std::string(Adapter::*)(void)) & PyAdapter<Adapter>::Offer)
       .def("Answer", &Adapter::Answer)
-      .def("PushSDP",(std::string(Adapter::*)(std::string)) & PyAdapter<Adapter>::PushSDP);
+      .def("PushSDP",(std::string(Adapter::*)(std::string)) & PyAdapter<Adapter>::PushSDP)
+    ;
 
     py::class_<UnrealReceiver, PyReceiver, std::shared_ptr<UnrealReceiver>>(m, "UnrealReceiver")
       .def(py::init<>())
@@ -187,14 +191,17 @@ namespace WebRTCBridge{
       //.def("SetDataCallback",[](const std::function<void(std::vector<std::byte>)>&){})
       .def("RunForever", &UnrealReceiver::RunForever)
       .def("EmptyCache",&UnrealReceiver::EmptyCache)
-      .def("SessionDescriptionProtocol",&UnrealReceiver::SessionDescriptionProtocol);
+      .def("SessionDescriptionProtocol",&UnrealReceiver::SessionDescriptionProtocol)
+    ;
 
-    py::class_<Provider, PyProvider<Provider>, std::shared_ptr<Provider>>(m, "Provider")
-    .def(py::init<>())
-    .def("OnSignallingMessage", (void(Provider::*)(std::string)) & PyProvider<Provider>::OnSignallingMessage)
-    .def("OnSignallingData", (void(Provider::*)(std::string)) & PyProvider<Provider>::OnSignallingData)
-    .def("EstablishedConnection", (bool(Provider::*)(bool)) & PyProvider<Provider>::EstablishedConnection);
-
+    // python binding for Provider class, along with its methods
+    py::class_<Provider, PyProvider<>, std::shared_ptr<Provider>>(m, "Provider")
+      .def(py::init<>())
+      .def("UseConfig", (void(Provider::*)(std::string)) & PyProvider<>::UseConfig, py::arg("filename"))
+      .def("EstablishedConnection", (bool(Provider::*)(void)) & PyProvider<>::EstablishedConnection, py::arg("Shallow"))
+      .def("FindBridge", &Provider::FindBridge)
+      .def("OnSignallingMessage", (void(Provider::*)(std::string)) & PyProvider<>::OnSignallingMessage, py::arg("Message"))
+    ;
 
   }
 

@@ -3,17 +3,22 @@ from urllib import request
 from flask import Flask, render_template, request, session, abort, url_for, Response
 import eventlet
 import eventlet.wsgi
-import socketio as server_handler
+import socketio
 #from flask_socketio import SocketIO, send, emit, join_room, leave_room
 import json
 from enum import Enum
 
-socketio = server_handler.Server()
-app = Flask(__name__)
-app.config['transports'] = 'websocket'
+sio = socketio.Server()
+#app = Flask(__name__)
+app = socketio.WSGIApp(sio)
+#app.config['transports'] = 'websocket'
 #socketio = SocketIO(app, logger=True, engineio_logger=True, debug=True)
 
-@app.route('/')
+@sio.on('*')
+def catch_all(event, sid, data):
+  print("hehehe")
+
+#@app.route('/')
 def starter():
   #return success
   print("index was called: ")
@@ -21,7 +26,7 @@ def starter():
   print("Origin ", request.origin)
   return {}
 
-@app.route('/main')
+#@app.route('/main')
 def main():
   #return success
   print("index was called: ")
@@ -29,9 +34,7 @@ def main():
   print("Origin ", request.origin)
   return {}
 
-
-
-@app.errorhandler(404)
+#@app.errorhandler(404)
 def page_not_found(error):
   print("error was called: ", error)
   print("Requested URL was ", request.base_url)
@@ -74,12 +77,12 @@ def ParseSDP(spd: str) :
   return categories
 #enddef
 
-@socketio.event
-def event_response(message) :
-  print(message)
+@sio.event
+def event_response(sid, env) :
+  print("hehe")
   return '', 101
 
-@socketio.on('join')
+@sio.on('join')
 def on_join(data):
   print("A endpoint joined")
   room = request.sid
@@ -88,7 +91,7 @@ def on_join(data):
 #enddef
 
 
-@socketio.on('leave')
+@sio.on('leave')
 def on_leave(data):
   print("An endpoint disconnected")
   username = data['username']
@@ -103,24 +106,26 @@ PlayerSessions = []
 StreamerSessions = []
 Tracks = []
 
-@socketio.on('connect')
+@sio.on('connection')
 def test_connect(auth):
-  emit('my response', {'data': 'Connected'})
+  print("connected")
+  sio.emit('my response', {'data': 'Connected'})
   id = request.sid
   orig = request.origin
-  return 
+  return '', 201
 #enddef
 
-@socketio.on('disconnect')
+@sio.on('disconnect')
 def test_disconnect():
     print('Client disconnected')
 #enddef
 
-@socketio.on('message', namespace='/')
+@sio.on('message', namespace='/')
 def messgage(sid, data):
-    socketio.emit('message', data=data)
+  print("message")
+  sio.emit('message', data=data)
 
-@socketio.on('json')
+@sio.on('json')
 def signalling(json):
   content = json.decoder.JSONDecoder().decode(data)
   print("-> Signalling: ", content)
@@ -139,18 +144,28 @@ def signalling(json):
       data["type"] = "extmap"
       data["extmap"] = JSONEncoder(metamap)
       for player in PlayerSessions :
-        emit(data.dump(), room = player)
+        sio.emit(data.dump(), room = player)
     #endif
   #endif
   return '', 201
 #enddef
 
-  
+def test(env, start_response) :
+  print("Settings response for continue status codes")
+  env['wsgi.input'].set_hundred_continue_response_headers(
+    [('Hundred-Continue-Header-1', 'H1'),
+      ('Hundred-Continue-Header-k', 'Hk')])
+  print("Defining response")
+  start_response('101 Continue', [('Content-Type', 'text/json')])
+  print("Returning with status code")
+  return "{'type':'success'}"
+
+
 if __name__ == '__main__' :
   #from waitress import serve
   #serve(app, host="0.0.0.0", port=5000)
-  mware = server_handler.Middleware(socketio, app)
-  eventlet.wsgi.server(eventlet.listen(('', 8888)), mware)
+  #mware = socketio.WSGIApp(sio, app)
+  eventlet.wsgi.server(eventlet.listen(('', 8888)), test)
   #socketio.run(app, debug=True, host="127.0.0.1",port=8888)
   #with open("../../sdp.txt","r") as f:
   #  sdp = f.read()
