@@ -408,6 +408,8 @@ WebRTCBridge::Bridge::Bridge()
 
 WebRTCBridge::Bridge::~Bridge()
 {
+  SignallingConnection->close();
+
 }
 
 std::string WebRTCBridge::Bridge::Prefix()
@@ -626,11 +628,13 @@ void WebRTCBridge::Bridge::FindBridge()
 
 void WebRTCBridge::Bridge::StartSignalling(std::string IP, int Port, bool keepAlive, bool useAuthentification)
 {
+  using namespace std::chrono_literals;
   SignallingConnection = std::make_shared<rtc::WebSocket>();
   std::promise<void> RunGuard;
   auto Notifier = RunGuard.get_future();
   SignallingConnection->onOpen([this, &RunGuard]()
   {
+    std::cout << "Opened Signalling" << std::endl;
     RunGuard.set_value();
   });
   SignallingConnection->onClosed([this, &RunGuard](){});
@@ -654,10 +658,13 @@ void WebRTCBridge::Bridge::StartSignalling(std::string IP, int Port, bool keepAl
   }
   else
   {
-    SignallingConnection->open(IP + std::to_string(Port));
+    std::string signalling_url = "ws://" + IP + ":" + std::to_string(Port) + "//";
+    std::cout << Prefix() << "Opening Signalling Connection on " << signalling_url << std::endl;
+    SignallingConnection->open(signalling_url);
   }
   std::cout << Prefix() << "Waiting for Signalling Websocket to Connect." << std::endl;
   Notifier.wait();
+  std::cout << Prefix() << "Connected!" << std::endl;
 }
 
 void WebRTCBridge::Bridge::ConfigureTrackOutput(std::shared_ptr<rtc::Track> OutputStream, rtc::Description::Media* Media)
@@ -673,14 +680,20 @@ void WebRTCBridge::Bridge::SubmitToSignalling(json Message, Adapter* Endpoint)
 {
   if(SignallingConnection->isOpen())
   {
-    Message["ID"] = Endpoint->ID;
-    SignallingConnection->send(Message);
+    if (Endpoint != nullptr)
+    {
+      Message["id"] = Endpoint->ID;
+    }
+    SignallingConnection->send(Message.dump());
   }
 }
 
 void WebRTCBridge::Bridge::Stop()
 {
+  std::cout << Prefix() << "Stopping Bridge" << std::endl;
   Run = false;
+  std::cout << Prefix() << "Stopping Bridge: Signalling" << std::endl;
+  SignallingConnection->close();
 }
 
 WebRTCBridge::EMessageTimeoutPolicy WebRTCBridge::Bridge::GetTimeoutPolicy()
