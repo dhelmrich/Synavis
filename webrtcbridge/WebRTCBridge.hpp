@@ -207,14 +207,13 @@ namespace WebRTCBridge
     void SubmitToSignalling(json Message, Adapter* Endpoint);
     inline bool FindID(const json& Jason, int& ID)
     {
-      decltype(Jason.begin()) id_entry;
       for(auto it = Jason.begin(); it != Jason.end(); ++it)
       {
         for(auto name : {"id", "player_id", "app_id"})
         {
-          if(id_entry.key() == name && id_entry.value().is_number_integer())
+          if(it.key() == name && it.value().is_number_integer())
           {
-            ID = id_entry.value().get<int>();
+            ID = it.value().get<int>();
             return true;
           }
         }
