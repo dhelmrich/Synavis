@@ -1,4 +1,3 @@
-
 #include <rtc/rtc.hpp>
 #include <json.hpp>
 
@@ -11,8 +10,9 @@
 #include "Seeker.hpp"
 
 using namespace std::chrono_literals;
+using json = nlohmann::json;
 
-void ProviderMain()
+void ProviderMain(const json& Config)
 {
   const std::string _pref = "[ProviderThread]: ";
   std::this_thread::sleep_for(2500ms);
@@ -40,19 +40,12 @@ void ProviderMain()
   }
 }
 
-void SeekerMain()
+void SeekerMain( const json& Config)
 {
   const std::string _pref = "[SeekerThread]:   ";
   std::this_thread::sleep_for(2000ms);
   auto BridgeSeeker = std::make_shared<WebRTCBridge::Seeker>();
   std::cout << _pref  << "Seeker Thread started" << std::endl;
-  nlohmann::json Config{
-  {
-    {"LocalPort", 51251},
-    {"RemotePort",51250},
-    {"LocalAddress","localhost"},
-    {"RemoteAddress","localhost"}
-  }};
   BridgeSeeker->UseConfig(Config);
   BridgeSeeker->SetTimeoutPolicy(WebRTCBridge::EMessageTimeoutPolicy::None, 10s);
   BridgeSeeker->InitConnection();
@@ -69,13 +62,35 @@ void SeekerMain()
 }
 
 
-int main()
+int main(int args, char** argv)
 {
-  
+  json Config;
+  if (args < 2)
+  {
+    std::cout << "Please include a configuration, or the required data." << std::endl;
+    return 1;
+  }
+  else if(strcmp(argv[1], "json") == 0 && args >= 3)
+  {
+    try
+    {
+      Config = json::parse(argv[2]);
+    }
+    catch (const std::exception& e)
+    {
+      std::cerr << e.what() << '\n';
+      return 1;
+    }
+  }
+  else
+  {
+    std::cout << "I could not parse a configuration, or the required data." << std::endl;
+    return 1;
+  }
   using namespace std::chrono_literals;
-  auto ProviderThread = std::async(std::launch::async,ProviderMain);
+  auto ProviderThread = std::async(std::launch::async,ProviderMain, Config);
   std::this_thread::sleep_for(10ms);
-  auto SeekerThread = std::async(std::launch::async, SeekerMain);
+  auto SeekerThread = std::async(std::launch::async, SeekerMain, Config);
   while(true)
   {
     std::this_thread::sleep_for(1000ms);
@@ -88,8 +103,6 @@ int main()
       exit(0);
     }
   }
-  
-
   //ProviderMain();
   // SeekerMain();
 }
