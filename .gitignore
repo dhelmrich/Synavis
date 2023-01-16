@@ -42,3 +42,4 @@ out*/*
 .vscode/*
 unix/*
 node*/*
+__pycache__/*
