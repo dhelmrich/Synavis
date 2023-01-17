@@ -104,7 +104,6 @@ namespace WebRTCBridge{
   public:
     using T::json;
     using T::T;
-    
     void OnRemoteInformation(T::json message) override { PYBIND11_OVERRIDE(void, T, OnRemoteInformation, message);  }
     void OnGatheringStateChange(rtc::PeerConnection::GatheringState inState) override { PYBIND11_OVERRIDE(void, T, OnGatheringStateChange, inState); };
     void OnTrack(std::shared_ptr<rtc::Track> inTrack) override { PYBIND11_OVERRIDE(void, T, OnTrack, inTrack); };
@@ -195,7 +194,7 @@ namespace WebRTCBridge{
     ;
 
     // python binding for Provider class, along with its methods
-    py::class_<Provider, PyProvider<>, std::shared_ptr<Provider>>(m, "Provider")
+    py::class_<Provider, PyProvider<Provider>, std::shared_ptr<Provider>>(m, "Provider")
       .def(py::init<>())
       .def("UseConfig", (void(Provider::*)(std::string)) & PyProvider<>::UseConfig, py::arg("filename"))
       .def("EstablishedConnection", (bool(Provider::*)(void)) & PyProvider<>::EstablishedConnection, py::arg("Shallow"))
