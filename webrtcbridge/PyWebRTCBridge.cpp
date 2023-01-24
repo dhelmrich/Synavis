@@ -197,7 +197,7 @@ namespace WebRTCBridge{
     py::class_<Provider, PyProvider<Provider>, std::shared_ptr<Provider>>(m, "Provider")
       .def(py::init<>())
       .def("UseConfig", (void(Provider::*)(std::string)) & PyProvider<>::UseConfig, py::arg("filename"))
-      .def("EstablishedConnection", (bool(Provider::*)(void)) & PyProvider<>::EstablishedConnection, py::arg("Shallow"))
+      .def("EstablishedConnection", (bool(Provider::*)(bool)) & PyProvider<>::EstablishedConnection, py::arg("Shallow") = true)
       .def("FindBridge", &Provider::FindBridge)
       .def("OnSignallingMessage", (void(Provider::*)(std::string)) & PyProvider<>::OnSignallingMessage, py::arg("Message"))
     ;
