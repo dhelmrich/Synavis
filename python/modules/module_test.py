@@ -1,11 +1,11 @@
 import sys
 import os
-sys.path.append("./build/receiver/Release/")
+sys.path.append("../../unix/")
 #print(os.environ["FFMPEG_PATH"])
 #sys.path.append(os.environ["FFMPEG_PATH"])
 import numpy as np
 import asyncio
-import PyUnrealReceiver as UR
+import PyWebRTCBridge as UR
 import subprocess
 import threading
 import time
@@ -51,7 +51,7 @@ print("I wrote the sdp file, you can start ffmpeg now!")
 
 
 # had .video after input
-process = (
+""" process = (
   ffmpeg
   .input('pixelstreaming.sdp', rtsp_flags = 'listen')
   .output('pipe:',format='rawvideo',pix_fmt='bgr24')
@@ -72,30 +72,27 @@ if not result:
   exit(-1)
 else :
   frame_convert = np.frombuffer(result,np.uint8).reshape([height,width,3])
-  cv2.imshow("test",frame_convert)
+  cv2.imshow("test",frame_convert) """
 
-
-#img = decoder.decode(firstframe)
-#print(firstframe)
-#print(img)
-#if img != None :
-#  cv2.imshow("frame",img)
-
-#video = cv2.VideoCapture(
-#    'udpsrc address=127.0.0.1 port=5000 caps="application/x-rtp" ! queue ! rtph264depay ! video/x-h264,stream-format=byte-stream ! queue ! decodebin ! avdec_h264 ! videoconvert ! appsink'
-#    , cv2.CAP_GSTREAMER)
-#if not video.isOpened():
-#  print('VideoCapture not opened')
-#  exit(0)
-#while True:
-#  ret,frame = video.read()
-#  if not ret:
-#    print('empty frame')
-#    break
-#  cv2.imshow('receive', frame)
-#  if cv2.waitKey(1)&0xFF == ord('q'):
-#    break
-
+img = decoder.decode(firstframe)
+print(firstframe)
+print(img)
+if img != None :
+  cv2.imshow("frame",img)
+video = cv2.VideoCapture(
+    'udpsrc address=127.0.0.1 port=5000 caps="application/x-rtp" ! queue ! rtph264depay ! video/x-h264,stream-format=byte-stream ! queue ! decodebin ! avdec_h264 ! videoconvert ! appsink'
+    , cv2.CAP_GSTREAMER)
+if not video.isOpened():
+  print('VideoCapture not opened')
+  exit(0)
+while True:
+  ret,frame = video.read()
+  if not ret:
+    print('empty frame')
+    break
+  cv2.imshow('receive', frame)
+  if cv2.waitKey(1)&0xFF == ord('q'):
+    break
 
 clock.join()
 process.wait()

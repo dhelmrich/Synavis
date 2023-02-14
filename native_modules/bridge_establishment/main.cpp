@@ -18,13 +18,6 @@ void ProviderMain(const json& Config)
   std::this_thread::sleep_for(2500ms);
   auto BridgeProvider = std::make_shared<WebRTCBridge::Provider>();
   std::cout << _pref  << "Provider Thread started" << std::endl;
-  nlohmann::json Config{
-  {
-    {"LocalPort", 51250},
-    {"RemotePort",51251},
-    {"LocalAddress","localhost"},
-    {"RemoteAddress","localhost"}
-  }};
   BridgeProvider->UseConfig(Config);
   BridgeProvider->SetTimeoutPolicy(WebRTCBridge::EMessageTimeoutPolicy::None, 10s);
   BridgeProvider->InitConnection();
