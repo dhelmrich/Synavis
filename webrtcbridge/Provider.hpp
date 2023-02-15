@@ -13,6 +13,7 @@ namespace WebRTCBridge
   class UnrealReceiver;
   class UnrealConnector;
 
+  // this is a bridge class that is used on the UE side
   class WEBRTCBRIDGE_EXPORT Provider : public Bridge
   {
   public:
@@ -29,7 +30,7 @@ namespace WebRTCBridge
     void RemoteMessage(json Message) override;
     bool EstablishedConnection(bool Shallow = true) override;
     void InitConnection() override;
-    std::string Prefix() override;
+    virtual std::string Prefix();
   };
 }
 #endif

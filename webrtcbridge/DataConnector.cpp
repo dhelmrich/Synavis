@@ -107,3 +107,28 @@ WebRTCBridge::EConnectionState WebRTCBridge::DataConnector::GetState()
 {
   return state_;
 }
+
+void WebRTCBridge::DataConnector::SetCallback(std::function<void(rtc::binary)> Callback)
+{
+  this->DataReceptionCallback = Callback;
+}
+
+void WebRTCBridge::DataConnector::SetConfig(json Config)
+{
+  if(!std::all_of(config_.begin(), config_.end(), [&Config](auto& item)
+  {
+    return Config.find(item) != Config.end();
+  }))
+  {
+    throw std::runtime_error("Config is missing required values");
+  }
+  // make sure that the default config values are present
+  for(auto& [key, value] : config_.items())
+  {
+    if(Config.find(key) == Config.end())
+    {
+      Config[key] = value;
+    }
+  }
+  
+}

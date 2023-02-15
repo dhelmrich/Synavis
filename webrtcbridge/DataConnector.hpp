@@ -24,9 +24,9 @@ public:
   void SendMessage(std::string Message);
   EConnectionState GetState();
   void SetCallback(std::function<void(rtc::binary)> Callback);
-  void SetMessageCallback(std::function<void(std::string)> Callback);
   std::function<void(rtc::binary)> DataReceptionCallback;
   std::shared_ptr<rtc::DataChannel> DataChannel;
+  void SetConfig(json Config);
 
 protected:
   EConnectionState state_;

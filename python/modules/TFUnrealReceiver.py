@@ -25,6 +25,7 @@ class UnrealData(tf.keras.utils.Sequence):
     if BatchDone :
       if not Halt :
         Halt = True
+        
       print("Noticed that batch is done!")
       t = UseBatch
       UseBatch = BatchID

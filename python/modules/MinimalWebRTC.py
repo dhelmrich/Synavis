@@ -5,8 +5,6 @@ sys.path.append("../../build/webrtcbridge/Debug/")
 
 import PyWebRTCBridge as rtc
 
-
-
 Bridge = rtc.Provider()
 Client = rtc.DataConnector()
 
@@ -19,3 +17,7 @@ if Bridge.EstablishedConnection(True) :
   print("Shallow testing of Bridge Connections succeeded!")
 else :
   print("Shallow testing of bridge connections failed!")
+
+
+
+

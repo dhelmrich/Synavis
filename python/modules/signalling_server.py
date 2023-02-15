@@ -4,6 +4,7 @@ import json
 import time
 from colorama import init as colorama_init
 from colorama import Fore, Back, Style
+import threading
 
 ws.debug = True
 
@@ -151,6 +152,9 @@ async def handle(connection, message) :
         for server_id in connection.connected_ids :
           data["playerId"] = connection.id
           await connections[server_id].send(json.dumps(data))
+        #endfor
+      #endif
+    #endif
   #endif
 #enddef
 
@@ -185,6 +189,15 @@ async def main() :
   global connections, glog
   async with ws.serve(connection, 'localhost', 8888), ws.serve(connection, 'localhost', 8889) :
     await asyncio.Future()
+
+def start_signalling() :
+  global glog
+  global server_port
+  global connections
+  global client_port
+  glog.info("Starting server...")
+  # run main in a new thread so that it doesn't block the main thread
+  threading.Thread(target = asyncio.run, args = (main(),)).start()
 
 if __name__ == "__main__" :
   glog.info("Starting server...")

@@ -123,8 +123,6 @@ namespace WebRTCBridge{
   {
     using T::T;
     using T::json;
-    void SendData(rtc::binary Data) override { PYBIND11_OVERRIDE_PURE(void, T, SendData, Data); }
-
   };
 
   template < typename T = BridgeSocket > class PyBridgeSocket : public T
@@ -158,6 +156,10 @@ namespace WebRTCBridge{
 
     py::class_<DataConnector, PyDataConnector<>, std::shared_ptr<DataConnector>>(m, "DataConnector")
       .def(py::init<>())
+      .def("SendData", &DataConnector::SendData, py::arg("Data"))
+      .def("SendMessage", &DataConnector::SendMessage, py::arg("Message"))
+      .def("SetCallback", &DataConnector::SetCallback,py::arg("Callback"))
+      .def("SetConfig", &DataConnector::SetConfig,py::arg("Config"))
     ; 
 
     py::enum_<rtc::PeerConnection::GatheringState>(m, "GatheringState")
