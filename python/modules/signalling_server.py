@@ -197,7 +197,7 @@ def start_signalling() :
   global client_port
   glog.info("Starting server...")
   # run main in a new thread so that it doesn't block the main thread
-  threading.Thread(target = asyncio.run, args = (main(),)).start()
+  return threading.Thread(target = asyncio.run, args = (main(),)).start()
 
 if __name__ == "__main__" :
   glog.info("Starting server...")
