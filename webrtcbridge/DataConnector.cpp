@@ -4,35 +4,75 @@ WebRTCBridge::DataConnector::DataConnector()
 {
   pc_ = std::make_shared<rtc::PeerConnection>(rtcconfig_);
   pc_->onGatheringStateChange([this](auto state)
+    {
+      
+      std::cout << "Gathering state changed" << state << std::endl;
+      switch(state)
+      {
+      case rtc::PeerConnection::GatheringState::Complete:
+        std::cout << "State switched to complete" << std::endl;
+        break;
+      case rtc::PeerConnection::GatheringState::InProgress:
+        std::cout << "State switched to in progress" << std::endl;
+        break;
+      case rtc::PeerConnection::GatheringState::New:
+        std::cout << "State switched to new connection" << std::endl;
+        break;
+      }
+    });
+  pc_->onLocalCandidate([this](auto candidate)
   {
-    if(state == rtc::PeerConnection::GatheringState::Complete)
+    json ice_message = {{"type","iceCandidate"},
+      {"iceCandidate", {{"candidate", candidate.candidate()},
+                         "sdpMid", candidate.mid()}}};
+    ss_->send(ice_message.dump());
+  });
+  pc_->onDataChannel([this](auto datachannel)
+  {
+    std::cout << "I received a channel I did not ask for" << std::endl;
+    datachannel->onOpen([this]()
     {
       this->state_ = EConnectionState::CONNECTED;
-    }
+      std::cout << "DataChannel connection is setup!" << std::endl;
+    }); 
+  });
+  pc_->onTrack([this](auto track)
+  {
+    std::cout << "I received a track I did not ask for" << std::endl;
+  });
+  pc_->onSignalingStateChange([this](auto state)
+  {
+    std::cout << "SS State changed: " << state << std::endl;
+  });
+  pc_->onStateChange([this](rtc::PeerConnection::State state)
+  {
+    std::cout << "State changed: " << state << std::endl;
   });
   ss_ = std::make_shared<rtc::WebSocket>();
   DataChannel = pc_->createDataChannel("DataConnectionChannel");
   DataChannel->onOpen([this]()
-  {
-    
-  });
+    {
+      this->state_ = EConnectionState::CONNECTED;
+      std::cout << "DataChannel connection is setup!" << std::endl;
+    });
   DataChannel->onMessage([this](auto messageordata)
-  {
-    if (std::holds_alternative<rtc::binary>(messageordata))
     {
-      auto data = std::get<rtc::binary>(messageordata);
-    }
-    else
-    {
-      auto message = std::get<std::string>(messageordata);
-    }
-  });
+      if (std::holds_alternative<rtc::binary>(messageordata))
+      {
+        auto data = std::get<rtc::binary>(messageordata);
+      }
+      else
+      {
+        auto message = std::get<std::string>(messageordata);
+      }
+    });
   ss_->onOpen([this]()
   {
     state_ = EConnectionState::SIGNUP;
-    if(pc_->localDescription().has_value())
+    std::cout << "Signalling server connected" << std::endl;
+    if (TakeFirstStep && pc_->localDescription().has_value())
     {
-      json offer = {{"type","offer"}, {"endpoint", "data"},{"sdp",pc_->localDescription().value()}};
+      json offer = { {"type","offer"}, {"endpoint", "data"},{"sdp",pc_->localDescription().value()} };
       ss_->send(offer.dump());
     }
   });
@@ -50,28 +90,81 @@ WebRTCBridge::DataConnector::DataConnector()
       {
         content = json::parse(message);
       }
-      catch(json::exception e)
+      catch (json::exception e)
       {
         std::cout << "Could not read package:" << e.what() << std::endl;
       }
-      if(content["type"] == "answer" || content["type"] == "offer")
+      std::cout << "I received a message of type: " << content["type"] << std::endl;
+      if (content["type"] == "answer" || content["type"] == "offer")
       {
         std::string sdp = content["sdp"].get<std::string>();
         rtc::Description remote = sdp;
         pc_->setRemoteDescription(remote);
+        RequiredCandidate.clear();
+        // iterating through media sections in the descriptions
+        for(auto i = 0; i < remote.mediaCount(); ++i)
+        {
+          auto extract = remote.media(i);
+          if(std::holds_alternative<rtc::Description::Application*>(extract))
+          {
+            auto app = std::get<rtc::Description::Application*>(extract);
+            RequiredCandidate.push_back(app->mid());
+          }
+          else
+          {
+            auto media = std::get<rtc::Description::Media*>(extract);
+            RequiredCandidate.push_back(media->mid());
+          }
+        }
       }
-      else if(content["type"] == "iceCandidate")
+      else if (content["type"] == "iceCandidate")
       {
-        rtc::Candidate ice (content["iceCandidate"]["candidate"],content["candidate"]["sdpMid"]);
+        auto sdpMid = content["iceCandidate"]["sdpMid"].get<std::string>();
+        auto sdpMLineIndex = content["iceCandidate"]["sdpMLineIndex"].get<std::string>();
+        std::string candidate_string = content["iceCandidate"]["candidate"].get<std::string>();
+        rtc::Candidate ice(candidate_string, sdpMid);
         pc_->addRemoteCandidate(ice);
         // TODO: make upper-level ice-candidate standard for all webrtc interactions
         // TODO: Check if Unreal accepts this change.
       }
+      else if(content["type"] == "control")
+      {
+        std::cout << "Received a control message: " << content["message"] << std::endl;
+      }
+      else if(content["type"] == "id")
+      {
+        this->config_["id"] = content["id"];
+        std::cout << "Received an id: " << content["id"] << std::endl;
+      }
+      else if(content["type"] == "serverDisconnected")
+      {
+        pc_.reset();
+        std::cout << "Reset peer connection because we received a disconnect" << std::endl;
+      }
+      else if(content["type"] == "config")
+      {
+        auto pc_options = content["peerConnectionOptions"];
+        // TODO: Set peer connection options
+      }
+      else if(content["type"] == "playerCount")
+      {
+        std::cout << "There are " << content["count"] << " players connected" << std::endl;
+      }
+      else
+      {
+        std::cout << "unknown message?" << std::endl << content.dump() << std::endl;
+      }
     }
   });
   ss_->onClosed([this]()
+    {
+      state_ = EConnectionState::CLOSED;
+      std::cout << "Signalling server was closed" << std::endl;
+    });
+  ss_->onError([this](std::string error)
   {
     state_ = EConnectionState::CLOSED;
+    std::cerr << "Signalling server error: " << error << std::endl;
   });
 }
 
@@ -85,21 +178,23 @@ void WebRTCBridge::DataConnector::StartSignalling()
 {
   std::string address = "ws://" + config_["SignallingIP"].get<std::string>()
     + ":" + std::to_string(config_["SignallingPort"].get<unsigned>());
+  std::cout << "Starting Signalling to " << address << std::endl;
+  state_ = EConnectionState::SIGNUP;
   ss_->open(address);
 }
 
 void WebRTCBridge::DataConnector::SendData(rtc::binary Data)
 {
-  if(this->state_ != EConnectionState::CONNECTED)
+  if (this->state_ != EConnectionState::CONNECTED)
     return;
   DataChannel->sendBuffer(Data);
 }
 
 void WebRTCBridge::DataConnector::SendMessage(std::string Message)
 {
-  if(this->state_ != EConnectionState::CONNECTED)
+  if (this->state_ != EConnectionState::CONNECTED)
     return;
-  json content = {{"origin",""},{"data","Message"}};
+  json content = { {"origin",""},{"data","Message"} };
   DataChannel->send(content.dump());
 }
 
@@ -115,20 +210,43 @@ void WebRTCBridge::DataConnector::SetCallback(std::function<void(rtc::binary)> C
 
 void WebRTCBridge::DataConnector::SetConfig(json Config)
 {
-  if(!std::all_of(config_.begin(), config_.end(), [&Config](auto& item)
+  bool all_found = true;
+  // use items iterator for config to check if all required values are present
+  for (auto& [key, value] : config_.items())
   {
-    return Config.find(item) != Config.end();
-  }))
-  {
-    throw std::runtime_error("Config is missing required values");
-  }
-  // make sure that the default config values are present
-  for(auto& [key, value] : config_.items())
-  {
-    if(Config.find(key) == Config.end())
+    if (Config.find(key) == Config.end())
     {
-      Config[key] = value;
+      all_found = false;
+      break;
     }
   }
-  
+  if (!all_found)
+  {
+    std::cerr << "Config is missing required values" << std::endl;
+    std::cerr << "Required values are: " << std::endl;
+    for (auto& [key, value] : config_.items())
+    {
+      std::cerr << key << " ";
+    }
+    std::cerr << std::endl << "Provided values are: " << std::endl;
+    for (auto& [key, value] : Config.items())
+    {
+      std::cerr << key << " ";
+    }
+    throw std::runtime_error("Config is missing required values");
+  }
+  // inserting all values from config into config_
+  // this is done to ensure that all required values are present
+  for (auto& [key, value] : Config.items())
+  {
+       config_[key] = value;
+  }
+
+}
+
+bool WebRTCBridge::DataConnector::IsRunning()
+{
+  // returns true if the connection is in a state where it can send and receive data
+  return state_ ==  EConnectionState::CONNECTED || ss_->isOpen() || state_ == EConnectionState::SIGNUP;
+
 }

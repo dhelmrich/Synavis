@@ -13,7 +13,7 @@ set(PLAINSOURCES ${RECEIVERSOURCES})
 list(FILTER PLAINSOURCES EXCLUDE REGEX ".*PyWebRTCBridge.cpp$")
 # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -openmp:llvm -openmp:experimental")
 
-set(PYBIND11_PYTHON_VERSION 3.9)
+#set(PYBIND11_PYTHON_VERSION 3.9)
 find_package( PythonInterp 3.9 REQUIRED )
 find_package( PythonLibs 3.9 REQUIRED )
 
@@ -31,6 +31,7 @@ target_include_directories(${projectname}
   PUBLIC ${CMAKE_CURRENT_BINARY_DIR}
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/include
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/deps/json/single_include/nlohmann/
+  #${CMAKE_BINARY_DIR}/_deps/nlohmann_json-src/single_include/nlohmann/
   ${CMAKE_SOURCE_DIR}/unrealbridge
 )
 target_include_directories(${PYPROJECT}
@@ -39,6 +40,7 @@ target_include_directories(${PYPROJECT}
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/include
   ${CMAKE_BINARY_DIR}/_deps/pybind11_json-src/include/pybind11_json/
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/deps/json/single_include/nlohmann/
+  #${CMAKE_BINARY_DIR}/_deps/nlohmann_json-src/single_include/nlohmann/
   ${CMAKE_BINARY_DIR}/_deps/pybind11-src/include
   ${CMAKE_SOURCE_DIR}/unrealbridge
   ${PYTHON_INCLUDE_DIRS}

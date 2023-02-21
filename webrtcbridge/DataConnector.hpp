@@ -27,6 +27,9 @@ public:
   std::function<void(rtc::binary)> DataReceptionCallback;
   std::shared_ptr<rtc::DataChannel> DataChannel;
   void SetConfig(json Config);
+  bool IsRunning();
+  void SetTakeFirstStep(bool TakeFirstStep){this->TakeFirstStep=TakeFirstStep;}
+  bool GetTakeFirstStep(){return this->TakeFirstStep;}
 
 protected:
   EConnectionState state_;
@@ -34,7 +37,9 @@ protected:
   rtc::Configuration webconfig_;
   std::shared_ptr<rtc::PeerConnection> pc_;
   std::shared_ptr<rtc::WebSocket> ss_;
+  bool TakeFirstStep = false;
   unsigned int MessagesReceived{ 0 };
+  std::vector<std::string> RequiredCandidate;
   json config_{
     {"SignallingIP", int()},
     {"SignallingPort",int()}

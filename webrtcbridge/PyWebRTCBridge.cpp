@@ -160,6 +160,10 @@ namespace WebRTCBridge{
       .def("SendMessage", &DataConnector::SendMessage, py::arg("Message"))
       .def("SetCallback", &DataConnector::SetCallback,py::arg("Callback"))
       .def("SetConfig", &DataConnector::SetConfig,py::arg("Config"))
+      .def("StartSignalling", &DataConnector::StartSignalling)
+      .def("IsRunning", &DataConnector::IsRunning)
+      .def("SetTakeFirstStep",&DataConnector::SetTakeFirstStep,py::arg("SetTakeFirstStep"))
+      .def("GetTakeFirstStep",&DataConnector::GetTakeFirstStep)
     ; 
 
     py::enum_<rtc::PeerConnection::GatheringState>(m, "GatheringState")
