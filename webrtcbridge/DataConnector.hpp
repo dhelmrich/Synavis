@@ -38,6 +38,7 @@ protected:
   std::shared_ptr<rtc::PeerConnection> pc_;
   std::shared_ptr<rtc::WebSocket> ss_;
   bool TakeFirstStep = false;
+  bool InitializedRemote = false;
   unsigned int MessagesReceived{ 0 };
   std::vector<std::string> RequiredCandidate;
   json config_{

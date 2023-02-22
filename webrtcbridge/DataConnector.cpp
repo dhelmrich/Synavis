@@ -32,13 +32,18 @@ WebRTCBridge::DataConnector::DataConnector()
     std::cout << "I received a channel I did not ask for" << std::endl;
     datachannel->onOpen([this]()
     {
-      this->state_ = EConnectionState::CONNECTED;
       std::cout << "DataChannel connection is setup!" << std::endl;
     }); 
   });
   pc_->onTrack([this](auto track)
   {
     std::cout << "I received a track I did not ask for" << std::endl;
+    track->onOpen([this,track]()
+    {
+           std::cout << "Track connection is setup!" << std::endl;
+      track->send(rtc::binary({ (std::byte)(EClientMessageType::QualityControlOwnership) }));
+      track->send(rtc::binary({ std::byte{72},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0} }));
+    });
   });
   pc_->onSignalingStateChange([this](auto state)
   {
@@ -52,8 +57,8 @@ WebRTCBridge::DataConnector::DataConnector()
   DataChannel = pc_->createDataChannel("DataConnectionChannel");
   DataChannel->onOpen([this]()
     {
-      this->state_ = EConnectionState::CONNECTED;
       std::cout << "DataChannel connection is setup!" << std::endl;
+   
     });
   DataChannel->onMessage([this](auto messageordata)
     {
@@ -74,6 +79,7 @@ WebRTCBridge::DataConnector::DataConnector()
     {
       json offer = { {"type","offer"}, {"endpoint", "data"},{"sdp",pc_->localDescription().value()} };
       ss_->send(offer.dump());
+      state_ = EConnectionState::OFFERED;
     }
   });
   ss_->onMessage([this](auto messageordata)
@@ -100,32 +106,52 @@ WebRTCBridge::DataConnector::DataConnector()
         std::string sdp = content["sdp"].get<std::string>();
         rtc::Description remote = sdp;
         pc_->setRemoteDescription(remote);
-        RequiredCandidate.clear();
-        // iterating through media sections in the descriptions
-        for(auto i = 0; i < remote.mediaCount(); ++i)
+        if(state_ == EConnectionState::OFFERED && content["type"] == "answer")
+          state_ = EConnectionState::CONNECTED;
+        if(!InitializedRemote)
         {
-          auto extract = remote.media(i);
-          if(std::holds_alternative<rtc::Description::Application*>(extract))
+          RequiredCandidate.clear();
+          // iterating through media sections in the descriptions
+          for(auto i = 0; i < remote.mediaCount(); ++i)
           {
-            auto app = std::get<rtc::Description::Application*>(extract);
-            RequiredCandidate.push_back(app->mid());
+            auto extract = remote.media(i);
+            if(std::holds_alternative<rtc::Description::Application*>(extract))
+            {
+              auto app = std::get<rtc::Description::Application*>(extract);
+              RequiredCandidate.push_back(app->mid());
+            }
+            else
+            {
+              auto media = std::get<rtc::Description::Media*>(extract);
+              RequiredCandidate.push_back(media->mid());
+            }
           }
-          else
+          std::cout << "I have " << RequiredCandidate.size() << " required candidates: ";
+          for(auto i = 0; i < RequiredCandidate.size(); ++i)
           {
-            auto media = std::get<rtc::Description::Media*>(extract);
-            RequiredCandidate.push_back(media->mid());
+            std::cout << RequiredCandidate[i] << " ";
           }
+          std::cout << std::endl;
+          InitializedRemote = true;
         }
       }
       else if (content["type"] == "iceCandidate")
       {
-        auto sdpMid = content["iceCandidate"]["sdpMid"].get<std::string>();
-        auto sdpMLineIndex = content["iceCandidate"]["sdpMLineIndex"].get<std::string>();
-        std::string candidate_string = content["iceCandidate"]["candidate"].get<std::string>();
+        auto sdpMid = content["candidate"]["sdpMid"].get<std::string>();
+        // remove sdpMid from required candidates
+        RequiredCandidate.erase(std::remove_if(RequiredCandidate.begin(), RequiredCandidate.end(), [sdpMid](auto s){return s==sdpMid;}), RequiredCandidate.end());
+        auto sdpMLineIndex = content["candidate"]["sdpMLineIndex"].get<int>();
+        std::string candidate_string = content["candidate"]["candidate"].get<std::string>();
         rtc::Candidate ice(candidate_string, sdpMid);
         pc_->addRemoteCandidate(ice);
-        // TODO: make upper-level ice-candidate standard for all webrtc interactions
-        // TODO: Check if Unreal accepts this change.
+        // if we have no more required candidates, we can send an answer
+        if (!TakeFirstStep && pc_->localDescription().has_value() && RequiredCandidate.size() == 0 && state_ < EConnectionState::OFFERED)
+        {
+          json offer = { {"type","answer"}, {"sdp",pc_->localDescription().value()} };
+          ss_->send(offer.dump());
+          std::cout << "I send my answer!" << std::endl;
+          this->state_ = EConnectionState::OFFERED;
+        }
       }
       else if(content["type"] == "control")
       {
@@ -179,7 +205,7 @@ void WebRTCBridge::DataConnector::StartSignalling()
   std::string address = "ws://" + config_["SignallingIP"].get<std::string>()
     + ":" + std::to_string(config_["SignallingPort"].get<unsigned>());
   std::cout << "Starting Signalling to " << address << std::endl;
-  state_ = EConnectionState::SIGNUP;
+  state_ = EConnectionState::STARTUP;
   ss_->open(address);
 }
 
@@ -247,6 +273,6 @@ void WebRTCBridge::DataConnector::SetConfig(json Config)
 bool WebRTCBridge::DataConnector::IsRunning()
 {
   // returns true if the connection is in a state where it can send and receive data
-  return state_ ==  EConnectionState::CONNECTED || ss_->isOpen() || state_ == EConnectionState::SIGNUP;
+  return state_ < EConnectionState::CLOSED || ss_->isOpen();
 
 }

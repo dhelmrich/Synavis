@@ -710,6 +710,7 @@ void WebRTCBridge::Bridge::UseConfig(std::string filename)
 
 void WebRTCBridge::Bridge::UseConfig(json fileConfig)
 {
+
   this->Config = fileConfig;
   return;
   bool complete = true;
