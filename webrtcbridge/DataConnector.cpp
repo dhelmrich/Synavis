@@ -23,7 +23,7 @@ WebRTCBridge::DataConnector::DataConnector()
   pc_->onLocalCandidate([this](auto candidate)
   {
     json ice_message = {{"type","iceCandidate"},
-      {"iceCandidate", {{"candidate", candidate.candidate()},
+      {"candidate", {{"candidate", candidate.candidate()},
                          "sdpMid", candidate.mid()}}};
     ss_->send(ice_message.dump());
   });
@@ -275,4 +275,18 @@ bool WebRTCBridge::DataConnector::IsRunning()
   // returns true if the connection is in a state where it can send and receive data
   return state_ < EConnectionState::CLOSED || ss_->isOpen();
 
+}
+
+void WebRTCBridge::DataConnector::CommunicateSDPs()
+{
+  if (pc_->localDescription().has_value())
+  {
+    json offer = { {"type","answer"}, {"sdp",pc_->localDescription().value()} };
+    ss_->send(offer.dump());
+    for (auto candidate : pc_->localDescription().value().extractCandidates())
+    {
+      json ice = { {"type","iceCandidate"}, {"candidate", {{"candidate",candidate.candidate()}, {"sdpMid",candidate.mid()}, {"sdpMLineIndex",1}}} };
+      ss_->send(ice.dump());
+    }
+  }
 }

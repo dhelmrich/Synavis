@@ -393,6 +393,43 @@ void WebRTCBridge::NoBufferThread::Run()
   }
 }
 
+WebRTCBridge::WorkerThread::WorkerThread()
+{
+  Thread = std::async(std::launch::async, &WorkerThread::Run, this);
+}
+
+WebRTCBridge::WorkerThread::~WorkerThread()
+{
+  Running = false;
+}
+
+void WebRTCBridge::WorkerThread::Run()
+{
+  using namespace std::chrono_literals;
+  std::unique_lock<std::mutex> lock(TaskMutex);
+  while (Running)
+  {
+    TaskCondition.wait(lock, [this] {
+    return (Tasks.size() > 0) || !Running;
+      });
+    if (!Running) return;
+    if (Tasks.size() > 0)
+    {
+      auto Task = std::move(Tasks.front());
+      lock.unlock();
+      Task();
+      lock.lock();
+    }
+  }
+}
+
+void WebRTCBridge::WorkerThread::AddTask(std::function<void()>&& Task)
+{
+  std::unique_lock<std::mutex> lock(TaskMutex);
+  Tasks.push(Task);
+  this->TaskCondition.notify_all();
+}
+
 WebRTCBridge::Bridge::Bridge()
 {
   std::cout << Prefix() << "An instance of the WebRTCBridge was started, we are starting the threads..." << std::endl;

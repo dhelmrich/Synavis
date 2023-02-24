@@ -180,6 +180,21 @@ namespace WebRTCBridge
     std::shared_ptr<BridgeSocket> SocketConnection;
   };
 
+  class WEBRTCBRIDGE_EXPORT WorkerThread
+  {
+  public:
+    WorkerThread();
+    ~WorkerThread();
+    void Run();
+    void AddTask(std::function<void(void)>&& Task);
+  private:
+    std::future<void> Thread;
+    std::mutex TaskMutex;
+    std::queue<std::function<void(void)>> Tasks;
+    std::condition_variable TaskCondition;
+    bool Running = true;
+  };
+
   class WEBRTCBRIDGE_EXPORT Bridge
   {
   public:

@@ -32,6 +32,9 @@ public:
   bool GetTakeFirstStep(){return this->TakeFirstStep;}
 
 protected:
+
+  void CommunicateSDPs();
+
   EConnectionState state_;
   rtc::Configuration rtcconfig_;
   rtc::Configuration webconfig_;
@@ -45,6 +48,7 @@ protected:
     {"SignallingIP", int()},
     {"SignallingPort",int()}
   };
+  WorkerThread SubmissionHandler;
 };
 
 }
