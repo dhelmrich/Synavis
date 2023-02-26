@@ -21,7 +21,7 @@ public:
   ~DataConnector();
   void StartSignalling();
   virtual void SendData(rtc::binary Data);
-  void SendMessage(std::string Message);
+  void SendString(std::string Message);
   EConnectionState GetState();
   void SetCallback(std::function<void(rtc::binary)> Callback);
   std::function<void(rtc::binary)> DataReceptionCallback;
@@ -30,7 +30,9 @@ public:
   bool IsRunning();
   void SetTakeFirstStep(bool TakeFirstStep){this->TakeFirstStep=TakeFirstStep;}
   bool GetTakeFirstStep(){return this->TakeFirstStep;}
-
+  void PrintCommunicationData();
+  void SetBlock(bool Block){this->Block=Block;}
+  bool IsBlocking() const {return this->Block;}
 protected:
 
   void CommunicateSDPs();
@@ -42,6 +44,7 @@ protected:
   std::shared_ptr<rtc::WebSocket> ss_;
   bool TakeFirstStep = false;
   bool InitializedRemote = false;
+  bool Block = false;
   unsigned int MessagesReceived{ 0 };
   std::vector<std::string> RequiredCandidate;
   json config_{

@@ -12,7 +12,7 @@ print("Your Computer IP Address is:"+IPAddr)
 
 
 # Whether or not to clean up the build first
-clean_build = 0
+clean_build = 1
 
 # print current path
 print(os.getcwd())
@@ -49,16 +49,21 @@ sys.path.append("../../unix/")
 import PyWebRTCBridge as rtc
 
 ss.glog.info("Starting signalling server")
-ss.client_port = 8889
+ss.client_port = 8080
 ss.server_port = 8888
 ss.target_ip = "0.0.0.0"
 ts = ss.start_signalling()
 
+time.sleep(1.0)
+
 ss.glog.info("Starting WebRTC bridge")
 Client = rtc.DataConnector()
-Client.SetConfig({"SignallingIP": IPAddr, "SignallingPort": 8889, "Role": "client"})
+Client.SetBlock(False)
+Client.SetConfig({"SignallingIP": IPAddr, "SignallingPort": 8080, "Role": "client"})
 Client.SetCallback(OnData)
 Client.StartSignalling()
+
+print("I am running")
 
 while Client.IsRunning() :
   time.sleep(0.1)

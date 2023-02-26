@@ -144,17 +144,12 @@ class Connection() :
     categories = []
     app_and_media = [i for i in range(len(lines)) if lines[i].startswith("m=")]
     medias = [i for i in range(len(lines)) if lines[i].startswith("m=video") or lines[i].startswith("m=audio")]
-    maplines = [[lines[i] for i in range(j,len(lines)) if lines[i].startswith(extmap_startswith)] for j in medias]
-    hpc_line = [line for line in maplines if "hpc-bridge" in line]
-    if len(maplines) > 0 :
+    self.extmap = [[lines[i] for i in range(j,len(lines)) if lines[i].startswith(extmap_startswith)] for j in medias]
+    hpc_line = [line for line in self.extmap if "hpc-bridge" in line]
+    if len(self.extmap) > 0 :
       self.supports_extmap = True
     if len(hpc_line) > 0 :
       self.supports_synchronous_data = True
-    if len(medias) > 0 :
-      self.expects_media = True
-      for stream in medias :
-        if len(maplines[stream]) > 0 :
-          self.extmap.append[(lines[medias.split(0)[2:]], int(maplines.split()[0][extmap_skiplength:]))]
     #endfor
   #enddef
 #endclass
