@@ -50,6 +50,9 @@ target_link_libraries(${projectname} PRIVATE datachannel-static nlohmann_json::n
 target_link_libraries(${PYPROJECT} PRIVATE ${projectname} datachannel-static nlohmann_json::nlohmann_json ${PYTHON_LIBRARIES})
 set_target_properties(${PYPROJECT} PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/)
 
+# install the library to the root of the build directory
+install(TARGETS ${projectname} DESTINATION ${CMAKE_BINARY_DIR})
+install(TARGETS ${PYPROJECT} DESTINATION ${CMAKE_BINARY_DIR})
 
 if(UNIX)
     target_include_directories(${projectname} PUBLIC AFTER
@@ -58,6 +61,12 @@ if(UNIX)
   ${CMAKE_BINARY_DIR}/_deps/date-src/include)
   target_link_libraries(${projectname} PRIVATE date)
   target_link_libraries(${PYPROJECT} PRIVATE date)
+endif()
+
+# add the permissive flag for MSVC
+if(MSVC)
+  target_compile_options(${projectname} PRIVATE /permissive-)
+  target_compile_options(${PYPROJECT} PRIVATE /permissive-)
 endif()
 
 generate_export_header(${projectname}

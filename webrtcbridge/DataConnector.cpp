@@ -1,22 +1,36 @@
 #include "DataConnector.hpp"
+#include <rtc/candidate.hpp>
+#include <chrono>
+#include <codecvt>
+#include <locale>
+#include <bit>
+
+#ifdef _WIN32
+#include <Windows.h>
+#endif
+
+
+inline constexpr std::byte operator "" _b(unsigned long long i) noexcept
+{
+  return static_cast<std::byte>(i);
+}
 
 WebRTCBridge::DataConnector::DataConnector()
 {
   pc_ = std::make_shared<rtc::PeerConnection>(rtcconfig_);
   pc_->onGatheringStateChange([this](auto state)
     {
-      
-      std::cout << "Gathering state changed" << state << std::endl;
+      std::cout << Prefix << "Gathering state changed" << state << std::endl;
       switch(state)
       {
       case rtc::PeerConnection::GatheringState::Complete:
-        std::cout << "State switched to complete" << std::endl;
+        std::cout << Prefix << "State switched to complete" << std::endl;
         break;
       case rtc::PeerConnection::GatheringState::InProgress:
-        std::cout << "State switched to in progress" << std::endl;
+        std::cout << Prefix << "State switched to in progress" << std::endl;
         break;
       case rtc::PeerConnection::GatheringState::New:
-        std::cout << "State switched to new connection" << std::endl;
+        std::cout << Prefix << "State switched to new connection" << std::endl;
         break;
       }
     });
@@ -29,46 +43,54 @@ WebRTCBridge::DataConnector::DataConnector()
   });
   pc_->onDataChannel([this](auto datachannel)
   {
-    std::cout << "I received a channel I did not ask for" << std::endl;
+    std::cout << Prefix << "I received a channel I did not ask for" << std::endl;
     datachannel->onOpen([this]()
     {
-      std::cout << "THEIR DataChannel connection is setup!" << std::endl;
+      std::cout << Prefix << "THEIR DataChannel connection is setup!" << std::endl;
     }); 
   });
   pc_->onTrack([this](auto track)
   {
-    std::cout << "I received a track I did not ask for" << std::endl;
+    std::cout << Prefix << "I received a track I did not ask for" << std::endl;
     track->onOpen([this,track]()
     {
-           std::cout << "Track connection is setup!" << std::endl;
+      std::cout << Prefix << "Track connection is setup!" << std::endl;
       track->send(rtc::binary({ (std::byte)(EClientMessageType::QualityControlOwnership) }));
       track->send(rtc::binary({ std::byte{72},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0} }));
     });
   });
   pc_->onSignalingStateChange([this](auto state)
   {
-    std::cout << "SS State changed: " << state << std::endl;
+    std::cout << Prefix << "SS State changed: " << state << std::endl;
   });
   pc_->onStateChange([this](rtc::PeerConnection::State state)
   {
-    std::cout << "State changed: " << state << std::endl;
+    std::cout << Prefix << "State changed: " << state << std::endl;
+    if(state == rtc::PeerConnection::State::Failed && OnFailedCallback.has_value())
+    {
+      OnFailedCallback.value()();
+    }
   });
   ss_ = std::make_shared<rtc::WebSocket>();
   DataChannel = pc_->createDataChannel("DataConnectionChannel");
   DataChannel->onOpen([this]()
     {
-      std::cout << "OUR DataChannel connection is setup!" << std::endl;
-   
+      std::cout << Prefix << "OUR DataChannel connection is setup!" << std::endl;
+    
     });
   DataChannel->onMessage([this](auto messageordata)
     {
       if (std::holds_alternative<rtc::binary>(messageordata))
       {
         auto data = std::get<rtc::binary>(messageordata);
+        if(DataReceptionCallback.has_value())
+          DataReceptionCallback.value()(data);
       }
       else
       {
         auto message = std::get<std::string>(messageordata);
+        if (MessageReceptionCallback.has_value())
+          MessageReceptionCallback.value()(message);
       }
     });
   DataChannel->onError([this](std::string error)
@@ -77,23 +99,37 @@ WebRTCBridge::DataConnector::DataConnector()
   });
   DataChannel->onAvailable([this]()
   {
-    std::cout << "DataChannel is available" << std::endl;
+    std::cout << Prefix << "DataChannel is available" << std::endl;
     state_ = EConnectionState::CONNECTED;
+    if(OnConnectedCallback.has_value())
+    {
+      OnConnectedCallback.value()();
+    }
   });
   DataChannel->onBufferedAmountLow([this]()
   {
-    std::cout << "DataChannel buffered amount low" << std::endl;
+    std::cout << Prefix << "DataChannel buffered amount low" << std::endl;
   });
   DataChannel->onClosed([this]()
   {
-    std::cout << "DataChannel is CLOSED again" << std::endl;
+    std::cout << Prefix << "DataChannel is CLOSED again" << std::endl;
     this->state_ = EConnectionState::CLOSED;
+    if(OnClosedCallback.has_value())
+    {
+      OnClosedCallback.value()();
+    }
   });
   
   ss_->onOpen([this]()
   {
     state_ = EConnectionState::SIGNUP;
-    std::cout << "Signalling server connected" << std::endl;
+    std::cout << Prefix << "Signalling server connected" << std::endl;
+    if(TakeFirstStep)
+    {
+      json role_request = { {"type","request"},{"request","role"} };
+      std::cout << Prefix << "Attempting to prompt for role, this will fail if the server is not configured to do so" << std::endl;
+      //ss_->send(role_request.dump());
+    }
     if (TakeFirstStep && pc_->localDescription().has_value())
     {
       json offer = { {"type","offer"}, {"endpoint", "data"},{"sdp",pc_->localDescription().value()} };
@@ -117,9 +153,9 @@ WebRTCBridge::DataConnector::DataConnector()
       }
       catch (json::exception e)
       {
-        std::cout << "Could not read package:" << e.what() << std::endl;
+        std::cout << Prefix << "Could not read package:" << e.what() << std::endl;
       }
-      std::cout << "I received a message of type: " << content["type"] << std::endl;
+      std::cout << Prefix << "I received a message of type: " << content["type"] << std::endl;
       if (content["type"] == "answer" || content["type"] == "offer")
       {
         std::string sdp = content["sdp"].get<std::string>();
@@ -146,44 +182,81 @@ WebRTCBridge::DataConnector::DataConnector()
               RequiredCandidate.push_back(media->mid());
             }
           }
-          std::cout << "I have " << RequiredCandidate.size() << " required candidates: ";
+          std::cout << Prefix << "I have " << RequiredCandidate.size() << " required candidates: ";
           for(auto i = 0; i < RequiredCandidate.size(); ++i)
           {
-            std::cout << RequiredCandidate[i] << " ";
+            std::cout << Prefix << RequiredCandidate[i] << " ";
           }
-          std::cout << std::endl;
+          std::cout << Prefix << std::endl;
           InitializedRemote = true;
         }
       }
       else if (content["type"] == "iceCandidate")
       {
-        auto sdpMid = content["candidate"]["sdpMid"].get<std::string>();
-        // remove sdpMid from required candidates
-        RequiredCandidate.erase(std::remove_if(RequiredCandidate.begin(), RequiredCandidate.end(), [sdpMid](auto s){return s==sdpMid;}), RequiredCandidate.end());
-        auto sdpMLineIndex = content["candidate"]["sdpMLineIndex"].get<int>();
-        std::string candidate_string = content["candidate"]["candidate"].get<std::string>();
-        rtc::Candidate ice(candidate_string, sdpMid);
-        pc_->addRemoteCandidate(ice);
-        // if we have no more required candidates, we can send an answer
-        if (!TakeFirstStep && pc_->localDescription().has_value() && RequiredCandidate.size() == 0 && state_ < EConnectionState::OFFERED)
+        // {"type": "iceCandidate", "candidate": {"candidate": "candidate:1 1 UDP 2122317823 172.26.15.227 42835 typ host", "sdpMLineIndex": "0", "sdpMid": "0"}}
+        std::cout << Prefix << "Parsing" << std::endl;
+        std::string sdpMid, candidate_string;
+        int sdpMLineIndex;
+        try
         {
-          this->state_ = EConnectionState::OFFERED;
-          SubmissionHandler.AddTask(std::bind(&DataConnector::CommunicateSDPs,this));
+          sdpMid = content["candidate"]["sdpMid"].get<std::string>();
+          sdpMLineIndex = content["candidate"]["sdpMLineIndex"].get<int>();
+          candidate_string = content["candidate"]["candidate"].get<std::string>();
+        }
+        catch(std::exception e)
+        {
+          std::cout << Prefix << "Could not parse candidate: " << e.what() << std::endl;
+          return;
+        }
+        std::cout << Prefix << "I received a candidate for " << sdpMid << " with index " << sdpMLineIndex << " and candidate " << candidate_string << std::endl;
+        rtc::Candidate ice(candidate_string, sdpMid);
+        try
+        {
+          pc_->addRemoteCandidate(ice);
+          // remove from required candidates if succeeded
+          RequiredCandidate.erase(std::remove_if(RequiredCandidate.begin(), RequiredCandidate.end(), [sdpMid](auto s) {return s == sdpMid; }), RequiredCandidate.end());
+        } catch (std::exception e)
+        {
+          std::cout << Prefix << "Could not add remote candidate: " << e.what() << std::endl;
+        }
+        // if we have no more required candidates, we can send an answer
+        if(RequiredCandidate.size() == 0)
+        {
+          std::cout << Prefix << "I have received all required candidates" << std::endl;
+          if (!TakeFirstStep && pc_->localDescription().has_value() && state_ < EConnectionState::OFFERED)
+          {
+            this->state_ = EConnectionState::OFFERED;
+            SubmissionHandler.AddTask(std::bind(&DataConnector::CommunicateSDPs, this));
+          }
+          if(OnIceGatheringFinished.has_value())
+          {
+            OnIceGatheringFinished.value()();
+            
+          }
+        }
+        else
+        {
+          std::cout << Prefix << "I still have " << RequiredCandidate.size() << " required candidates: ";
+          for(auto i = 0; i < RequiredCandidate.size(); ++i)
+          {
+            std::cout << Prefix << RequiredCandidate[i] << " ";
+          }
+          std::cout << Prefix << std::endl;
         }
       }
       else if(content["type"] == "control")
       {
-        std::cout << "Received a control message: " << content["message"] << std::endl;
+        std::cout << Prefix << "Received a control message: " << content["message"] << std::endl;
       }
       else if(content["type"] == "id")
       {
         this->config_["id"] = content["id"];
-        std::cout << "Received an id: " << content["id"] << std::endl;
+        std::cout << Prefix << "Received an id: " << content["id"] << std::endl;
       }
       else if(content["type"] == "serverDisconnected")
       {
         pc_.reset();
-        std::cout << "Reset peer connection because we received a disconnect" << std::endl;
+        std::cout << Prefix << "Reset peer connection because we received a disconnect" << std::endl;
       }
       else if(content["type"] == "config")
       {
@@ -192,18 +265,41 @@ WebRTCBridge::DataConnector::DataConnector()
       }
       else if(content["type"] == "playerCount")
       {
-        std::cout << "There are " << content["count"] << " players connected" << std::endl;
+        std::cout << Prefix << "There are " << content["count"] << " players connected" << std::endl;
+      }
+      else if(content["type"] == "role")
+      {
+        std::cout << Prefix << "Received a role: " << content["role"] << std::endl;
+        if(content["role"] == "server")
+        {
+          this->IsServer = true;
+          pc_->setLocalDescription();
+        }
+      }
+      else if(content["type"] == "playerConnected")
+      {
+        json offer = { {"type","offer"}, {"endpoint", "data"},{"sdp",pc_->localDescription().value()} };
+        ss_->send(offer.dump());
+        SubmissionHandler.AddTask(std::bind(&DataConnector::CommunicateSDPs,this));
+      }
+      else if (content["type"] == "playerDisconnected")
+      {
+        pc_.reset();
+        std::cout << Prefix << "Resetting connection because we must be in server role and the player disconnected" << std::endl;
       }
       else
       {
-        std::cout << "unknown message?" << std::endl << content.dump() << std::endl;
+        std::cout << Prefix << "unknown message?" << std::endl << content.dump() << std::endl;
       }
     }
   });
   ss_->onClosed([this]()
   {
     state_ = EConnectionState::CLOSED;
-    std::cout << "Signalling server was closed" << std::endl;
+    auto unix_time = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+
+    std::cout << Prefix << "Signalling server was closed at timestamp " << unix_time << std::endl;
+
   });
   ss_->onError([this](std::string error)
   {
@@ -215,15 +311,17 @@ WebRTCBridge::DataConnector::DataConnector()
 
 WebRTCBridge::DataConnector::~DataConnector()
 {
-  pc_->close();
   ss_->close();
+  pc_->close();
+  while (ss_->readyState() != rtc::WebSocket::State::Closed)
+    std::this_thread::yield();
 }
 
 void WebRTCBridge::DataConnector::StartSignalling()
 {
   std::string address = "ws://" + config_["SignallingIP"].get<std::string>()
     + ":" + std::to_string(config_["SignallingPort"].get<unsigned>());
-  std::cout << "Starting Signalling to " << address << std::endl;
+  std::cout << Prefix << "Starting Signalling to " << address << std::endl;
   state_ = EConnectionState::STARTUP;
   ss_->open(address);
   while (Block && state_ < EConnectionState::SIGNUP)
@@ -236,15 +334,46 @@ void WebRTCBridge::DataConnector::SendData(rtc::binary Data)
 {
   if (this->state_ != EConnectionState::CONNECTED)
     return;
-  DataChannel->sendBuffer(Data);
+  if(Data.size() > DataChannel->maxMessageSize())
+  {
+    rtc::binary Chunk(DataChannel->maxMessageSize());
+    const auto meta_size = sizeof(int) + sizeof(int) + sizeof(uint16_t) + sizeof(std::byte);
+    unsigned int chunks{ 0 };
+    for (; (meta_size * chunks + Data.size()) / chunks < DataChannel->maxMessageSize(); ++chunks);
+
+    // iterate through the chunks
+    for(auto i = 0u; i < chunks; ++i)
+    {
+      unsigned int n = 0u;
+      n = InsertIntoBinary(Chunk, n, std::byte(50), uint16_t(0));
+      n = InsertIntoBinary(Chunk, n, i, chunks);
+      memcpy(Chunk.data() + n, Data.data() + i * chunks, DataChannel->maxMessageSize() - meta_size);
+      DataChannel->sendBuffer(Chunk);
+    }
+  }
+  else
+  {
+    DataChannel->sendBuffer(Data);
+  }
 }
 
 void WebRTCBridge::DataConnector::SendString(std::string Message)
 {
   if (this->state_ != EConnectionState::CONNECTED)
     return;
-  json content = { {"origin",""},{"data","Message"} };
-  DataChannel->send(content.dump());
+  json content = { {"origin","dataconnector"},{"data",Message} };
+  std::string json_message = content.dump();
+  // prepare bytes that Unreal expects at the beginning of the message
+  rtc::binary bytes(3 + 2* json_message.length());
+  bytes.at(0) = DataChannelByte;
+  uint16_t* buffer = reinterpret_cast<uint16_t*>(&(bytes.at(1)));
+  *buffer = static_cast<uint16_t>(json_message.size());
+  for(int i = 0; i < json_message.size(); i++)
+  {
+    bytes.at(3 + 2 * i) = static_cast<std::byte>(json_message.at(i));
+    bytes.at(3 + 2 * i + 1) = 0_b;
+  }
+  DataChannel->sendBuffer(bytes);
 }
 
 WebRTCBridge::EConnectionState WebRTCBridge::DataConnector::GetState()
@@ -252,9 +381,14 @@ WebRTCBridge::EConnectionState WebRTCBridge::DataConnector::GetState()
   return state_;
 }
 
-void WebRTCBridge::DataConnector::SetCallback(std::function<void(rtc::binary)> Callback)
+void WebRTCBridge::DataConnector::SetDataCallback(std::function<void(rtc::binary)> Callback)
 {
-  this->DataReceptionCallback = Callback;
+   this->DataReceptionCallback = Callback;
+}
+
+void WebRTCBridge::DataConnector::SetMessageCallback(std::function<void(std::string)> Callback)
+{
+  this->MessageReceptionCallback = Callback;
 }
 
 void WebRTCBridge::DataConnector::SetConfig(json Config)
@@ -306,7 +440,7 @@ void WebRTCBridge::DataConnector::PrintCommunicationData()
   auto max_message = DataChannel->maxMessageSize();
   auto protocol = DataChannel->protocol();
   auto label = DataChannel->label();
-  std::cout << "Data Channel " << label << " has protocol " << protocol << " and max message size " << max_message << std::endl;
+  std::cout << Prefix << "Data Channel " << label << " has protocol " << protocol << " and max message size " << max_message << std::endl;
 
 }
 
@@ -321,7 +455,7 @@ void WebRTCBridge::DataConnector::CommunicateSDPs()
     }
     for (auto candidate : pc_->localDescription().value().extractCandidates())
     {
-      json ice = { {"type","iceCandidate"}, {"candidate", {{"candidate",candidate.candidate()}, {"sdpMid",candidate.mid()}, {"sdpMLineIndex",candidate.mid()}}} };
+      json ice = { {"type","iceCandidate"}, {"candidate", {{"candidate",candidate.candidate()}, {"sdpMid",candidate.mid()}, {"sdpMLineIndex",std::stoi(candidate.mid())}}} };
       ss_->send(ice.dump());
     }
   }

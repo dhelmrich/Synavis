@@ -17,6 +17,7 @@
 
 bool ParseTimeFromString(std::string Source, std::chrono::utc_time<std::chrono::system_clock::duration>& Destination);
 
+
 #elif __linux__
 #include <sys/socket.h>
 #include <sys/types.h> 
@@ -27,6 +28,27 @@ bool ParseTimeFromString(std::string Source, std::chrono::utc_time<std::chrono::
 bool ParseTimeFromString(std::string Source, std::chrono::time_point<std::chrono::system_clock>& Destination);
 
 #endif
+
+
+template < typename T > std::weak_ptr<T> weaken(std::shared_ptr<T> const& ptr)
+{
+  return std::weak_ptr<T>(ptr);
+}
+
+// a function to insert any variable into an rtc::binary object
+template < typename T > std::size_t InsertIntoBinary(rtc::binary& Binary, std::size_t offset, T Data)
+{
+  const std::size_t  size = Binary.size();
+  memcpy(Binary.data() + offset, &Data, sizeof(Data));
+  return size;
+}
+template < typename T, typename... Args > std::size_t InsertIntoBinary(rtc::binary& Binary, std::size_t offset, T Data, Args... args)
+{
+  const std::size_t  size = Binary.size();
+  memcpy(Binary.data() + offset, &Data, sizeof(Data));
+  return InsertIntoBinary(Binary, offset + sizeof(Data), args...);
+}
+
 
 namespace WebRTCBridge
 {

@@ -5,6 +5,7 @@ import time
 from colorama import init as colorama_init
 from colorama import Fore, Back, Style
 import threading
+import sys
 
 ws.debug = True
 
@@ -16,15 +17,24 @@ sfu_port = 8889 # not used yet, but this is the port that the SFU listens on for
 class Logger() :
   def __init__ (self):
     colorama_init()
+    self.light_mode = False
+  #enddef
+  def set_light_mode(self, light_mode) :
+    self.light_mode = light_mode
+    if light_mode :
+      self.info("Light mode enabled")
+    else :
+      self.info("Light mode disabled")
+    #endif
   #enddef
   def log(self, message, color = Fore.WHITE) :
     print(color + message + Style.RESET_ALL)
   #enddef
   def info(self, message) :
-    self.log(message, Fore.WHITE)
+    self.log(message, (Fore.BLACK if self.light_mode else Fore.WHITE))
   #enddef
   def warn(self, message) :
-    self.log(message, Fore.YELLOW)
+    self.log(message, (Fore.MAGENTA if self.light_mode else Fore.YELLOW))
   #enddef
   def error(self, message) :
     self.log(message, Fore.RED)
@@ -129,7 +139,7 @@ class Connection() :
   #enddef
   """ a method that assigns a new unique id to the connection"""
   def assign_id(self) :
-    self.id = 100
+    self.id = 101
     while self.id in connections :
       self.id += 1
     #endwhile	
@@ -189,6 +199,26 @@ async def handle(connection, message) :
           await connections[server_id].send(json.dumps(data))
         #endfor
       #endif
+    elif "candidate" in content or "iceCandidate" in content :
+      data = {"type": content["type"], "candidate": content["candidate"]}
+      if connection.role == "server" :
+        for player_id in connection.connected_ids :
+          await connections[player_id].send(json.dumps(data))
+      elif connection.role == "client" :
+        for server_id in connection.connected_ids :
+          data["playerId"] = connection.id
+          await connections[server_id].send(json.dumps(data))
+        #endfor
+      #endif
+    elif "request" in content :
+      if content["request"] == "id" :
+        await connection.send(json.dumps({"type": "id", "id": connection.id}))
+      elif content["request"] == "role" :
+        await connection.send(json.dumps({"type": "role", "role": connection.role}))
+      elif content["request"] == "connections" :
+        await connection.send(json.dumps({"type": "connections", "connections": zip([id for id in connections], [connections[id].role for id in connections])}))
+      elif content["request"] == "broadcast" :
+        glog.info("Client " + str(connection.id) + " requested a broadcast")
     #endif
   #endif
 #enddef
@@ -221,20 +251,29 @@ async def connection(websocket, path) :
     except asyncio.exceptions.TimeoutError as t :
       continue
     except ws.WebSocketException as e :
+      # determine unix timestamp of when the connection was closed
+      connection.close_time = int(time.time())
       if e.code in [1000,1001] :
-        glog.warn("Websocket closed: " + str(e))
+        glog.warn("Websocket closed: " + str(e) + " " + str(connection) + " at time " + str(connection.close_time))
       else :
-        glog.error("Websocket error: " + str(e))
+        glog.error("Websocket error: " + str(e) + " " + str(connection) + " at time " + str(connection.close_time))
       break
   connections.pop(connection.id)
   # send an unreal-like player disconnect message
   if connection.role == "client" :
     for server_id in connection.connected_ids :
-      await connections[server_id].send(json.dumps({"type":"playerDisconnected", "playerId": connection.id}))
+      try :
+        if connections[server_id].websocket.open :
+          await connections[server_id].send(json.dumps({"type":"playerDisconnected", "playerId": connection.id}))
+      finally:
+        connections[server_id].unassign(connection)
   elif connection.role == "server" :
     for client_id in connection.connected_ids :
-      await connections[client_id].send(json.dumps({"type":"serverDisconnected", "serverId": client_id}))
-      connections[client_id].unassign(connection)
+      try :
+        if connections[client_id].websocket.open :
+          await connections[client_id].send(json.dumps({"type":"serverDisconnected", "serverId": client_id}))
+      finally:
+        connections[client_id].unassign(connection)
     if active_server == connection :
       active_server = None
   glog.info("closed connection " + str(connection))
@@ -243,6 +282,13 @@ async def connection(websocket, path) :
 
 async def main() :
   global connections, glog
+  # checking if we have command line arguments
+  if len(sys.argv) > 1 :
+    # checking if we have lightmode enabled
+    if "--lightmode" in sys.argv :
+      glog.set_light_mode(True)
+  # start the signalling server
+  glog.info("Starting server...")
   async with ws.serve(connection, target_ip, server_port), ws.serve(connection, target_ip, client_port) :
     await asyncio.Future()
 
@@ -257,6 +303,5 @@ def start_signalling() :
   return threading.Thread(target = asyncio.run, args = (main(),)).start()
 
 if __name__ == "__main__" :
-  glog.info("Starting server...")
   asyncio.run(main())
 

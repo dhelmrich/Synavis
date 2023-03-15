@@ -37,7 +37,7 @@ elif clean_build == 1 :
   # change path to the directory where the library is located
   os.chdir("../../unix/")
   # build the library
-  subprocess.call("make -j4", shell=True)
+  subprocess.call("make webrtcbridge -j4", shell=True)
   # change path back to the original path
   os.chdir(cwd)
 
@@ -58,7 +58,6 @@ time.sleep(1.0)
 
 ss.glog.info("Starting WebRTC bridge")
 Client = rtc.DataConnector()
-Client.SetBlock(False)
 Client.SetConfig({"SignallingIP": IPAddr, "SignallingPort": 8080, "Role": "client"})
 Client.SetCallback(OnData)
 Client.StartSignalling()

@@ -1,5 +1,11 @@
 // -*- mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+
 #define _STL_CRT_SECURE_INVALID_PARAMETER(expr) _CRT_SECURE_INVALID_PARAMETER(expr)
+#include <functional>
+#include <numeric>
+#include <iostream>
+#include <string>
+#include <vector>
 #include "pybind11/pybind11.h"
 #include "pybind11/stl.h"
 #include <pybind11/numpy.h>
@@ -8,11 +14,6 @@
 #include <pybind11/iostream.h>
 #include <pybind11/stl_bind.h>
 #include <pybind11_json.hpp>
-#include <functional>
-#include <numeric>
-#include <iostream>
-#include <string>
-#include <vector>
 
 #include "DataConnector.hpp"
 #include "MediaReceiver.hpp"
@@ -24,6 +25,7 @@ namespace py = pybind11;
 #include "Adapter.hpp"
 #include "Provider.hpp"
 #include "UnrealConnector.hpp"
+#include <rtc/common.hpp>
 
 namespace WebRTCBridge{
 
@@ -35,7 +37,7 @@ namespace WebRTCBridge{
       PYBIND11_OVERLOAD(void, UnrealReceiver, UseConfig, filename);
     }
 
-    void SetDataCallback(const std::function<void(std::vector<std::vector<unsigned char>>)>& DataCallback) override
+    void SetDataCallback(std::function<void(std::vector<std::vector<unsigned char>>)> DataCallback) override
     {
       PYBIND11_OVERLOAD(void, UnrealReceiver, SetDataCallback, DataCallback);
     }
@@ -142,6 +144,21 @@ namespace WebRTCBridge{
 
   PYBIND11_MODULE(PyWebRTCBridge, m)
   {
+    
+    py::class_<UnrealReceiver, PyReceiver, std::shared_ptr<UnrealReceiver>>(m, "UnrealReceiver")
+      .def(py::init<>())
+      .def("RegisterWithSignalling", &UnrealReceiver::RegisterWithSignalling)
+      .def("UseConfig", static_cast<void(UnrealReceiver::*)(std::string)>(&PyReceiver::UseConfig), py::arg("filename"))
+
+    .def("SetDataCallback", static_cast<void (UnrealReceiver::*)(
+        std::function<void(std::vector<std::vector<unsigned char>>)>)>
+        (&PyReceiver::SetDataCallback), py::arg("DataCallback"))
+
+      .def("RunForever", &UnrealReceiver::RunForever)
+      .def("EmptyCache", &UnrealReceiver::EmptyCache)
+      .def("SessionDescriptionProtocol", &UnrealReceiver::SessionDescriptionProtocol)
+    ;
+    
     py::class_<rtc::PeerConnection> (m, "PeerConnection")
     ;
 
@@ -158,7 +175,8 @@ namespace WebRTCBridge{
       .def(py::init<>())
       .def("SendData", &DataConnector::SendData, py::arg("Data"))
       .def("SendString", &DataConnector::SendString, py::arg("Message"))
-      .def("SetCallback", &DataConnector::SetCallback,py::arg("Callback"))
+      .def("SetDataCallback", &DataConnector::SetDataCallback,py::arg("Callback"))
+      .def("SetMessageCallback", &DataConnector::SetMessageCallback,py::arg("Callback"))
       .def("SetConfig", &DataConnector::SetConfig,py::arg("Config"))
       .def("StartSignalling", &DataConnector::StartSignalling)
       .def("IsRunning", &DataConnector::IsRunning)
@@ -190,17 +208,6 @@ namespace WebRTCBridge{
       .def("PushSDP",(std::string(Adapter::*)(std::string)) & PyAdapter<Adapter>::PushSDP)
     ;
 
-    py::class_<UnrealReceiver, PyReceiver, std::shared_ptr<UnrealReceiver>>(m, "UnrealReceiver")
-      .def(py::init<>())
-      .def("RegisterWithSignalling", &UnrealReceiver::RegisterWithSignalling)
-      .def("UseConfig", (void(UnrealReceiver::*)(std::string)) & PyReceiver::UseConfig, py::arg("filename"))
-      .def("SetDataCallback", (void (UnrealReceiver::*)(const std::function<void(std::vector<std::vector<unsigned char>>)>&)) & PyReceiver::SetDataCallback, py::arg("DataCallback"))
-      //.def("SetDataCallback",[](const std::function<void(std::vector<std::byte>)>&){})
-      .def("RunForever", &UnrealReceiver::RunForever)
-      .def("EmptyCache",&UnrealReceiver::EmptyCache)
-      .def("SessionDescriptionProtocol",&UnrealReceiver::SessionDescriptionProtocol)
-    ;
-
     // python binding for Provider class, along with its methods
     py::class_<Provider, PyProvider<Provider>, std::shared_ptr<Provider>>(m, "Provider")
       .def(py::init<>())
@@ -213,3 +220,4 @@ namespace WebRTCBridge{
   }
 
 }
+

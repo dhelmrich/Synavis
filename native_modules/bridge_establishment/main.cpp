@@ -54,7 +54,6 @@ void SeekerMain( const json& Config)
   }
 }
 
-
 int main(int args, char** argv)
 {
   json Config;

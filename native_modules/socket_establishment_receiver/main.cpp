@@ -24,7 +24,7 @@ int main()
   }
   while(true)
   {
-    std::this_thread::sleep_for(std::chrono_literals::operator ""ms((unsigned long long)1000u));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000u));
     auto siz = BridgeSocket->Receive();
     if(siz > 0)
     {

@@ -78,7 +78,7 @@ public:
   void Offer();
   virtual void UseConfig(std::string filename);
   inline const EConnectionState& State(){return this->state_;};
-  virtual void SetDataCallback(const std::function<void(std::vector<std::vector<unsigned char>>)>& DataCallback);
+  virtual void SetDataCallback(std::function<void(std::vector<std::vector<unsigned char>>)> DataCallback);
   virtual std::vector<std::vector<unsigned char>> EmptyCache();
 protected:
 private:

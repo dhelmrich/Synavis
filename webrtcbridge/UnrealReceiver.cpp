@@ -22,9 +22,17 @@ namespace WebRTCBridge
 {
 
 
-void SetTimeout(double ms, std::function<void(void)> callback, bool invokeself = false)
+void SetTimeout(int ms, std::function<void(void)> callback, bool invokeself = false)
 {
-  
+  std::thread([ms, callback, invokeself]()
+  {
+    std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+    callback();
+    if (invokeself)
+    {
+      SetTimeout(ms, callback, invokeself);
+    }
+  }).detach();
 }
 
 UnrealReceiver::UnrealReceiver()
@@ -456,7 +464,7 @@ std::string UnrealReceiver::SessionDescriptionProtocol()
   //return answersdp_;
 }
 
-void UnrealReceiver::SetDataCallback(const std::function<void(std::vector<std::vector<unsigned char>>)>& DataCallback)
+void UnrealReceiver::SetDataCallback(std::function<void(std::vector<std::vector<unsigned char>>)> DataCallback)
 {
   std::cout << "Data Callback with pointer to " << &DataCallback << std::endl;
   DataCallback_ = DataCallback;
