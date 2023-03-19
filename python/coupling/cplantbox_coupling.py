@@ -1,11 +1,13 @@
 
 import sys
 import os
+import numpy as np
+import base64
 # check if CPLANTBOX_ROOT is set
 if "CPLANTBOX_ROOT" in os.environ:
   sys.path.append(os.environ["CPLANTBOX_ROOT"])
 else :
-  print("CPLANTBOX_PATH is not set, but I will try to import plantbox from your PYTHONPATH")
+  print("CPLANTBOX_ROOT is not set, but I will try to import plantbox from your PYTHONPATH")
 try :
   import plantbox as pb
 except Exception as e :
@@ -28,8 +30,11 @@ def data_callback(data) :
   print("Received data: ", data)
 
 # Path: cplantbox_coupling.py
-import numpy as np
-sys.path.append("../../build/")
+# if we are on windows, the path to the dll is different
+if sys.platform == "win32" :
+  sys.path.append("../../build/webrtcbridge/Debug/")
+else :
+  sys.path.append("../../build/")
 sys.path.append("../modules/")
 import PyWebRTCBridge as rtc
 import signalling_server as ss
@@ -84,15 +89,26 @@ while True :
   # fetch normals
   normals = plant.getNormals()
 
+  texcoords = plant.GetGeometryTextureCoordinates()
+  node_ids = plant.GetGeometryNodeIds()
+
   # prepare the metadata
-  metadata = {}
-  metadata["points"] = len(points)
-  metadata["triangles"] = len(triangles)
-  metadata["normals"] = len(normals)
-  metadata["time"] = time
-  metadata["leaf_res"] = leaf_res
+  data = {"type": "direct", "format": "base64"}
+  # send the points
+  data["points"] = base64.b64encode(np.array(points).tobytes()).decode("utf-8")
+  data["triangles"] = base64.b64encode(np.array(triangles).tobytes()).decode("utf-8")	
+  data["normals"] = base64.b64encode(np.array(normals).tobytes()).decode("utf-8")	
+  data["texcoords"] = base64.b64encode(np.array(texcoords).tobytes()).decode("utf-8")
+  data["time"] = time
+
+  # data as string
+  string_data = json.dumps(data)
+  # check length
+  if len(string_data) > 1000000 :
+    print("Error: Message too long, ", len(string_data), " bytes")
+    sys.exit(1)
   # send the metadata
-  dc.SendMessage(metadata)
+  dc.SendMessage(data)
 
 
 
