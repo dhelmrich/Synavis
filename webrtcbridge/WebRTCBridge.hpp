@@ -1,3 +1,5 @@
+
+
 #pragma once
 #ifndef WEBRTCBRIDGE_HPP
 #define WEBRTCBRIDGE_HPP
@@ -16,7 +18,6 @@
 #include <ws2tcpip.h>
 
 bool ParseTimeFromString(std::string Source, std::chrono::utc_time<std::chrono::system_clock::duration>& Destination);
-
 
 #elif __linux__
 #include <sys/socket.h>
@@ -47,6 +48,44 @@ template < typename T, typename... Args > std::size_t InsertIntoBinary(rtc::bina
   const std::size_t  size = Binary.size();
   memcpy(Binary.data() + offset, &Data, sizeof(Data));
   return InsertIntoBinary(Binary, offset + sizeof(Data), args...);
+}
+
+// a function to encode a rtc::binary object into a base64 string
+// adapted from https://stackoverflow.com/questions/180947/base64-decode-snippet-in-c
+static std::string Encode64(const rtc::binary& Data)
+{
+  // convert data to string of bytes
+  std::string_view strdata(reinterpret_cast<const char*>(Data.data()), Data.size());
+  // base64 encoding table
+  constexpr char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  // compute the size of the encoded string
+  std::size_t encoded_length = 4 * ((strdata.size() + 2) / 3);
+  std::string result(encoded_length, '\0');
+  std::size_t i;
+  char* c = const_cast<char*>(result.c_str());
+  for (i = 0; i < strdata.size() - 2; i += 3)
+  {
+    *c++ = table[(strdata[i] >> 2) & 0x3F];
+    *c++ = table[((strdata[i] & 0x3) << 4) | ((int)(strdata[i + 1] & 0xF0) >> 4)];
+    *c++ = table[((strdata[i + 1] & 0xF) << 2) | ((int)(strdata[i + 2] & 0xC0) >> 6)];
+    *c++ = table[strdata[i + 2] & 0x3F];
+  }
+  if (i < strdata.size())
+  {
+    *c++ = table[(strdata[i] >> 2) & 0x3F];
+    if (i == (strdata.size() - 1))
+    {
+      *c++ = table[((strdata[i] & 0x3) << 4)];
+      *c++ = '=';
+    }
+    else
+    {
+      *c++ = table[((strdata[i] & 0x3) << 4) | ((int)(strdata[i + 1] & 0xF0) >> 4)];
+      *c++ = table[((strdata[i + 1] & 0xF) << 2)];
+    }
+    *c++ = '=';
+  }
+  return result;
 }
 
 
@@ -80,7 +119,7 @@ namespace WebRTCBridge
 
     std::size_t ReceivedLength;
     BridgeSocket();
-    BridgeSocket(BridgeSocket&& other)=default;
+    BridgeSocket(BridgeSocket&& other) = default;
     ~BridgeSocket();
     int Port;
     int GetSocketPort();
@@ -89,7 +128,7 @@ namespace WebRTCBridge
     std::string What();
 
 #ifdef _WIN32
-    SOCKET Sock{INVALID_SOCKET};
+    SOCKET Sock{ INVALID_SOCKET };
     sockaddr info;
     struct sockaddr_in Addr, Remote;
 #elif __linux__
@@ -126,8 +165,8 @@ namespace WebRTCBridge
   struct BridgeRTPHeader
   {
     // Extension Header
-    uint16_t profile_id{1667};
-    uint16_t length{sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint32_t) };
+    uint16_t profile_id{ 1667 };
+    uint16_t length{ sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint32_t) };
 
     // Actual extension values
     uint16_t player_id;
@@ -135,17 +174,17 @@ namespace WebRTCBridge
     uint32_t meta;
   };
 #pragma pop
-  
+
   enum class WEBRTCBRIDGE_EXPORT EClientMessageType
   {
-	  QualityControlOwnership = 0u,
-	  Response,
-	  Command,
-	  FreezeFrame,
-	  UnfreezeFrame,
-	  VideoEncoderAvgQP,
-	  LatencyTest,
-	  InitialSettings
+    QualityControlOwnership = 0u,
+    Response,
+    Command,
+    FreezeFrame,
+    UnfreezeFrame,
+    VideoEncoderAvgQP,
+    LatencyTest,
+    InitialSettings
   };
 
   enum class WEBRTCBRIDGE_EXPORT EConnectionState
@@ -229,7 +268,7 @@ namespace WebRTCBridge
     void UseConfig(std::string filename);
     void UseConfig(json Config);
     virtual void BridgeSynchronize(Adapter* Instigator,
-                                   json Message, bool bFailIfNotResolved = false);
+      json Message, bool bFailIfNotResolved = false);
     void CreateTask(std::function<void(void)>&& Task);
     void BridgeSubmit(Adapter* Instigator, StreamVariant origin, std::variant<rtc::binary, std::string> Message) const;
     virtual void InitConnection();
@@ -244,11 +283,11 @@ namespace WebRTCBridge
     void SubmitToSignalling(json Message, Adapter* Endpoint);
     inline bool FindID(const json& Jason, int& ID)
     {
-      for(auto it = Jason.begin(); it != Jason.end(); ++it)
+      for (auto it = Jason.begin(); it != Jason.end(); ++it)
       {
-        for(auto name : {"id", "player_id", "app_id"})
+        for (auto name : { "id", "player_id", "app_id" })
         {
-          if(it.key() == name && it.value().is_number_integer())
+          if (it.key() == name && it.value().is_number_integer())
           {
             ID = it.value().get<int>();
             return true;
@@ -274,8 +313,8 @@ namespace WebRTCBridge
         {"LocalAddress",int()},
         {"RemoteAddress",int()},
         {"Signalling",int()}
-      }};
-    std::unordered_map<int,std::shared_ptr<Adapter>> EndpointById;
+      } };
+    std::unordered_map<int, std::shared_ptr<Adapter>> EndpointById;
     std::future<void> BridgeThread;
     std::mutex QueueAccess;
     std::queue<std::function<void(void)>> CommInstructQueue;
@@ -283,7 +322,7 @@ namespace WebRTCBridge
     std::mutex CommandAccess;
     std::queue<std::variant<rtc::binary, std::string>> CommandBuffer;
     std::condition_variable CommandAvailable;
-    bool bNeedInfo{false};
+    bool bNeedInfo{ false };
     // Signalling Server
     std::shared_ptr<rtc::WebSocket> SignallingConnection;
     EBridgeConnectionType ConnectionMode{ EBridgeConnectionType::BridgeMode };

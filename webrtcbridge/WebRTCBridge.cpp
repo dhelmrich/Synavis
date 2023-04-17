@@ -441,12 +441,16 @@ WebRTCBridge::Bridge::Bridge()
   BridgeConnection.In = std::make_shared<BridgeSocket>();
   BridgeConnection.Out = std::make_shared<BridgeSocket>();
   BridgeConnection.DataOut = std::make_shared<BridgeSocket>();
+
+  SignallingConnection = std::make_shared<rtc::WebSocket>();
 }
 
 WebRTCBridge::Bridge::~Bridge()
 {
-  SignallingConnection->close();
-
+  if(SignallingConnection->isOpen())
+  {
+    SignallingConnection->close();
+  }
 }
 
 std::string WebRTCBridge::Bridge::Prefix()
@@ -545,8 +549,9 @@ void WebRTCBridge::Bridge::InitConnection()
   std::cout << Prefix() << "Init connection" << std::endl;
   BridgeConnection.In->Outgoing = false;
   
-  BridgeConnection.In->Address = Config[0].at("RemoteAddress").get<std::string>();
-  BridgeConnection.In->Port = Config[0].at("RemotePort").get<int>();
+  BridgeConnection.In->Address = Config["RemoteAddress"].get<std::string>();
+  BridgeConnection.In->Port = Config["RemotePort"].get<int>();
+
   std::cout << Prefix() << "Init Bridge In" << std::endl;
   if(!BridgeConnection.In->Connect())
   {
@@ -554,8 +559,8 @@ void WebRTCBridge::Bridge::InitConnection()
      << std::endl << BridgeConnection.In->What() << std::endl;
   }
   BridgeConnection.Out->Outgoing = true;
-  BridgeConnection.Out->Address = Config[0].at("LocalAddress").get<std::string>();
-  BridgeConnection.Out->Port = Config[0].at("LocalPort").get<int>();
+  BridgeConnection.Out->Address = Config["LocalAddress"].get<std::string>();
+  BridgeConnection.Out->Port = Config["LocalPort"].get<int>();
   std::cout << Prefix() << "Init Bridge Out" << std::endl;
   if(!BridgeConnection.Out->Connect())
   {

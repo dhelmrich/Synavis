@@ -125,6 +125,7 @@ namespace WebRTCBridge{
   {
     using T::T;
     using T::json;
+
   };
 
   template < typename T = BridgeSocket > class PyBridgeSocket : public T
@@ -137,9 +138,11 @@ namespace WebRTCBridge{
     }
   };
 
-  template < typename T = MediaReceiver > class PyMediaReceiver : public T
+  template < typename T = MediaReceiver > class PyMediaReceiver : public PyDataConnector<T>
   {
-    
+  public:
+    using T::json;
+
   };
 
   PYBIND11_MODULE(PyWebRTCBridge, m)
@@ -178,13 +181,20 @@ namespace WebRTCBridge{
       .def("SetDataCallback", &DataConnector::SetDataCallback,py::arg("Callback"))
       .def("SetMessageCallback", &DataConnector::SetMessageCallback,py::arg("Callback"))
       .def("SetConfig", &DataConnector::SetConfig,py::arg("Config"))
+      .def("SetConfigFile", &DataConnector::SetConfigFile,py::arg("ConfigFile"))
       .def("StartSignalling", &DataConnector::StartSignalling)
       .def("IsRunning", &DataConnector::IsRunning)
       .def("SetTakeFirstStep",&DataConnector::SetTakeFirstStep,py::arg("SetTakeFirstStep"))
       .def("GetTakeFirstStep",&DataConnector::GetTakeFirstStep)
       .def("SetBlock", &DataConnector::SetBlock,py::arg("Block"))
       .def("IsBlocking",&DataConnector::IsBlocking)
-    ; 
+    ;
+
+    py::class_<MediaReceiver, PyMediaReceiver<>, std::shared_ptr<MediaReceiver>>(m, "MediaReceiver")
+      .def(py::init<>())
+      .def("SetFrameReceptionCallback", &MediaReceiver::SetFrameReceptionCallback,py::arg("Callback"))
+      .def("SetOnTrackOpenCallback", &MediaReceiver::SetOnTrackOpenCallback,py::arg("Callback"))
+    ;
 
     py::enum_<rtc::PeerConnection::GatheringState>(m, "GatheringState")
       .value("New", rtc::PeerConnection::GatheringState::New)

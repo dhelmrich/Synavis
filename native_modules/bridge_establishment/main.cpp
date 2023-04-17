@@ -12,6 +12,27 @@
 using namespace std::chrono_literals;
 using json = nlohmann::json;
 
+/**
+ * PORT SETUP FOR THE BRIDGE TO TEST ON A WORKSTATION
+ * UE Ports: Streamer 5000, Signalling 8080
+ * Provider Ports: In: 25552, Out 25553, Data: 25554
+ * Seeker Ports: In: 25553, Out 25552, Data: 25554
+ * User Ports: Relay: 25555, Signalling: 8080
+ */
+const json GeneralConfig = {
+  {"SignallingIP", "localhost"},
+  {"SignallingPort", 8080},
+  {"SeekerPort", 25552},
+  {"ProviderPort", 25553},
+  {"DataPort", 25554},
+  {"StreamerPort", 5000},
+  {"RelayPort", 25555},
+  {"RelayIP", "localhost"},
+  {"StreamerIP", "localhost"}
+  };
+
+
+
 void ProviderMain(const json& Config)
 {
   const std::string _pref = "[ProviderThread]: ";
@@ -33,11 +54,13 @@ void ProviderMain(const json& Config)
   }
 }
 
-void SeekerMain( const json& Config)
+void SeekerMain(const json& Config)
 {
   const std::string _pref = "[SeekerThread]:   ";
   std::this_thread::sleep_for(2000ms);
   auto BridgeSeeker = std::make_shared<WebRTCBridge::Seeker>();
+  // Switch in and out ports
+
   std::cout << _pref  << "Seeker Thread started" << std::endl;
   BridgeSeeker->UseConfig(Config);
   BridgeSeeker->SetTimeoutPolicy(WebRTCBridge::EMessageTimeoutPolicy::None, 10s);
@@ -56,32 +79,22 @@ void SeekerMain( const json& Config)
 
 int main(int args, char** argv)
 {
-  json Config;
-  if (args < 2)
-  {
-    std::cout << "Please include a configuration, or the required data." << std::endl;
-    return 1;
-  }
-  else if(strcmp(argv[1], "json") == 0 && args >= 3)
-  {
-    try
-    {
-      Config = json::parse(argv[2]);
-    }
-    catch (const std::exception& e)
-    {
-      std::cerr << e.what() << '\n';
-      return 1;
-    }
-  }
-  else
-  {
-    std::cout << "I could not parse a configuration, or the required data." << std::endl;
-    return 1;
-  }
+  json Config = GeneralConfig;
+
+  Config["LocalPort"] = Config["ProviderPort"];
+  Config["RemotePort"] = Config["SeekerPort"];
+  Config["LocalAddress"] = "127.0.0.1";
+  Config["RemoteAddress"] = "127.0.0.1";
+
   using namespace std::chrono_literals;
   auto ProviderThread = std::async(std::launch::async,ProviderMain, Config);
-  std::this_thread::sleep_for(10ms);
+  std::this_thread::sleep_for(50ms);
+  
+  Config["LocalPort"] = Config["SeekerPort"];
+  Config["RemotePort"] = Config["ProviderPort"];
+  Config["LocalAddress"] = "127.0.0.1";
+  Config["RemoteAddress"] = "127.0.0.1";
+
   auto SeekerThread = std::async(std::launch::async, SeekerMain, Config);
   while(true)
   {

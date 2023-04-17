@@ -236,8 +236,10 @@ async def connection(websocket, path) :
       connection.assign(active_server)
       active_server.assign(connection)
       # send an unreal-like player connect message
-      await active_server.send(json.dumps({"type":"playerConnected", "playerId": connection.id}))
+      await active_server.send(json.dumps({"type":"playerConnected", "playerId": str(connection.id), "dataChannel": True, "sfu": False}))
   elif connection.role == "server" :
+    # deactivate ping frames
+    connection.websocket.ping_interval = None
     if active_server == None :
       # run the notify method non-blocking so that we can continue to accept new connections
       asyncio.ensure_future(notify_unreal_about_unmatched_clients())
@@ -264,14 +266,14 @@ async def connection(websocket, path) :
     for server_id in connection.connected_ids :
       try :
         if connections[server_id].websocket.open :
-          await connections[server_id].send(json.dumps({"type":"playerDisconnected", "playerId": connection.id}))
+          await connections[server_id].send(json.dumps({"type":"playerDisconnected", "playerId": str(connection.id)}))
       finally:
         connections[server_id].unassign(connection)
   elif connection.role == "server" :
     for client_id in connection.connected_ids :
       try :
         if connections[client_id].websocket.open :
-          await connections[client_id].send(json.dumps({"type":"serverDisconnected", "serverId": client_id}))
+          await connections[client_id].send(json.dumps({"type":"serverDisconnected", "serverId": connection.id}))
       finally:
         connections[client_id].unassign(connection)
     if active_server == connection :

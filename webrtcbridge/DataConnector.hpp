@@ -22,32 +22,31 @@ public:
   using json = nlohmann::json;
   std::string Prefix = "";
   DataConnector();
-  ~DataConnector();
+  virtual ~DataConnector();
   void StartSignalling();
 
   virtual void SendData(rtc::binary Data);
   void SendString(std::string Message);
+  void SendJSON(json Message);
   EConnectionState GetState();
   std::optional<std::function<void(rtc::binary)>> DataReceptionCallback;
   std::optional<std::function<void(std::string)>> MessageReceptionCallback;
   void SetDataCallback(std::function<void(rtc::binary)> Callback);
   void SetMessageCallback(std::function<void(std::string)> Callback);
   std::shared_ptr<rtc::DataChannel> DataChannel;
+  void SetConfigFile(std::string ConfigFile);
   void SetConfig(json Config);
   bool IsRunning();
   void SetTakeFirstStep(bool TakeFirstStep){this->TakeFirstStep=TakeFirstStep;}
   bool GetTakeFirstStep(){return this->TakeFirstStep;}
-  void PrintCommunicationData();
+  virtual void PrintCommunicationData();
   void SetBlock(bool Block){this->Block=Block;}
   bool IsBlocking() const {return this->Block;}
   std::byte DataChannelByte{ 50 };
-
   void SetOnConnectedCallback(std::function<void(void)> Callback) { OnConnectedCallback = Callback; }
   void SetOnFailedCallback(std::function<void(void)> Callback) { OnFailedCallback = Callback; }
   void SetOnClosedCallback(std::function<void(void)> Callback) { OnClosedCallback = Callback; }
   void SetOnIceGatheringFinished(std::function<void(void)> Callback) { OnIceGatheringFinished = Callback; }
-
-
   void CommunicateSDPs();
 protected:
 
@@ -63,8 +62,8 @@ protected:
 
   rtc::Configuration rtcconfig_;
   rtc::Configuration webconfig_;
-  std::shared_ptr<rtc::PeerConnection> pc_;
-  std::shared_ptr<rtc::WebSocket> ss_;
+  std::shared_ptr<rtc::PeerConnection> PeerConnection;
+  std::shared_ptr<rtc::WebSocket> SignallingServer;
   bool TakeFirstStep = false;
   bool InitializedRemote = false;
   bool IsServer = false;
