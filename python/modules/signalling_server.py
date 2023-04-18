@@ -1,4 +1,5 @@
 import asyncio
+import subprocess
 import websockets as ws
 import json
 import time
@@ -294,7 +295,7 @@ async def main() :
   async with ws.serve(connection, target_ip, server_port), ws.serve(connection, target_ip, client_port) :
     await asyncio.Future()
 
-def start_signalling() :
+def start_signalling(External : bool = False) :
   global glog
   global server_port
   global connections
@@ -302,7 +303,15 @@ def start_signalling() :
   global active_server
   glog.info("Starting server...")
   # run main in a new thread so that it doesn't block the main thread
-  return threading.Thread(target = asyncio.run, args = (main(),)).start()
+  if External :
+    # start unreal signalling instead
+    # run node in command line
+    # node ./unreal_signalling.js
+    # run node in python
+    output = open("unreal_signalling.log", "w")
+    subprocess.Popen(["node", "../../../PixelStreamingInfrastructure/SignallingWebServer/cirrus.js"],stdout=output,stderr=output)
+  else :
+    return threading.Thread(target = asyncio.run, args = (main(),)).start()
 
 if __name__ == "__main__" :
   asyncio.run(main())
