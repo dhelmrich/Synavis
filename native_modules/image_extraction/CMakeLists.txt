@@ -3,19 +3,22 @@
 # PROJECTNAME: ${PROJECTNAME_UPPER}
 # path: ${librarypath}
 
+get_filename_component(Folder ${CMAKE_CURRENT_LIST_DIR} NAME)
+string(REPLACE " " "_" Folder ${Folder})
+
 message("This is ${projectname}")
 
 file(GLOB TESTSOURCES ./*.cpp)
 file(GLOB TESTHEADERS ./*.h)
 
 
-add_executable(externtest
+add_executable(${Folder}
   ${TESTSOURCES}
   ${TESTHEADERS}
 )
 
 message(Warning "${ROOTDIRECTORY}/libdatachannel/include/rtc/")
-target_include_directories(externtest
+target_include_directories(${Folder}
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
   PUBLIC ${CMAKE_CURRENT_BINARY_DIR}
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../webrtcbridge
@@ -25,5 +28,5 @@ target_include_directories(externtest
 
 )
 
-target_link_libraries(externtest PRIVATE WebRTCBridge datachannel-static nlohmann_json::nlohmann_json datachannel-static)
+target_link_libraries(${Folder} PRIVATE WebRTCBridge datachannel-static nlohmann_json::nlohmann_json datachannel-static)
 

@@ -1,4 +1,6 @@
-
+#pragma once
+#ifndef WEBRTC_UNREAL_RECEIVER_HPP
+#define WEBRTC_UNREAL_RECEIVER_HPP
 // FORWARD DEFINITIONS
 #include <rtc/rtc.hpp>
 #include <json.hpp>
@@ -6,39 +8,21 @@
 #include <fstream>
 #include <compare>
 #include <functional>
-#include "UnrealReceiver/export.hpp"
 
-namespace UR
+#include "WebRTCBridge.hpp"
+#include "WebRTCBridge/export.hpp"
+
+#include "Adapter.hpp"
+
+namespace WebRTCBridge
 {
-
-enum class UNREALRECEIVER_EXPORT EConnectionState
-{
-  STARTUP = 0,
-  SIGNUP,
-  OFFERED,
-  CONNECTED,
-  VIDEO,
-  CLOSED,
-  RTCERROR,
-};
-
-enum class UNREALRECEIVER_EXPORT EClientMessageType
-{
-	QualityControlOwnership = 0u,
-	Response,
-	Command,
-	FreezeFrame,
-	UnfreezeFrame,
-	VideoEncoderAvgQP,
-	LatencyTest,
-	InitialSettings,
-};
-
-struct UNREALRECEIVER_EXPORT SaveRTP
+struct WEBRTCBRIDGE_EXPORT SaveRTP
 {
   uint32_t timestamp{0};
   uint32_t ssrc{0};
   uint16_t sequence{0};
+  uint8_t payload_type{};
+  bool has_padding{false};
   std::vector<std::byte> body;
   SaveRTP(){body.reserve(2048); }
   SaveRTP(rtc::RTP* package)
@@ -51,12 +35,16 @@ struct UNREALRECEIVER_EXPORT SaveRTP
       (std::byte*)package->getBody(),
       (std::byte*)package->getBody() + package->getSize()
     );
+    payload_type = package->payloadType();
+    has_padding = package->padding();
   }
   SaveRTP& operator=(rtc::RTP* package)
   {
     timestamp = package->timestamp();
     ssrc = package->ssrc();
     sequence = package->seqNumber();
+    payload_type = package->payloadType();
+    has_padding = package->padding();
     body.clear();
     body.insert(
       body.end(),
@@ -66,6 +54,11 @@ struct UNREALRECEIVER_EXPORT SaveRTP
     return *this;
   }
 
+  inline void decodeH264Header()
+  {
+    
+  }
+
   std::strong_ordering operator <=>(const auto& other) const {
     return (timestamp <=> other.timestamp == 0) ? sequence <=> other.sequence : timestamp<=> other.timestamp;
     //return sequence <=> other.sequence;
@@ -73,7 +66,7 @@ struct UNREALRECEIVER_EXPORT SaveRTP
 
 };
 
-class UNREALRECEIVER_EXPORT UnrealReceiver
+class WEBRTCBRIDGE_EXPORT UnrealReceiver
 {
 public:
   using json = nlohmann::json;
@@ -81,10 +74,11 @@ public:
   ~UnrealReceiver();
   virtual void RegisterWithSignalling();
   virtual int RunForever();
+  std::string SessionDescriptionProtocol();
   void Offer();
   virtual void UseConfig(std::string filename);
   inline const EConnectionState& State(){return this->state_;};
-  virtual void SetDataCallback(const std::function<void(std::vector<std::vector<unsigned char>>)>& DataCallback);
+  virtual void SetDataCallback(std::function<void(std::vector<std::vector<unsigned char>>)> DataCallback);
   virtual std::vector<std::vector<unsigned char>> EmptyCache();
 protected:
 private:
@@ -96,6 +90,7 @@ private:
   std::shared_ptr<rtc::Track> track_;
   rtc::Description::Video media_;
   rtc::WebSocket ss_;
+  rtc::WebSocket fw_;
   json config_;
   unsigned int MessagesReceived{0};
   unsigned int IceCandidatesReceived{0};
@@ -103,6 +98,7 @@ private:
   // Freeze Frame Definitions
   bool ReceivingFreezeFrame = false;
   std::vector<std::byte> JPGFrame;
+  std::string answersdp_;
 
   // RTP Package info
   uint32_t timestamp;
@@ -119,6 +115,12 @@ private:
 
   bool ReceivingFrame_;
   std::size_t framenumber = 1;
+
+  // Bridge Connection Settings
+  bool bSpawnPorts {true};
+  std::vector<int> Ports;
+
 };
 
 }
+#endif

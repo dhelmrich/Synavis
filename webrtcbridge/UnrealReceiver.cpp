@@ -1,4 +1,4 @@
-#include "UnrealReceiver.h"
+#include "UnrealReceiver.hpp"
 #include <fstream>
 #include <chrono>
 #include <thread>
@@ -8,44 +8,113 @@
 #include <bitset>
 #include <rtc/rtc.hpp>
 
-
-#include "omp.h"
-
+#ifdef _WIN32
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <winsock2.h>
+#elif __linux__
+#include <sys/socket.h>
+#include <sys/types.h> 
+#include <netinet/in.h>
 
-namespace UR{
+#endif
+
+namespace WebRTCBridge
+{
+
+
+void SetTimeout(int ms, std::function<void(void)> callback, bool invokeself = false)
+{
+  std::thread([ms, callback, invokeself]()
+  {
+    std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+    callback();
+    if (invokeself)
+    {
+      SetTimeout(ms, callback, invokeself);
+    }
+  }).detach();
+}
 
 UnrealReceiver::UnrealReceiver()
 {
   const unsigned int bitrate = 3000;
   const unsigned int maxframe = 10000;
   Messages.reserve(maxframe);
-  rtcconfig_.maxMessageSize = 100000;
+  rtcconfig_.maxMessageSize = MAX_RTP_SIZE;
   pc_ = std::make_shared<rtc::PeerConnection>(rtcconfig_);
   //OutputFile.open("input2_"+std::to_string(std::chrono::system_clock::now().time_since_epoch().count())+".h264");
-  Storage.reserve(1000000u);
-  media_ = rtc::Description::Video("video", rtc::Description::Direction::RecvOnly);
-  media_.addH264Codec(96);
-  track_ = pc_->addTrack(media_);
+  Storage.reserve(MAX_RTP_SIZE*100u);
+  //media_ = rtc::Description::Video("video", rtc::Description::Direction::RecvOnly);
+  //media_.addH264Codec(96);
+  //track_ = pc_->addTrack(media_);
 
+  
+#ifdef _WIN32
   SOCKET sock = socket(AF_INET, SOCK_DGRAM, 0);
   sockaddr_in addr;
   addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-  addr.sin_port = htons(5000);
+  addr.sin_port = htons(5332);
   addr.sin_family = AF_INET;
+#elif __linux__
+  int sock, portno;
+  socklen_t clilen;
+  char buffer[MAX_RTP_SIZE];
+  struct sockaddr_in addr, cli_addr;
+  int n;
+  sock = socket(AF_INET, SOCK_STREAM, 0);
+  portno = 5332;
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = INADDR_ANY;
+  addr.sin_port = htons(portno);
+  bind(sock, (struct sockaddr *) &addr,
+              sizeof(addr));
+  
+#endif
   
   sess_ = std::make_shared<rtc::RtcpReceivingSession>();
   track_->setMediaHandler(sess_);
   sess_->requestBitrate(bitrate);
   sess_->requestKeyframe();
-  media_.setBitrate(bitrate);
+  //media_.setBitrate(bitrate);
 
   track_->onMessage([this, sock, addr, maxframe](rtc::message_variant message) {
     if (std::holds_alternative<rtc::binary>(message))
     {
       auto package = std::get<rtc::binary>(message);
-      SaveRTP rtp = reinterpret_cast<rtc::RTP*>(package.data());
+      rtc::RTP* package_raw = reinterpret_cast<rtc::RTP*>(package.data());
+      SaveRTP rtp = package_raw;
+
+      /**
+       * FROM Stackoverflow:
+       * In RTP all H264 I-Frames (IDRs) are usualy fragmented.
+       * When you receive RTP you first must skip the header
+       * (usualy first 12 bytes) and then get to the NAL unit
+       * (first payload byte). If the NAL is 28 (1C) then it
+       * means that following payload represents one H264 IDR
+       * (I-Frame) fragment and that you need to collect all of
+       * them to reconstruct H264 IDR (I-Frame). Fragmentation
+       * occurs because of the limited MTU, and much larger IDR.
+       * One fragment can look like this:
+       *
+       * Fragment that has START BIT = 1:
+       * First byte:  [ 3 NAL UNIT BITS | 5 FRAGMENT TYPE BITS]
+       * Second byte: [ START BIT | END BIT | RESERVED BIT | 5 NAL UNIT BITS]
+       * Other bytes: [... IDR FRAGMENT DATA...]
+       *
+       * Other fragments:
+       * First byte:  [ 3 NAL UNIT BITS | 5 FRAGMENT TYPE BITS]
+       * Other bytes: [... IDR FRAGMENT DATA...]
+       *
+       * To reconstruct IDR you must collect this info:
+       *
+       * int fragment_type = Data[0] & 0x1F;
+       * int nal_type = Data[1] & 0x1F;
+       * int start_bit = Data[1] & 0x80;#
+       * int end_bit = Data[1] & 0x40;
+       *
+       *
+       *
+       */
 
       if ( Messages.size() == 0)
       {
@@ -68,31 +137,36 @@ UnrealReceiver::UnrealReceiver()
       else if (rtp.timestamp != Messages[Messages.size() - 1].timestamp)
       {
         std::sort(Messages.begin(), Messages.end());
-        std::vector<std::byte> Data;
+        std::vector<std::byte> Data = literalbytes(1,0);
+        //std::vector<std::byte> Data;
         bool PackageLoss = false;
-
         for (unsigned int idx = 0; idx < Messages.size(); ++idx)
         {
           const auto& m = Messages[idx];
-          if (idx > 0 && Messages[idx - 1l].sequence != Messages[idx].sequence - 1)
-          {
-            std::cout << "Frame incomplete: " << Messages[idx - 1l].sequence << " preceeds " << Messages[idx].sequence << std::endl;
-            PackageLoss = true;
-            break;
-          }
-          Data.insert(Data.end(),m.body.begin(),m.body.end());
+          // temp fix for rollover without (uint)(-1) being hit
+          //if (idx > 0 && Messages[idx - 1l].sequence != Messages[idx].sequence - 1 && Messages[idx].sequence != 0)
+          //{
+          //  std::cout << "Frame incomplete: " << Messages[idx - 1l].sequence << " preceeds " << Messages[idx].sequence << std::endl;
+          //  PackageLoss = true;
+          //  break;
+          //}
+          //Data.insert(Data.end(),m.body.begin(),m.body.end());
         }
         if(!PackageLoss)
         {
           Storage.push_back(std::move(Data));
           framenumber++;
         }
-        Messages.empty();
+        Messages.clear();
       }
-      
+
+#ifdef _WIN32
       sendto(sock, reinterpret_cast<const char*>(package.data()), int(package.size()), 0,
         reinterpret_cast<const struct sockaddr*>(&addr), sizeof(addr));
-
+#elif __linux__
+      write(sock,reinterpret_cast<const void*>(package.data()),package.size());
+#endif
+      
       Messages.push_back(std::move(rtp));
 
       //std::cout << package.size() << std::endl;
@@ -106,8 +180,9 @@ UnrealReceiver::UnrealReceiver()
       //OutputFile.write((char*)package.data(), package.size());
     }
   });
-
-  vdc_ = pc_->createDataChannel("video");
+  rtc::DataChannelInit info;
+  info.negotiated = false;
+  vdc_ = pc_->createDataChannel("video",info);
   vdc_->onOpen([this]()
   {
     std::cout << "Received an open event on the data channel!" << std::endl;
@@ -133,11 +208,6 @@ UnrealReceiver::UnrealReceiver()
         std::vector<std::byte> buffer = std::get<rtc::binary>(message);
         if (ReceivingFreezeFrame)
         {
-
-          // this is a workaround, because the compiler is not able to
-          // std::vector::insert the rtc::binary into itself, presumably
-          // because namespace wrapping and using directives.
-          //TRANSFORM(std::byte,message, JPGFrame);
           JPGFrame.insert(JPGFrame.end(), buffer.begin(), buffer.end());
           if (ReceivedFrame())
           {
@@ -201,15 +271,6 @@ UnrealReceiver::UnrealReceiver()
   });
   vdc_->onAvailable([this]()
   {
-      
-    //std::cout << "Received an available event on the data channel!" << std::endl;
-
-
-    //auto potential = vdc_->receive();
-    //if (potential.has_value())
-    //{
-    //}
-
   });
   pc_->onGatheringStateChange([this](auto state) {
     std::cout << "We switched ice gathering state to " << state << std::endl;
@@ -298,7 +359,8 @@ void UnrealReceiver::RegisterWithSignalling()
         {
           std::cout << "I am parsing the answer." << std::endl;
           std::string sdp = content["sdp"];
-          media_.parseSdpLine(sdp);
+          answersdp_ = sdp;
+          //media_.parseSdpLine(sdp);
           //std::cout << sdp << std::endl;
           pc_->setRemoteDescription(rtc::Description(sdp,"answer"));
         }
@@ -311,7 +373,6 @@ void UnrealReceiver::RegisterWithSignalling()
           IceCandidatesReceived++;
         }
       }
-      // 
     }
   });
   ss_.onClosed([this]()
@@ -347,7 +408,6 @@ void UnrealReceiver::Offer()
     std::cout << "We have a description value" << std::endl;
     rtc::Description desc = *testdescr;
     auto sdp = desc.generateSdp("\n");
-    //std::cout << sdp << std::endl;
     json outmessage = {{"type","offer"},{"sdp",sdp}};
     ss_.send(outmessage.dump());
   }
@@ -388,7 +448,23 @@ int UnrealReceiver::RunForever()
   return EXIT_SUCCESS;
 }
 
-void UnrealReceiver::SetDataCallback(const std::function<void(std::vector<std::vector<unsigned char>>)>& DataCallback)
+std::string UnrealReceiver::SessionDescriptionProtocol()
+{
+  auto testdescr = pc_->localDescription();
+  if(testdescr.has_value())
+  {
+    rtc::Description desc = *testdescr;
+    auto sdp = desc.generateSdp("\n");
+    return sdp;
+  }
+  else
+  {
+    return "";
+  }
+  //return answersdp_;
+}
+
+void UnrealReceiver::SetDataCallback(std::function<void(std::vector<std::vector<unsigned char>>)> DataCallback)
 {
   std::cout << "Data Callback with pointer to " << &DataCallback << std::endl;
   DataCallback_ = DataCallback;
@@ -403,9 +479,8 @@ std::vector<std::vector<unsigned char>> UnrealReceiver::EmptyCache()
     const std::vector<std::byte>& frame = Storage[i];
     Data[i].assign(reinterpret_cast<const unsigned char*>(frame.data()), reinterpret_cast<const unsigned char*>(frame.data())+frame.size());
   }
-  Storage.empty();
+  Storage.clear();
   return Data;
-
 }
 
 }

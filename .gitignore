@@ -36,3 +36,10 @@ build*/*
 *.vs
 *.sln
 *.obj
+*.zip
+out*/*
+.vs/*
+.vscode/*
+unix/*
+node*/*
+__pycache__/*
