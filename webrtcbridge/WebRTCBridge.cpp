@@ -225,6 +225,16 @@ bool WebRTCBridge::BridgeSocket::Connect()
     
 }
 
+void WebRTCBridge::BridgeSocket::Disconnect()
+{
+#ifdef _WIN32
+  closesocket(Sock);
+  WSACleanup();
+#elif defined __linux__
+  shutdown(Sock,2);
+#endif
+}
+
 int WebRTCBridge::BridgeSocket::ReadSocketFromBinding()
 {
 #ifdef _WIN32

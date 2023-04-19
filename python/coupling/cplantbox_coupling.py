@@ -41,7 +41,7 @@ import signalling_server as ss
 
 #make the data connector
 dc = rtc.DataConnector()
-dc.SetConfig("config.json")
+dc.SetConfigFile("config.json")
 dc.StartSignalling()
 dc.SetDataCallback(data_callback)
 dc.SetMessageCallback(message_callback)

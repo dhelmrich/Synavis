@@ -144,7 +144,7 @@ namespace WebRTCBridge
     // it will automatically call either bind or connect
     // remember that this class is connectionless
     bool Connect();
-
+    void Disconnect();
 
     int ReadSocketFromBinding();
 

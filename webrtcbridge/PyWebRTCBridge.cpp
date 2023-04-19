@@ -147,6 +147,15 @@ namespace WebRTCBridge{
 
   PYBIND11_MODULE(PyWebRTCBridge, m)
   {
+    py::enum_<EConnectionState>(m, "EConnectionState")
+      .value("STARTUP", EConnectionState::STARTUP)
+      .value("SIGNUP", EConnectionState::SIGNUP)
+      .value("CONNECTED", EConnectionState::CONNECTED)
+      .value("VIDEO", EConnectionState::VIDEO)
+      .value("CLOSED", EConnectionState::CLOSED)
+      .value("RTCERROR", EConnectionState::RTCERROR)
+      .export_values()
+    ;
     
     py::class_<UnrealReceiver, PyReceiver, std::shared_ptr<UnrealReceiver>>(m, "UnrealReceiver")
       .def(py::init<>())
@@ -178,6 +187,7 @@ namespace WebRTCBridge{
       .def(py::init<>())
       .def("SendData", &DataConnector::SendData, py::arg("Data"))
       .def("SendString", &DataConnector::SendString, py::arg("Message"))
+      .def("SendJSON", &DataConnector::SendJSON, py::arg("Message"))
       .def("SetDataCallback", &DataConnector::SetDataCallback,py::arg("Callback"))
       .def("SetMessageCallback", &DataConnector::SetMessageCallback,py::arg("Callback"))
       .def("SetConfig", &DataConnector::SetConfig,py::arg("Config"))
@@ -188,12 +198,27 @@ namespace WebRTCBridge{
       .def("GetTakeFirstStep",&DataConnector::GetTakeFirstStep)
       .def("SetBlock", &DataConnector::SetBlock,py::arg("Block"))
       .def("IsBlocking",&DataConnector::IsBlocking)
+      .def("GetState", &DataConnector::GetState)
     ;
 
     py::class_<MediaReceiver, PyMediaReceiver<>, std::shared_ptr<MediaReceiver>>(m, "MediaReceiver")
       .def(py::init<>())
       .def("SetFrameReceptionCallback", &MediaReceiver::SetFrameReceptionCallback,py::arg("Callback"))
       .def("SetOnTrackOpenCallback", &MediaReceiver::SetOnTrackOpenCallback,py::arg("Callback"))
+      .def("SendData", &MediaReceiver::SendData, py::arg("Data"))
+      .def("SendString", &MediaReceiver::SendString, py::arg("Message"))
+      .def("SendJSON", &MediaReceiver::SendJSON, py::arg("Message"))
+      .def("SetDataCallback", &MediaReceiver::SetDataCallback, py::arg("Callback"))
+      .def("SetMessageCallback", &MediaReceiver::SetMessageCallback, py::arg("Callback"))
+      .def("SetConfig", &MediaReceiver::SetConfig, py::arg("Config"))
+      .def("SetConfigFile", &MediaReceiver::SetConfigFile, py::arg("ConfigFile"))
+      .def("StartSignalling", &MediaReceiver::StartSignalling)
+      .def("IsRunning", &MediaReceiver::IsRunning)
+      .def("SetTakeFirstStep", &MediaReceiver::SetTakeFirstStep, py::arg("SetTakeFirstStep"))
+      .def("GetTakeFirstStep", &MediaReceiver::GetTakeFirstStep)
+      .def("SetBlock", &MediaReceiver::SetBlock, py::arg("Block"))
+      .def("IsBlocking", &MediaReceiver::IsBlocking)
+      .def("GetState", &MediaReceiver::GetState)
     ;
 
     py::enum_<rtc::PeerConnection::GatheringState>(m, "GatheringState")

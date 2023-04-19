@@ -21,10 +21,25 @@ import WebRTCBridge as rtc
 HEIGHT = 512
 WIDTH = 512
 
+# a callback function for the data connector
+def message_callback(msg) :
+  global message_buffer
+  global message_ready
+  message_buffer = msg
+  message_ready = True
+
+# a callback function for the data connector
+def data_callback(data) :
+  print("Received data: ", data)
+
+
 Media = rtc.MediaReceiver()
+Media.SetConfigFile("config.json")
+Media.StartSignalling()
+Media.SetDataCallback(data_callback)
+Media.SetMessageCallback(message_callback)
 
-
-BucketSize = 200
+BucketSize = 50
 Batch = [{
   "img":[],
   "seg":[]
@@ -88,7 +103,6 @@ class UnrealData(tf.keras.utils.Sequence):
     if BatchDone :
       if not Halt :
         Halt = True
-        
       print("Noticed that batch is done!")
       t = UseBatch
       UseBatch = BatchID
