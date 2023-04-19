@@ -54,8 +54,6 @@ while not Media.GetState() == rtc.EConnectionState.CONNECTED:
 
 print("Starting")
 
-
 #while True:
 #  time.sleep(0.1)
 #  Media.SendJSON({"type":"info", "frametime":0})
-
