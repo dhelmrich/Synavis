@@ -85,12 +85,11 @@ WebRTCBridge::DataConnector::DataConnector()
     {
       auto data = std::get<rtc::binary>(messageordata);
       // try parse string
-      std::string message(data.size() / 2,'\0');
-      for (int i = 1; i < data.size(); i += 2)
-      {
-        message[i / 2] = static_cast<char>(data[i]);
-      }
-      if(message.at(0) == '{')
+      std::string message(reinterpret_cast<char*>(data.data()+1), data.size()-1);
+
+      // check if the string is readable
+      bool is_readable = std::ranges::all_of(message.begin(), message.end(), &isprint);
+      if(is_readable)
       {
         if (MessageReceptionCallback.has_value())
           MessageReceptionCallback.value()(message);
