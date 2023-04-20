@@ -2,22 +2,18 @@
 
 C++ WebRTC Bridge for Unreal Engine PixelStreaming
 
-Unreal Engine released PixelStreaming with its 4.27 version. I want to be able to receive the images and use them as 2D numpy arrays for batch assembly in machine learning.
-To test this project, you need to have a PixelStreaming project running in the background.
+Unreal Engine released PixelStreaming with its 4.27 version. It enables remote visualization for small-frontend devices.
 
-For my testing purposes, I have a very simple project of the player pawn following a spline, rendered in only 1024x768@30FPS s.t. my computer doesn't notice it much.
-
-Many aspects are still hardcoded as this project is in progress. The ultimate goal is to use this bridge as a lightweight programm informing Pytorch or Tensorflow batches on our compute cluster.
+Synavis enables the coupling of simulation and ML tools to the Unreal Engine by leveraging PixelStreaming as data source.
 
 ## Progress so far
 
-I have, with the help of Tensorworks' WebRTC Bridge (https://github.com/TensorWorks/Unreal-PixelStreaming-RTP-Bridge), libdatachannel (subproject), and the Unreal Engine PixelStreaming sample, implemented this repo so far.
-I have introduced Python bindings for the functions so that I can easier prototype decoding.
-I can verify, with the relay over the old winsocket, that the frames are received as planned.
+This Project includes a bridging ability, coupling ability and some means of 
 
 ## Open Issues
 
-We have tested a running pipeline with one-sided image provision and a Gstreamer/OpenCV decoding as training sequence. THis works well and we have tested this for depth estimation from monocular images.
+- The signalling server I programmed is still encountering issues with setting up a connection. Investigation is in progress.
+- The framework does not base of libwebrtc and thus does not offer decoding capabilities itself. This is intentional for our cluster setup as we provide functionality there.
 
 ## Collaboration
 
