@@ -87,12 +87,15 @@ WebRTCBridge::DataConnector::DataConnector()
       // try parse string
       std::string message(reinterpret_cast<char*>(data.data()+1), data.size()-1);
 
-      // check if the string is readable
-      bool is_readable = std::ranges::all_of(message.begin(), message.end(), &isprint);
-      if(is_readable)
+      // find readable json subset
+      auto first_lbrace = message.find_first_of('{');
+      auto last_rbrace = message.find_last_of('}');
+
+      if(first_lbrace < message.length() && last_rbrace < message.length() 
+      && std::ranges::all_of(message.begin() + first_lbrace, message.begin() + last_rbrace, &isprint))
       {
         if (MessageReceptionCallback.has_value())
-          MessageReceptionCallback.value()(message);
+          MessageReceptionCallback.value()(message.substr(first_lbrace, last_rbrace - first_lbrace + 1));
       }
       else if (DataReceptionCallback.has_value())
         DataReceptionCallback.value()(data);

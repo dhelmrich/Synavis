@@ -7,12 +7,13 @@ import threading
 import time
 import sys
 import os
+import json
 
 # WebRTCBridge: Find build
 path = "../../"
 # if windows
 if os.name == 'nt' :
-  path = path + "build_workwin/webrtcbridge/Release/"
+  path = path + "build/webrtcbridge/Release/"
   print(path)
 else :
   path = path + "build/"
@@ -25,13 +26,27 @@ from signalling_server import start_signalling
 HEIGHT = 512
 WIDTH = 512
 
+message_buffer = []
+
+# a method to reset the message buffer
+def reset_message() :
+  global message_buffer
+  message_buffer = []
+
+# a method to get the next message from the buffer
+def get_message() :
+  global message_buffer
+  while len(message_buffer) == 0 :
+    time.sleep(0.1)
+  message = message_buffer.pop(0)
+  return message
+
 # a callback function for the data connector
 def message_callback(msg) :
-  print("message: ", msg)
   global message_buffer
-  global message_ready
-  message_buffer = msg
-  message_ready = True
+  print("Received message: ", msg)
+  # decode from utf-8
+  message_buffer.append(str(msg))
 
 # a callback function for the data connector
 def data_callback(data) :
@@ -54,6 +69,22 @@ while not Media.GetState() == rtc.EConnectionState.CONNECTED:
 
 print("Starting")
 
-#while True:
-#  time.sleep(0.1)
-#  Media.SendJSON({"type":"info", "frametime":0})
+time.sleep(1)
+
+
+Media.SendJSON({"type":"query"})
+answer = get_message()
+
+print("In main thread: ", answer)
+# try parse json
+answer = json.loads(answer)
+# get a random entry form answer["data"]
+entry = answer["data"][np.random.randint(0, len(answer["data"]))]
+# send the entry to the server with a query again
+msg = {"type":"query", "object":entry}
+print("Sending: ", msg)
+Media.SendJSON(msg)
+answer = get_message()
+print("In main thread: ", answer)
+
+

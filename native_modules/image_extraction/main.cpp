@@ -40,6 +40,7 @@ int main(int args, char** argv)
 
   bool bWantData = false;
   json Data;
+  std::vector<std::string> Messages;
 
 
   json Config = { {"SignallingIP","localhost"}, {"SignallingPort", 8080} };
@@ -47,20 +48,17 @@ int main(int args, char** argv)
   std::cout << "Fetching IP, " << Config["SignallingIP"].get<std::string>() << std::endl;
   dc->SetConfig(Config);
   dc->StartSignalling();
-  dc->SetMessageCallback([&bWantData](auto message)
+  dc->SetMessageCallback([&bWantData,&Messages](auto message)
     {
+      Messages.push_back(message);
+      std::cout << "Received message: " << message << std::endl;
       if (bWantData)
       {
         bWantData = false;
       }
-      std::cout << "Received message: " << message << std::endl;
     });
   dc->SetDataCallback([&bWantData, &Data](auto data)
     {
-      if (bWantData)
-      {
-        bWantData = false;
-      }
       const char* dataPtr = reinterpret_cast<const char*>(data.data());
       std::string_view dataView(dataPtr, data.size());
       // double check if this might still be a json object
@@ -71,7 +69,11 @@ int main(int args, char** argv)
       }
       catch (...)
       {
-        std::cout << "Received data: " << data.size() << std::endl;
+        std::cout << "Received data: " << dataView << std::endl;
+      }
+      if (bWantData)
+      {
+        bWantData = false;
       }
     });
   while (dc->GetState() != WebRTCBridge::EConnectionState::CONNECTED)
@@ -82,18 +84,34 @@ int main(int args, char** argv)
   dc->PrintCommunicationData();
   //dc->SendString("test");
 
-  json Command = { {"type","console"}, {"command", "t.maxFPS 60"} };
+  json Command = { {"type","query"} };
 
   // test all byte values
   dc->DataChannelByte = 50_b;
   std::cout << "Sending command: " << Command.dump() << std::endl;
   dc->SendJSON(Command);
-  bWantData = true;
   std::cout << "Waiting for any answer" << std::endl;
-  while (bWantData)
+  while (Messages.size() == 0)
   {
-    std::this_thread::sleep_for(1s);
+    std::this_thread::sleep_for(100ms);
   }
-  std::this_thread::sleep_for(10s);
+  // remove last message
+  auto message = Messages.back();
+  Messages.clear();
+  json j = json::parse(message);
+  // get a random element from the array j["data"]
+  auto randomElement = j["data"].at(rand() % j["data"].size());
+  // send a query for the random element
+  json Query = { {"type","query"}, {"object",randomElement} };
+  std::string debug_string_rep = Query.dump();
+  std::cout << "Sending query: " << debug_string_rep << std::endl;
+  dc->SendJSON(Query);
+  while (Messages.size() == 0)
+  {
+    std::this_thread::sleep_for(100ms);
+  }
+  auto message2 = Messages.back();
+  std::cout << "Received message: " << message2 << std::endl;
+
   return EXIT_SUCCESS;
 }
