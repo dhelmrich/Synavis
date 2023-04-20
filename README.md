@@ -8,12 +8,16 @@ Synavis enables the coupling of simulation and ML tools to the Unreal Engine by 
 
 ## Progress so far
 
-This Project includes a bridging ability, coupling ability and some means of 
+This Project includes a bridging ability, coupling ability and some means of steering the framework.
+
+- DataConnector and MediaReceiver: Connect DL Frameworks and Simulations to UE and interact with the scene
+- WebRTCBridge: Setup connections via a bridged network (like a TURN server) via port relays. This is intended for HPC systems but might be used together with Putty to bridge to client PCs
 
 ## Open Issues
 
 - The signalling server I programmed is still encountering issues with setting up a connection. Investigation is in progress.
 - The framework does not base of libwebrtc and thus does not offer decoding capabilities itself. This is intentional for our cluster setup as we provide functionality there.
+- There are test cases missing that still need to be added, those will also introduce robustness and remove ambiguity.
 
 ## Collaboration
 
