@@ -7,6 +7,7 @@ from colorama import init as colorama_init
 from colorama import Fore, Back, Style
 import threading
 import sys
+import ast
 
 ws.debug = True
 
@@ -19,6 +20,13 @@ class Logger() :
   def __init__ (self):
     colorama_init()
     self.light_mode = False
+    # also open a log file
+    timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
+    self.log_file = open("log_"+timestamp+".txt", "w")
+  #enddef
+  # desctructor
+  def __del__(self) :
+    self.log_file.close()
   #enddef
   def set_light_mode(self, light_mode) :
     self.light_mode = light_mode
@@ -30,6 +38,7 @@ class Logger() :
   #enddef
   def log(self, message, color = Fore.WHITE) :
     print(color + message + Style.RESET_ALL)
+    self.log_file.write(message + "\n")
   #enddef
   def info(self, message) :
     self.log(message, (Fore.BLACK if self.light_mode else Fore.WHITE))
@@ -247,6 +256,9 @@ async def connection(websocket, path) :
     glog.info("New active server: " + str(connection))
     active_server = connection
   #endif
+  # wait for a tiny moment and then send config
+  #await asyncio.sleep(0.1)
+  await connection.send(json.dumps({"type": "config", "peerConnectionOptions": { }}))
   while True :
     try :
       message = await asyncio.wait_for(websocket.recv(), timeout = 1.0)
@@ -292,7 +304,10 @@ async def main() :
       glog.set_light_mode(True)
   # start the signalling server
   glog.info("Starting server...")
-  async with ws.serve(connection, target_ip, server_port), ws.serve(connection, target_ip, client_port) :
+  async with ws.serve(connection, target_ip, server_port, compression = None) as ServerConnection, \
+   ws.serve(connection, target_ip, client_port, compression = None) as ClientConnection:
+    ServerConnection.ping_interval = None
+    ClientConnection.ping_interval = None
     await asyncio.Future()
 
 def start_signalling(External : bool = False) :
