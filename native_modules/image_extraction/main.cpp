@@ -84,6 +84,8 @@ int main(int args, char** argv)
   dc->PrintCommunicationData();
   //dc->SendString("test");
 
+  std::this_thread::sleep_for(2s);
+
   json Command = { {"type","query"} };
 
   // test all byte values

@@ -8,6 +8,7 @@ from colorama import Fore, Back, Style
 import threading
 import sys
 import ast
+import os
 
 ws.debug = True
 
@@ -21,7 +22,13 @@ class Logger() :
     colorama_init()
     self.light_mode = False
     # also open a log file
+    i = 0
     timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
+    fname = "log_"+timestamp+"_"+str(i)+".txt"
+    # check if the file exists
+    while os.path.exists(fname) :
+      i += 1
+      fname = "log_"+timestamp+"_"+str(i)+".txt"
     self.log_file = open("log_"+timestamp+".txt", "w")
   #enddef
   # desctructor

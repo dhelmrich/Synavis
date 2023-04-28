@@ -125,7 +125,7 @@ namespace WebRTCBridge{
   {
     using T::T;
     using T::json;
-
+    
   };
 
   template < typename T = BridgeSocket > class PyBridgeSocket : public T
@@ -199,6 +199,8 @@ namespace WebRTCBridge{
       .def("SetBlock", &DataConnector::SetBlock,py::arg("Block"))
       .def("IsBlocking",&DataConnector::IsBlocking)
       .def("GetState", &DataConnector::GetState)
+      .def("SendBuffer", &DataConnector::SendBuffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
+      .def("SendGeometry", &DataConnector::SendGeometry, py::arg("Vertices"), py::arg("Indices"), py::arg("Normals"), py::arg("Name"), py::arg("UVs"), py::arg("Tangents"))
     ;
 
     py::class_<MediaReceiver, PyMediaReceiver<>, std::shared_ptr<MediaReceiver>>(m, "MediaReceiver")

@@ -50,19 +50,44 @@ template < typename T, typename... Args > std::size_t InsertIntoBinary(rtc::bina
   return InsertIntoBinary(Binary, offset + sizeof(Data), args...);
 }
 
+// a type trait for checking whether a container can be converted to a pointer
+// this is to avoid the unfortunate type confusion in MSVC about rtc::binary
+// even if it is a std::vector<uint8_t> but it won't convert the types to one another
+template < typename T, typename _ = void >
+struct is_pointer_convertible : std::false_type
+{
+};
+template < typename ... Runoff >
+struct is_pointer_convertible_helper{};
+
+template < typename T >
+struct is_pointer_convertible<T,
+std::conditional_t<
+false,
+is_pointer_convertible_helper<
+   typename T::value_type,
+   typename T::size_type,
+   decltype(std::declval<T>().data()),
+   decltype(std::declval<T>().size())
+>, void >> : public std::true_type
+{
+};
+
 // a function to encode a rtc::binary object into a base64 string
 // adapted from https://stackoverflow.com/questions/180947/base64-decode-snippet-in-c
-static std::string Encode64(const rtc::binary& Data)
+template < typename T >
+static std::string_view Encode64(const T& Data)
 {
+  // check if the data is convertible to a pointer
+  static_assert(is_pointer_convertible<T>::value, "Data must be convertible to a pointer");
   // convert data to string of bytes
   std::string_view strdata(reinterpret_cast<const char*>(Data.data()), Data.size());
   // base64 encoding table
   constexpr char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   // compute the size of the encoded string
   std::size_t encoded_length = 4 * ((strdata.size() + 2) / 3);
-  std::string result(encoded_length, '\0');
+  char* c = new char[encoded_length];
   std::size_t i;
-  char* c = const_cast<char*>(result.c_str());
   for (i = 0; i < strdata.size() - 2; i += 3)
   {
     *c++ = table[(strdata[i] >> 2) & 0x3F];
@@ -85,9 +110,21 @@ static std::string Encode64(const rtc::binary& Data)
     }
     *c++ = '=';
   }
-  return result;
+  // return the encoded string as a string_view because this way the data
+  // is not deleted when the scope ends in which this function is called
+  return std::string_view(c, encoded_length);
 }
 
+// a function to retrieve the encoded size of a buffer for base64 encoding
+template < typename T >
+static size_t EncodedSize(const T& Data)
+{
+   // check if the data is convertible to a pointer
+  static_assert(is_pointer_convertible<T>::value, "Data must be convertible to a pointer");
+  // compute the size of the encoded string
+  std::size_t encoded_length = 4 * ((((Data.size() * sizeof(T))) + 2) / 3);
+  return encoded_length;
+}
 
 namespace WebRTCBridge
 {

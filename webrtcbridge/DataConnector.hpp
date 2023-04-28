@@ -28,6 +28,9 @@ public:
   virtual void SendData(rtc::binary Data);
   void SendString(std::string Message);
   void SendJSON(json Message);
+  void SendBuffer(const std::span<const uint8_t>& Buffer, std::string Name, std::string Format = "raw");
+  void SendGeometry(const std::vector<float>& Vertices, const std::vector<uint32_t>& Indices, const std::vector<float>& Normals, std::string Name,
+                    std::optional<std::vector<float>> UVs = std::nullopt, std::optional<std::vector<float>> Tangents = std::nullopt);
   EConnectionState GetState();
   std::optional<std::function<void(rtc::binary)>> DataReceptionCallback;
   std::optional<std::function<void(std::string)>> MessageReceptionCallback;

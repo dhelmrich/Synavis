@@ -21,7 +21,7 @@ sys.path.append(path)
 import PyWebRTCBridge as rtc
 from signalling_server import start_signalling
 
-#start_signalling(True)
+#start_signalling(False)
 
 HEIGHT = 512
 WIDTH = 512
@@ -71,20 +71,25 @@ print("Starting")
 
 time.sleep(1)
 
+reset_message()
+
 
 Media.SendJSON({"type":"query"})
 answer = get_message()
+ 
+print("In main thread: ", answer)
+while True:
+  time.sleep(1)
 
-print("In main thread: ", answer)
-# try parse json
-answer = json.loads(answer)
-# get a random entry form answer["data"]
-entry = answer["data"][np.random.randint(0, len(answer["data"]))]
-# send the entry to the server with a query again
-msg = {"type":"query", "object":entry}
-print("Sending: ", msg)
-Media.SendJSON(msg)
-answer = get_message()
-print("In main thread: ", answer)
+ # try parse json
+# answer = json.loads(answer)
+# # get a random entry form answer["data"]
+# entry = answer["data"][np.random.randint(0, len(answer["data"]))]
+# # send the entry to the server with a query again
+# msg = {"type":"query", "object":entry}
+# print("Sending: ", msg)
+# Media.SendJSON(msg)
+# answer = get_message()
+# print("In main thread: ", answer)
 
 

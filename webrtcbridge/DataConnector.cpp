@@ -10,6 +10,7 @@
 #include <Windows.h>
 #endif
 
+#undef min
 
 inline constexpr std::byte operator "" _b(unsigned long long i) noexcept
 {
@@ -22,18 +23,18 @@ WebRTCBridge::DataConnector::DataConnector()
   PeerConnection->onGatheringStateChange([this](auto state)
     {
       std::cout << Prefix << "Gathering state changed" << state << std::endl;
-  switch (state)
-  {
-  case rtc::PeerConnection::GatheringState::Complete:
-    std::cout << Prefix << "State switched to complete" << std::endl;
-    break;
-  case rtc::PeerConnection::GatheringState::InProgress:
-    std::cout << Prefix << "State switched to in progress" << std::endl;
-    break;
-  case rtc::PeerConnection::GatheringState::New:
-    std::cout << Prefix << "State switched to new connection" << std::endl;
-    break;
-  }
+      switch (state)
+      {
+      case rtc::PeerConnection::GatheringState::Complete:
+        std::cout << Prefix << "State switched to complete" << std::endl;
+        break;
+      case rtc::PeerConnection::GatheringState::InProgress:
+        std::cout << Prefix << "State switched to in progress" << std::endl;
+        break;
+      case rtc::PeerConnection::GatheringState::New:
+        std::cout << Prefix << "State switched to new connection" << std::endl;
+        break;
+      }
     });
   PeerConnection->onLocalCandidate([this](auto candidate)
     {
@@ -45,20 +46,20 @@ WebRTCBridge::DataConnector::DataConnector()
   PeerConnection->onDataChannel([this](auto datachannel)
     {
       std::cout << Prefix << "I received a channel I did not ask for" << std::endl;
-  datachannel->onOpen([this]()
-    {
-      std::cout << Prefix << "THEIR DataChannel connection is setup!" << std::endl;
-    });
+      datachannel->onOpen([this]()
+        {
+          std::cout << Prefix << "THEIR DataChannel connection is setup!" << std::endl;
+        });
     });
   PeerConnection->onTrack([this](auto track)
     {
       std::cout << Prefix << "I received a track I did not ask for" << std::endl;
-  track->onOpen([this, track]()
-    {
-      std::cout << Prefix << "Track connection is setup!" << std::endl;
-  track->send(rtc::binary({ (std::byte)(EClientMessageType::QualityControlOwnership) }));
-  track->send(rtc::binary({ std::byte{72},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0} }));
-    });
+      track->onOpen([this, track]()
+        {
+          std::cout << Prefix << "Track connection is setup!" << std::endl;
+          track->send(rtc::binary({ (std::byte)(EClientMessageType::QualityControlOwnership) }));
+          track->send(rtc::binary({ std::byte{72},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0} }));
+        });
     });
   PeerConnection->onSignalingStateChange([this](auto state)
     {
@@ -67,10 +68,10 @@ WebRTCBridge::DataConnector::DataConnector()
   PeerConnection->onStateChange([this](rtc::PeerConnection::State state)
     {
       std::cout << Prefix << "State changed: " << state << std::endl;
-  if (state == rtc::PeerConnection::State::Failed && OnFailedCallback.has_value())
-  {
-    OnFailedCallback.value()();
-  }
+      if (state == rtc::PeerConnection::State::Failed && OnFailedCallback.has_value())
+      {
+        OnFailedCallback.value()();
+      }
     });
   SignallingServer = std::make_shared<rtc::WebSocket>();
   DataChannel = PeerConnection->createDataChannel("DataConnectionChannel");
@@ -81,32 +82,31 @@ WebRTCBridge::DataConnector::DataConnector()
     });
   DataChannel->onMessage([this](auto messageordata)
     {
-    if (std::holds_alternative<rtc::binary>(messageordata))
-    {
-      auto data = std::get<rtc::binary>(messageordata);
-      // try parse string
-      std::string message(reinterpret_cast<char*>(data.data()+1), data.size()-1);
-
-      // find readable json subset
-      auto first_lbrace = message.find_first_of('{');
-      auto last_rbrace = message.find_last_of('}');
-
-      if(first_lbrace < message.length() && last_rbrace < message.length() 
-      && std::ranges::all_of(message.begin() + first_lbrace, message.begin() + last_rbrace, &isprint))
+      if (std::holds_alternative<rtc::binary>(messageordata))
       {
-        if (MessageReceptionCallback.has_value())
-          MessageReceptionCallback.value()(message.substr(first_lbrace, last_rbrace - first_lbrace + 1));
+        auto data = std::get<rtc::binary>(messageordata);
+        // try parse string
+        std::string message(reinterpret_cast<char*>(data.data() + 1), data.size() - 1);
+        // find readable json subset
+        auto first_lbrace = message.find_first_of('{');
+        auto last_rbrace = message.find_last_of('}');
+
+        if (first_lbrace < message.length() && last_rbrace < message.length()
+          && std::ranges::all_of(message.begin() + first_lbrace, message.begin() + last_rbrace, &isprint))
+        {
+          if (MessageReceptionCallback.has_value())
+            MessageReceptionCallback.value()(message.substr(first_lbrace, last_rbrace - first_lbrace + 1));
+        }
+        else if (DataReceptionCallback.has_value())
+          DataReceptionCallback.value()(data);
       }
-      else if (DataReceptionCallback.has_value())
-        DataReceptionCallback.value()(data);
-    }
-    else
-    {
-      auto message = std::get<std::string>(messageordata);
-      if (MessageReceptionCallback.has_value())
-        MessageReceptionCallback.value()(message);
-    }
-  });
+      else
+      {
+        auto message = std::get<std::string>(messageordata);
+        if (MessageReceptionCallback.has_value())
+          MessageReceptionCallback.value()(message);
+      }
+    });
   DataChannel->onError([this](std::string error)
     {
       std::cerr << "DataChannel error: " << error << std::endl;
@@ -127,37 +127,37 @@ WebRTCBridge::DataConnector::DataConnector()
   DataChannel->onClosed([this]()
     {
       std::cout << Prefix << "DataChannel is CLOSED again" << std::endl;
-  this->state_ = EConnectionState::CLOSED;
-  if (OnClosedCallback.has_value())
-  {
-    OnClosedCallback.value()();
-  }
+      this->state_ = EConnectionState::CLOSED;
+      if (OnClosedCallback.has_value())
+      {
+        OnClosedCallback.value()();
+      }
     });
 
   SignallingServer->onOpen([this]()
     {
       state_ = EConnectionState::SIGNUP;
-  std::cout << Prefix << "Signalling server connected" << std::endl;
-  if (TakeFirstStep)
-  {
-    json role_request = { {"type","request"},{"request","role"} };
-    std::cout << Prefix << "Attempting to prompt for role, this will fail if the server is not configured to do so" << std::endl;
-    //SignallingServer->send(role_request.dump());
-  }
-  if (TakeFirstStep && PeerConnection->localDescription().has_value())
-  {
-    json offer = { {"type","offer"}, {"endpoint", "data"},{"sdp",PeerConnection->localDescription().value()} };
-    if (PeerConnection->hasMedia())
-    {
-      std::cout << "PeerConnection has Media!" << std::endl;
-    }
-    else
-    {
-      std::cout << "PeerConnection has no Media!" << std::endl;
-    }
-    SignallingServer->send(offer.dump());
-    state_ = EConnectionState::OFFERED;
-  }
+      std::cout << Prefix << "Signalling server connected" << std::endl;
+      if (TakeFirstStep)
+      {
+        json role_request = { {"type","request"},{"request","role"} };
+        std::cout << Prefix << "Attempting to prompt for role, this will fail if the server is not configured to do so" << std::endl;
+        //SignallingServer->send(role_request.dump());
+      }
+      if (TakeFirstStep && PeerConnection->localDescription().has_value())
+      {
+        json offer = { {"type","offer"}, {"endpoint", "data"},{"sdp",PeerConnection->localDescription().value()} };
+        if (PeerConnection->hasMedia())
+        {
+          std::cout << "PeerConnection has Media!" << std::endl;
+        }
+        else
+        {
+          std::cout << "PeerConnection has no Media!" << std::endl;
+        }
+        SignallingServer->send(offer.dump());
+        state_ = EConnectionState::OFFERED;
+      }
     });
   SignallingServer->onMessage([this](auto messageordata)
     {
@@ -324,16 +324,16 @@ WebRTCBridge::DataConnector::DataConnector()
   SignallingServer->onClosed([this]()
     {
       state_ = EConnectionState::CLOSED;
-  auto unix_time = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+      auto unix_time = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 
-  std::cout << Prefix << "Signalling server was closed at timestamp " << unix_time << std::endl;
+      std::cout << Prefix << "Signalling server was closed at timestamp " << unix_time << std::endl;
 
     });
   SignallingServer->onError([this](std::string error)
     {
       state_ = EConnectionState::STARTUP;
-  SignallingServer->close();
-  std::cerr << "Signalling server error: " << error << std::endl;
+      SignallingServer->close();
+      std::cerr << "Signalling server error: " << error << std::endl;
     });
 }
 
@@ -422,6 +422,148 @@ void WebRTCBridge::DataConnector::SendJSON(json Message)
     bytes.at(3 + 2 * i + 1) = 0_b;
   }
   DataChannel->sendBuffer(bytes);
+}
+
+void WebRTCBridge::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, std::string Name, std::string Format)
+{
+  // this method briefly exchanges the callback for message reception
+  auto msg_callback = MessageReceptionCallback;
+  int MessageState = -1;
+  int StateTracker = 0;
+  msg_callback = [&msg_callback, &MessageState](std::string Message)
+  {
+    json content = json::parse(Message);
+    if (content["type"] == "buffer")
+    {
+      MessageState = MessageState + 1;
+    }
+    // else
+    if (msg_callback.has_value())
+    {
+      msg_callback.value()(Message);
+    }
+  };
+  std::size_t chunk_size{}, chunks{};
+  const uint8_t* Source = nullptr;
+  if (Format == "raw")
+  {
+    chunk_size = DataChannel->maxMessageSize() - 3;
+    chunks = Buffer.size() / chunk_size + 1;
+    Source = reinterpret_cast<const uint8_t*>(Buffer.data());
+  }
+  else if (Format == "base64")
+  {
+    const auto base64_size = EncodedSize(Buffer);
+    chunk_size = DataChannel->maxMessageSize() - 3;
+    chunks = base64_size / chunk_size + 1;
+    const auto ConvertedDat = Encode64(Buffer);
+    Source = reinterpret_cast<const uint8_t*>(ConvertedDat.data());
+  }
+  else if (Format == "ascii")
+  {
+
+  }
+  if (!Source)
+  {
+    std::cout << Prefix << "Invalid format for buffer transmission" << std::endl;
+    return;
+  }
+  // transmit
+  std::cout << Prefix << "Transmitting buffer of size " << Buffer.size() << " in " << chunks << " chunks of size " << chunk_size << std::endl;
+  this->SendJSON({ {"type","buffer"}, {"start",Name }, {"size", Buffer.size()} });
+  std::cout << Prefix << "Sent start message" << std::endl;
+  while (MessageState < StateTracker) std::this_thread::yield();
+  std::cout << Prefix << "Received start message" << std::endl;
+  StateTracker++;
+  rtc::binary bytes(chunk_size + 3);
+  uint8_t* buffer = reinterpret_cast<uint8_t*>(&(bytes.at(3)));
+  bytes.at(0) = DataChannelByte;
+  // move through the chunks
+  for (int i = 0; i < chunks; i++)
+  {
+    // copy the chunk into the buffer, the std::min is to avoid copying too much
+    memcpy(buffer, Source + i * chunk_size, std::min(chunk_size, Buffer.size()));
+    // send the buffer
+    DataChannel->sendBuffer(bytes);
+    std::cout << Prefix << "Sent chunk " << i << std::endl;
+    // wait for the message to be received
+    while (MessageState < StateTracker) std::this_thread::yield();
+    std::cout << Prefix << "Received message " << i << std::endl;
+    StateTracker++;
+  }
+  this->SendJSON({ {"type","buffer"},{"stop",Name} });
+  std::cout << Prefix << "Sent stop message" << std::endl;
+  // restore the original callback
+  MessageReceptionCallback = msg_callback;
+}
+
+void WebRTCBridge::DataConnector::SendGeometry(const std::vector<float>& Vertices, const std::vector<uint32_t>& Indices,
+  const std::vector<float>& Normals, std::string Name, std::optional<std::vector<float>> UVs,
+  std::optional<std::vector<float>> Tangents)
+{
+  json Message = { {"type","geometry"},{"name",Name} };
+  // calculate the total size[bytes] of the message if we were to send it as a single buffer
+  std::size_t total_size = 3;
+  // because a single buffer would mean that we use JSON, we need to add the base64 size of the buffers
+  total_size += EncodedSize(Vertices);
+  total_size += EncodedSize(Indices);
+  total_size += EncodedSize(Normals);
+  if (UVs.has_value())
+  {
+    total_size += EncodedSize(UVs.value());
+  }
+  if (Tangents.has_value())
+  {
+    total_size += EncodedSize(Tangents.value());
+  }
+  // check if we can send the message as a single buffer
+  if (total_size < this->DataChannel->maxMessageSize())
+  {
+    Message["type"] = "directbase64";
+    Message["vertices"] = Encode64(Vertices);
+    Message["indices"] = Encode64(Indices);
+    Message["normals"] = Encode64(Normals);
+    if (UVs.has_value())
+    {
+      Message["uvs"] = Encode64(UVs.value());
+    }
+    if (Tangents.has_value())
+    {
+      Message["tangents"] = Encode64(Tangents.value());
+    }
+    this->SendJSON(Message);
+  }
+  else
+  {
+    // we need to send the message in chunks
+    Message["state"] = "start";
+    std::span<const uint8_t> data(reinterpret_cast<const uint8_t*>(Vertices.data()), reinterpret_cast<const uint8_t*>(Vertices.data() + Vertices.size()));
+    
+    this->SendJSON(Message);
+    // send the vertices
+    this->SendBuffer(data, "points", "raw");
+    // send the indices
+    data = std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(Indices.data()), Indices.size() * sizeof(float));
+    this->SendBuffer(data, "indices", "raw");
+    // send the normals
+    data = std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(Normals.data()), Normals.size() * sizeof(float));
+    this->SendBuffer(data, "normals", "raw");
+    // send the UVs
+    if (UVs.has_value())
+    {
+      data = std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(UVs.value().data()), UVs.value().size() * sizeof(float));
+      this->SendBuffer(data, "uvs", "raw");
+    }
+    // send the tangents
+    if (Tangents.has_value())
+    {
+      data = std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(Tangents.value().data()), Tangents.value().size() * sizeof(float));
+      this->SendBuffer(data, "tangents", "raw");
+    }
+    // send the stop message
+    Message["state"] = "stop";
+    this->SendJSON(Message);
+  }
 }
 
 WebRTCBridge::EConnectionState WebRTCBridge::DataConnector::GetState()
