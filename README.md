@@ -6,6 +6,8 @@ Unreal Engine released PixelStreaming with its 4.27 version. It enables remote v
 
 Synavis enables the coupling of simulation and ML tools to the Unreal Engine by leveraging PixelStreaming as data source.
 
+For testing purposes, I generally recommend the internal signalling server as it, moving forward, inherently more compatible than the PixelStreamingInfrastructure one.
+
 ## Progress so far
 
 This Project includes a bridging ability, coupling ability and some means of steering the framework.
@@ -15,7 +17,6 @@ This Project includes a bridging ability, coupling ability and some means of ste
 
 ## Open Issues
 
-- The signalling server I programmed is still encountering issues with setting up a connection. Investigation is in progress.
 - The framework does not base of libwebrtc and thus does not offer decoding capabilities itself. This is intentional for our cluster setup as we provide functionality there.
 - There are test cases missing that still need to be added, those will also introduce robustness and remove ambiguity.
 
