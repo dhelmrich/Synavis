@@ -10,7 +10,7 @@ import os
 import json
 
 # WebRTCBridge: Find build
-path = "../../"
+path = "../"
 # if windows
 if os.name == 'nt' :
   path = path + "build/webrtcbridge/Release/"
@@ -76,10 +76,6 @@ reset_message()
 
 Media.SendJSON({"type":"query"})
 answer = get_message()
- 
-print("In main thread: ", answer)
-while True:
-  time.sleep(1)
 
  # try parse json
 # answer = json.loads(answer)

@@ -115,5 +115,10 @@ int main(int args, char** argv)
   auto message2 = Messages.back();
   std::cout << "Received message: " << message2 << std::endl;
 
+  std::vector<float> TestGeometry(8000);
+  std::vector<uint32_t> TestIndices(10000);
+
+  dc->SendGeometry(TestGeometry, TestIndices, TestGeometry, "test");
+
   return EXIT_SUCCESS;
 }

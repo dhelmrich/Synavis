@@ -64,12 +64,17 @@ dataconnector.StartSignalling()
 dataconnector.SetDataCallback(data_callback)
 dataconnector.SetMessageCallback(message_callback)
 
-
-
 while not dataconnector.GetState() == rtc.EConnectionState.CONNECTED:
   time.sleep(0.1)
 
 reset_message()
+
+# send a message
+dataconnector.SendJSON({"type":"query"})
+
+# wait for the answer
+answer = get_message()
+print(answer)
 
 # run forever
 while True :

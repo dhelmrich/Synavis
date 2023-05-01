@@ -430,8 +430,9 @@ void WebRTCBridge::DataConnector::SendBuffer(const std::span<const uint8_t>& Buf
   auto msg_callback = MessageReceptionCallback;
   int MessageState = -1;
   int StateTracker = 0;
-  msg_callback = [&msg_callback, &MessageState](std::string Message)
+  this->SetMessageCallback([&msg_callback, &MessageState, this](std::string Message)
   {
+    std::cout << "Message received: " << Message << std::endl;
     json content = json::parse(Message);
     if (content["type"] == "buffer")
     {
@@ -442,22 +443,25 @@ void WebRTCBridge::DataConnector::SendBuffer(const std::span<const uint8_t>& Buf
     {
       msg_callback.value()(Message);
     }
-  };
-  std::size_t chunk_size{}, chunks{};
+  });
+  std::size_t chunk_size{}, chunks{}, total_size{};
   const uint8_t* Source = nullptr;
+  bool NeedToDelete = false;
   if (Format == "raw")
   {
+    total_size = Buffer.size();
     chunk_size = DataChannel->maxMessageSize() - 3;
     chunks = Buffer.size() / chunk_size + 1;
     Source = reinterpret_cast<const uint8_t*>(Buffer.data());
   }
   else if (Format == "base64")
   {
-    const auto base64_size = EncodedSize(Buffer);
+    total_size = EncodedSize(Buffer);
     chunk_size = DataChannel->maxMessageSize() - 3;
-    chunks = base64_size / chunk_size + 1;
+    chunks = total_size / chunk_size + 1;
     const auto ConvertedDat = Encode64(Buffer);
     Source = reinterpret_cast<const uint8_t*>(ConvertedDat.data());
+    NeedToDelete = true;
   }
   else if (Format == "ascii")
   {
@@ -470,11 +474,11 @@ void WebRTCBridge::DataConnector::SendBuffer(const std::span<const uint8_t>& Buf
   }
   // transmit
   std::cout << Prefix << "Transmitting buffer of size " << Buffer.size() << " in " << chunks << " chunks of size " << chunk_size << std::endl;
-  this->SendJSON({ {"type","buffer"}, {"start",Name }, {"size", Buffer.size()} });
+  this->SendJSON({ {"type","buffer"}, {"start",Name }, {"size", total_size}, {"format", Format} });
   std::cout << Prefix << "Sent start message" << std::endl;
-  while (MessageState < StateTracker) std::this_thread::yield();
-  std::cout << Prefix << "Received start message" << std::endl;
+  while (MessageState < StateTracker) { std::this_thread::yield(); }
   StateTracker++;
+  std::cout << Prefix << "Received start message" << std::endl;
   rtc::binary bytes(chunk_size + 3);
   uint8_t* buffer = reinterpret_cast<uint8_t*>(&(bytes.at(3)));
   bytes.at(0) = DataChannelByte;
@@ -485,16 +489,21 @@ void WebRTCBridge::DataConnector::SendBuffer(const std::span<const uint8_t>& Buf
     memcpy(buffer, Source + i * chunk_size, std::min(chunk_size, Buffer.size()));
     // send the buffer
     DataChannel->sendBuffer(bytes);
-    std::cout << Prefix << "Sent chunk " << i << std::endl;
+    std::cout << Prefix << "Sent chunk " << i << " of length " << std::min(chunk_size, Buffer.size()) << std::endl;
     // wait for the message to be received
-    while (MessageState < StateTracker) std::this_thread::yield();
+    while (MessageState < StateTracker) { std::this_thread::yield(); }
     std::cout << Prefix << "Received message " << i << std::endl;
     StateTracker++;
   }
   this->SendJSON({ {"type","buffer"},{"stop",Name} });
+  while (MessageState < StateTracker) { std::this_thread::yield(); }
   std::cout << Prefix << "Sent stop message" << std::endl;
   // restore the original callback
   MessageReceptionCallback = msg_callback;
+  if(NeedToDelete)
+  {
+    delete[] Source;
+  }
 }
 
 void WebRTCBridge::DataConnector::SendGeometry(const std::vector<float>& Vertices, const std::vector<uint32_t>& Indices,
@@ -541,13 +550,13 @@ void WebRTCBridge::DataConnector::SendGeometry(const std::vector<float>& Vertice
     
     this->SendJSON(Message);
     // send the vertices
-    this->SendBuffer(data, "points", "raw");
+    this->SendBuffer(data, "points", "base64");
     // send the indices
     data = std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(Indices.data()), Indices.size() * sizeof(float));
-    this->SendBuffer(data, "indices", "raw");
+    this->SendBuffer(data, "indices", "base64");
     // send the normals
     data = std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(Normals.data()), Normals.size() * sizeof(float));
-    this->SendBuffer(data, "normals", "raw");
+    this->SendBuffer(data, "normals", "base64");
     // send the UVs
     if (UVs.has_value())
     {
