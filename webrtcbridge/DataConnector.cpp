@@ -438,8 +438,7 @@ void WebRTCBridge::DataConnector::SendBuffer(const std::span<const uint8_t>& Buf
     {
       MessageState = MessageState + 1;
     }
-    // else
-    if (msg_callback.has_value())
+    else if (msg_callback.has_value())
     {
       msg_callback.value()(Message);
     }
@@ -460,6 +459,7 @@ void WebRTCBridge::DataConnector::SendBuffer(const std::span<const uint8_t>& Buf
     chunk_size = DataChannel->maxMessageSize() - 3;
     chunks = total_size / chunk_size + 1;
     const auto ConvertedDat = Encode64(Buffer);
+    std::string DebugTest(ConvertedDat.begin(), ConvertedDat.end());
     Source = reinterpret_cast<const uint8_t*>(ConvertedDat.data());
     NeedToDelete = true;
   }
@@ -486,7 +486,16 @@ void WebRTCBridge::DataConnector::SendBuffer(const std::span<const uint8_t>& Buf
   for (int i = 0; i < chunks; i++)
   {
     // copy the chunk into the buffer, the std::min is to avoid copying too much
-    memcpy(buffer, Source + i * chunk_size, std::min(chunk_size, Buffer.size()));
+    memcpy(buffer, Source + i * chunk_size, std::min(chunk_size, Buffer.size() - i * chunk_size));
+    // printing the first few characters of the buffer
+    std::cout << Prefix << "Buffer ("<< std::min(chunk_size, Buffer.size() - i * chunk_size) << ": ";
+    for (int j = 0; j < 10; j++)
+    {
+           std::cout <<  static_cast<char>(buffer[j]) << " ";
+    }
+    std::cout << std::endl;
+    // set the second and third bytes to the chunk size
+    *(reinterpret_cast<uint16_t*>(&(bytes.at(1)))) = static_cast<uint16_t>(std::min(chunk_size, Buffer.size() - i * chunk_size));
     // send the buffer
     DataChannel->sendBuffer(bytes);
     std::cout << Prefix << "Sent chunk " << i << " of length " << std::min(chunk_size, Buffer.size()) << std::endl;

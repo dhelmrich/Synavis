@@ -80,25 +80,27 @@ static std::string_view Encode64(const T& Data)
 {
   // check if the data is convertible to a pointer
   static_assert(is_pointer_convertible<T>::value, "Data must be convertible to a pointer");
+  std::size_t byte_size = Data.size() * sizeof(decltype(*Data.data()));
   // convert data to string of bytes
-  std::string_view strdata(reinterpret_cast<const char*>(Data.data()), Data.size());
+  std::string_view strdata(reinterpret_cast<const char*>(Data.data()), byte_size);
   // base64 encoding table
   constexpr char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   // compute the size of the encoded string
-  std::size_t encoded_length = 4 * ((strdata.size() + 2) / 3);
+  std::size_t encoded_length = 4 * ((byte_size + 2) / 3);
   char* c = new char[encoded_length];
+  std::string_view c_result = { c, encoded_length };
   std::size_t i;
-  for (i = 0; i < strdata.size() - 2; i += 3)
+  for (i = 0; i < byte_size - 2; i += 3)
   {
     *c++ = table[(strdata[i] >> 2) & 0x3F];
     *c++ = table[((strdata[i] & 0x3) << 4) | ((int)(strdata[i + 1] & 0xF0) >> 4)];
     *c++ = table[((strdata[i + 1] & 0xF) << 2) | ((int)(strdata[i + 2] & 0xC0) >> 6)];
     *c++ = table[strdata[i + 2] & 0x3F];
   }
-  if (i < strdata.size())
+  if (i < byte_size)
   {
     *c++ = table[(strdata[i] >> 2) & 0x3F];
-    if (i == (strdata.size() - 1))
+    if (i == (byte_size - 1))
     {
       *c++ = table[((strdata[i] & 0x3) << 4)];
       *c++ = '=';
@@ -112,7 +114,7 @@ static std::string_view Encode64(const T& Data)
   }
   // return the encoded string as a string_view because this way the data
   // is not deleted when the scope ends in which this function is called
-  return std::string_view(c, encoded_length);
+  return  c_result;
 }
 
 // a function to retrieve the encoded size of a buffer for base64 encoding
