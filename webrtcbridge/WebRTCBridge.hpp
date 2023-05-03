@@ -58,18 +58,18 @@ struct is_pointer_convertible : std::false_type
 {
 };
 template < typename ... Runoff >
-struct is_pointer_convertible_helper{};
+struct is_pointer_convertible_helper {};
 
 template < typename T >
 struct is_pointer_convertible<T,
-std::conditional_t<
-false,
-is_pointer_convertible_helper<
-   typename T::value_type,
-   typename T::size_type,
-   decltype(std::declval<T>().data()),
-   decltype(std::declval<T>().size())
->, void >> : public std::true_type
+  std::conditional_t<
+  false,
+  is_pointer_convertible_helper<
+  typename T::value_type,
+  typename T::size_type,
+  decltype(std::declval<T>().data()),
+  decltype(std::declval<T>().size())
+  >, void >> : public std::true_type
 {
 };
 
@@ -121,10 +121,10 @@ static std::string_view Encode64(const T& Data)
 template < typename T >
 static size_t EncodedSize(const T& Data)
 {
-   // check if the data is convertible to a pointer
+  // check if the data is convertible to a pointer
   static_assert(is_pointer_convertible<T>::value, "Data must be convertible to a pointer");
   // compute the size of the encoded string
-  std::size_t encoded_length = 4 * ((((Data.size() * sizeof(T))) + 2) / 3);
+  std::size_t encoded_length = 4 * ((((Data.size() * sizeof(decltype(*Data.data())))) + 2) / 3);
   return encoded_length;
 }
 
@@ -140,6 +140,46 @@ namespace WebRTCBridge
   public:
   protected:
   private:
+  };
+
+  // a class to represent access to a buffer in reverse byte order
+  template < typename T >
+  class WEBRTCBRIDGE_EXPORT EndianBuffer
+  {
+    std::span<uint8_t> Data;
+    EndianBuffer(const std::vector<T>& Data)
+    {
+      Data = std::span<uint8_t>(reinterpret_cast<uint8_t*>(Data.data()), Data.size() * sizeof(T));
+    }
+    EndianBuffer(const std::span<T>& Data)
+    {
+      Data = std::span<uint8_t>(reinterpret_cast<uint8_t*>(Data.data()), Data.size() * sizeof(T));
+    }
+    uint8_t& operator[](std::size_t index)
+    {
+      // reverse packs of bytes of size T in the buffer
+      const std::size_t size = sizeof(T);
+      const std::size_t offset = (index / size) * size; // integer division
+      const std::size_t remainder = index % size;
+      return Data[offset + (size - remainder - 1)];
+    }
+    const T at(std::size_t index) const
+    {
+      // returns the object at the index in the original type, with the bytes reversed
+      const std::size_t size = sizeof(T);
+      const std::size_t offset = (index / size) * size; // integer division
+      const std::size_t remainder = index % size;
+      union
+      {
+        T value;
+        uint8_t bytes[size];
+      } result;
+      for (std::size_t i = 0; i < size; ++i)
+      {
+        result.bytes[i] = Data[offset + (size - i - 1)];
+      }
+      return result.value;
+    }
   };
 
   class WEBRTCBRIDGE_EXPORT BridgeSocket

@@ -200,6 +200,9 @@ namespace WebRTCBridge{
       .def("IsBlocking",&DataConnector::IsBlocking)
       .def("GetState", &DataConnector::GetState)
       .def("SendBuffer", &DataConnector::SendBuffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
+    .def("SendFloat64Buffer", &DataConnector::SendFloat64Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
+      .def("SendInt32Buffer", &DataConnector::SendInt32Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
+      .def("SendFloat32Buffer", &DataConnector::SendFloat32Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
       .def("SendGeometry", &DataConnector::SendGeometry, py::arg("Vertices"), py::arg("Indices"), py::arg("Normals"), py::arg("Name"), py::arg("UVs"), py::arg("Tangents"))
     ;
 
@@ -221,6 +224,11 @@ namespace WebRTCBridge{
       .def("SetBlock", &MediaReceiver::SetBlock, py::arg("Block"))
       .def("IsBlocking", &MediaReceiver::IsBlocking)
       .def("GetState", &MediaReceiver::GetState)
+      .def("SendBuffer", &MediaReceiver::SendBuffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
+      .def("SendFloat64Buffer", &MediaReceiver::SendFloat64Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
+      .def("SendInt32Buffer", &MediaReceiver::SendInt32Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
+      .def("SendFloat32Buffer", &MediaReceiver::SendFloat32Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
+      .def("SendGeometry", &MediaReceiver::SendGeometry, py::arg("Vertices"), py::arg("Indices"), py::arg("Normals"), py::arg("Name"), py::arg("UVs"), py::arg("Tangents"))
     ;
 
     py::enum_<rtc::PeerConnection::GatheringState>(m, "GatheringState")
