@@ -13,6 +13,9 @@
 #undef min
 #undef max
 
+#define LDEBUG if(LogVerbosity >= ELogVerbosity::Debug) std::cout
+#define LINFO if(LogVerbosity >= ELogVerbosity::Info) std::cout
+
 inline constexpr std::byte operator "" _b(unsigned long long i) noexcept
 {
   return static_cast<std::byte>(i);
@@ -350,7 +353,7 @@ void WebRTCBridge::DataConnector::StartSignalling()
 {
   std::string address = "ws://" + config_["SignallingIP"].get<std::string>()
     + ":" + std::to_string(config_["SignallingPort"].get<unsigned>());
-  std::cout << Prefix << "Starting Signalling to " << address << std::endl;
+  LINFO << Prefix << "Starting Signalling to " << address << std::endl;
   state_ = EConnectionState::STARTUP;
   SignallingServer->open(address);
   while (Block && state_ < EConnectionState::SIGNUP)
@@ -424,7 +427,7 @@ void WebRTCBridge::DataConnector::SendJSON(json Message)
   memcpy(bytes.data() + 3, json_message.data(), json_message.size());
   
   std::string temp = std::string((char*)bytes.data(), bytes.size());
-  std::cout << "Sending JSON: " << temp << std::endl;
+  LINFO << "Sending JSON: " << temp << std::endl;
   DataChannel->sendBuffer(bytes);
 }
 
@@ -461,11 +464,9 @@ void WebRTCBridge::DataConnector::SendBuffer(const std::span<const uint8_t>& Buf
   {
     total_size = EncodedSize(Buffer);
     chunk_size = DataChannel->maxMessageSize() - 4;
-    chunks = total_size / chunk_size + 1;
+    chunks = std::max(total_size / chunk_size, static_cast<std::size_t>(1));
     const auto ConvertedDat = Encode64(Buffer);
     const std::string DebugTest(ConvertedDat.begin(), ConvertedDat.end());
-    std::cout << "Peek of size 20: " << DebugTest.substr(0, 20) << std::endl;
-    std::cout << "Last 20: " << DebugTest.substr(DebugTest.size() - 20, 20) << std::endl;
     Source = reinterpret_cast<const uint8_t*>(ConvertedDat.data());
     NeedToDelete = true;
   }
@@ -479,35 +480,40 @@ void WebRTCBridge::DataConnector::SendBuffer(const std::span<const uint8_t>& Buf
     return;
   }
   // transmit
-  std::cout << Prefix << "Transmitting buffer of size " << Buffer.size() << " in " << chunks << " chunks of size " << chunk_size << std::endl;
+  LDEBUG << Prefix << "Transmitting buffer of size " << Buffer.size() << " in " << chunks << " chunks of size " << chunk_size << std::endl;
   this->SendJSON({ {"type","buffer"}, {"start",Name }, {"size", total_size}, {"format", Format} });
-  std::cout << Prefix << "Sent start message" << std::endl;
+  LDEBUG << Prefix << "Sent start message" << std::endl;
   while (MessageState < StateTracker) { std::this_thread::yield(); }
   StateTracker++;
-  std::cout << Prefix << "Received start message" << std::endl;
-  rtc::binary bytes(chunk_size + 4);
+  LDEBUG << Prefix << "Received start message" << std::endl;
+  rtc::binary bytes(std::min(chunk_size, total_size) + 4);
   bytes.at(bytes.size() - 1) = std::byte(0);
   uint8_t* buffer = reinterpret_cast<uint8_t*>(&(bytes.at(3)));
   bytes.at(0) = DataChannelByte;
   // move through the chunks
   for (int i = 0; i < chunks; i++)
   {
-    const auto remaining = std::min(chunk_size, Buffer.size() - i * chunk_size);
+    const auto remaining = std::min(chunk_size, total_size - i * chunk_size);
+    if(bytes.size() > remaining + 4)
+    {
+      bytes.resize(remaining + 4);
+      bytes.at(bytes.size() - 1) = std::byte(0);
+    }
     // copy the chunk into the buffer, the std::min is to avoid copying too much
     memcpy(buffer, Source + i * chunk_size, remaining);
     // set the second and third bytes to the chunk size
     *(reinterpret_cast<uint16_t*>(&(bytes.at(1)))) = remaining;
     // send the buffer
     DataChannel->sendBuffer(bytes);
-    std::cout << Prefix << "Sent chunk " << i << " of length " << remaining << std::endl;
+    LDEBUG << Prefix << "Sent chunk " << i << " of length " << remaining << std::endl;
     // wait for the message to be received
     while (MessageState < StateTracker) { std::this_thread::yield(); }
-    std::cout << Prefix << "Received message " << i << std::endl;
+    LDEBUG << Prefix << "Received message " << i << std::endl;
     StateTracker++;
   }
   this->SendJSON({ {"type","buffer"},{"stop",Name} });
   while (MessageState < StateTracker) { std::this_thread::yield(); }
-  std::cout << Prefix << "Sent stop message" << std::endl;
+  LDEBUG << Prefix << "Sent stop message" << std::endl;
   // restore the original callback
   MessageReceptionCallback = msg_callback;
   if(NeedToDelete)

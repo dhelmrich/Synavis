@@ -51,30 +51,22 @@ int main(int args, char** argv)
   dc->SetMessageCallback([&bWantData, &Messages](auto message)
     {
       Messages.push_back(message);
-  std::cout << "Received message: " << message << std::endl;
-  if (bWantData)
-  {
-    bWantData = false;
-  }
+      std::cout << "Received message: " << message << std::endl;
     });
   dc->SetDataCallback([&bWantData, &Data](auto data)
     {
       const char* dataPtr = reinterpret_cast<const char*>(data.data());
-  std::string_view dataView(dataPtr, data.size());
-  // double check if this might still be a json object
-  try
-  {
-    json j = json::parse(dataView);
-    std::cout << "Received json." << std::endl;
-  }
-  catch (...)
-  {
-    std::cout << "Received data: " << dataView << std::endl;
-  }
-  if (bWantData)
-  {
-    bWantData = false;
-  }
+      std::string_view dataView(dataPtr, data.size());
+      // double check if this might still be a json object
+      try
+      {
+        json j = json::parse(dataView);
+        std::cout << "Received json." << std::endl;
+      }
+      catch (...)
+      {
+        std::cout << "Received data: " << dataView << std::endl;
+      }
     });
   while (dc->GetState() != WebRTCBridge::EConnectionState::CONNECTED)
   {
@@ -86,12 +78,21 @@ int main(int args, char** argv)
 
   std::this_thread::sleep_for(1s);
 
-  std::vector<double> TestGeometry(3*1);
-
-  // fill with increasing numbers
-  std::generate(TestGeometry.begin(), TestGeometry.end(), [n = 0]() mutable { return n++; });
-
-  dc->SendFloat64Buffer(TestGeometry, "points", "base64");
-
+  for (int i = 1; i < 10; ++i)
+  {
+    std::vector<double> TestGeometry(3 * i);
+    // fill with increasing numbers
+    std::generate(TestGeometry.begin(), TestGeometry.end(), [n = 0]() mutable { return n++; });
+    dc->SendFloat64Buffer(TestGeometry, "points", "base64");
+    
+    while (Messages.size() == 0)
+    {
+      std::this_thread::sleep_for(10ms);
+    }
+    // remove last message
+    auto message = Messages.back();
+    Messages.clear();
+    std::this_thread::sleep_for(1s);
+  }
   return EXIT_SUCCESS;
 }

@@ -301,6 +301,16 @@ namespace WebRTCBridge
     All
   };
 
+  enum class WEBRTCBRIDGE_EXPORT ELogVerbosity
+  {
+    None = (std::uint8_t)EMessageTimeoutPolicy::All + 1u,
+    Error,
+    Warning,
+    Info,
+    Debug,
+    Verbose
+  };
+
   using StreamVariant = std::variant<std::shared_ptr<rtc::DataChannel>,
     std::shared_ptr<rtc::Track>>;
 

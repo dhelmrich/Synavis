@@ -9,9 +9,9 @@ import json
 # check if CPLANTBOX_ROOT is set
 if "CPLANTBOX_ROOT" in os.environ:
   #sys.path.append(os.environ["CPLANTBOX_ROOT"])
-  sys.path.append("F:/Work/CPlantBox/build_vs/src/Release/")
+  sys.path.append("G:/Work/CPlantBox/build_vs/src/Release/")
 else :
-  sys.path.append("F:/Work/CPlantBox/build_vs/src/Release/")
+  sys.path.append("G:/Work/CPlantBox/build_vs/src/Release/")
   print("CPLANTBOX_ROOT is not set, but I will try to import plantbox from your PYTHONPATH")
 
 
@@ -51,7 +51,7 @@ def data_callback(data) :
 # Path: cplantbox_coupling.py
 # if we are on windows, the path to the dll is different
 if sys.platform == "win32" :
-  sys.path.append("../build_workwin/webrtcbridge/Release/")
+  sys.path.append("../build/webrtcbridge/Release/")
 else :
   sys.path.append("../../build/")
 sys.path.append("../modules/")
@@ -84,7 +84,7 @@ while True :
   plant = pb.MappedPlant()
   path = "./coupling/"
   plant.readParameters(path + "P0_plant.xml")
-  stime = 20
+  stime = 3
   leaf_res = 30
   for p in plant.getOrganRandomParameter(pb.leaf):
     p.lb =  0 # length of leaf stem

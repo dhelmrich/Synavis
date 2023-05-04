@@ -54,6 +54,9 @@ public:
   void SetOnClosedCallback(std::function<void(void)> Callback) { OnClosedCallback = Callback; }
   void SetOnIceGatheringFinished(std::function<void(void)> Callback) { OnIceGatheringFinished = Callback; }
   void CommunicateSDPs();
+
+  void SetLogVerbosity(ELogVerbosity Verbosity) { LogVerbosity = Verbosity; }
+
 protected:
 
   /**
@@ -63,6 +66,8 @@ protected:
   std::optional<std::function<void(void)>> OnFailedCallback;
   std::optional<std::function<void(void)>> OnClosedCallback;
   std::optional<std::function<void(void)>> OnIceGatheringFinished;
+
+  ELogVerbosity LogVerbosity = ELogVerbosity::Warning;
 
   EConnectionState state_;
 
