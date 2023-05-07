@@ -82,7 +82,17 @@ WebRTCBridge::DataConnector::DataConnector()
   DataChannel->onOpen([this]()
     {
       std::cout << Prefix << "OUR DataChannel connection is setup!" << std::endl;
-
+      // display a warning if the data channel message size is larger than the UE size byte uint16
+      if (DataChannel->maxMessageSize() > std::numeric_limits<uint16_t>::max() - 3)
+      {
+        // make a framed warning
+        std::cout << Prefix << "****************************************************************************" << std::endl;
+        std::cout << Prefix << "*                                                                          *" << std::endl;
+        std::cout << Prefix << "* WARNING: DataChannel message size is larger than the UE size byte uint16 *" << std::endl;
+        std::cout << Prefix << "*                                                                          *" << std::endl;
+        std::cout << Prefix << "****************************************************************************" << std::endl;
+      }
+      this->MaxMessageSize = std::min(DataChannel->maxMessageSize(), static_cast<std::size_t>(std::numeric_limits<uint16_t>::max() - 3));
     });
   DataChannel->onMessage([this](auto messageordata)
     {
@@ -366,12 +376,12 @@ void WebRTCBridge::DataConnector::SendData(rtc::binary Data)
 {
   if (this->state_ != EConnectionState::CONNECTED)
     return;
-  if (Data.size() > DataChannel->maxMessageSize())
+  if (Data.size() > this->MaxMessageSize)
   {
-    rtc::binary Chunk(DataChannel->maxMessageSize());
+    rtc::binary Chunk(this->MaxMessageSize);
     const auto meta_size = sizeof(int) + sizeof(int) + sizeof(uint16_t) + sizeof(std::byte);
     unsigned int chunks{ 0 };
-    for (; (meta_size * chunks + Data.size()) / chunks < DataChannel->maxMessageSize(); ++chunks);
+    for (; (meta_size * chunks + Data.size()) / chunks < this->MaxMessageSize; ++chunks);
 
     // iterate through the chunks
     for (auto i = 0u; i < chunks; ++i)
@@ -379,7 +389,7 @@ void WebRTCBridge::DataConnector::SendData(rtc::binary Data)
       unsigned int n = 0u;
       n = InsertIntoBinary(Chunk, n, std::byte(50), uint16_t(0));
       n = InsertIntoBinary(Chunk, n, i, chunks);
-      memcpy(Chunk.data() + n, Data.data() + i * chunks, DataChannel->maxMessageSize() - meta_size);
+      memcpy(Chunk.data() + n, Data.data() + i * chunks, this->MaxMessageSize - meta_size);
       DataChannel->sendBuffer(Chunk);
     }
   }
@@ -425,7 +435,7 @@ void WebRTCBridge::DataConnector::SendJSON(json Message)
 
   // copy the json string into the buffer
   memcpy(bytes.data() + 3, json_message.data(), json_message.size());
-  
+
   std::string temp = std::string((char*)bytes.data(), bytes.size());
   LINFO << "Sending JSON: " << temp << std::endl;
   DataChannel->sendBuffer(bytes);
@@ -438,33 +448,33 @@ void WebRTCBridge::DataConnector::SendBuffer(const std::span<const uint8_t>& Buf
   int MessageState = -1;
   int StateTracker = 0;
   this->SetMessageCallback([&msg_callback, &MessageState, this](std::string Message)
-  {
-    std::cout << "Message received: " << Message << std::endl;
-    json content = json::parse(Message);
-    if (content["type"] == "buffer")
     {
-      MessageState = MessageState + 1;
-    }
-    else if (msg_callback.has_value())
-    {
-      msg_callback.value()(Message);
-    }
-  });
+      std::cout << "Message received: " << Message << std::endl;
+      json content = json::parse(Message);
+      if (content["type"] == "buffer")
+      {
+        MessageState = MessageState + 1;
+      }
+      else if (msg_callback.has_value())
+      {
+        msg_callback.value()(Message);
+      }
+    });
   std::size_t chunk_size{}, chunks{}, total_size{};
   const uint8_t* Source = nullptr;
   bool NeedToDelete = false;
   if (Format == "raw")
   {
     total_size = Buffer.size();
-    chunk_size = DataChannel->maxMessageSize() - 4;
-    chunks = std::max(Buffer.size() / chunk_size,static_cast<std::size_t>(1));
+    chunk_size = this->MaxMessageSize - 4;
+    chunks = std::max(Buffer.size() / chunk_size, static_cast<std::size_t>(1));
     Source = reinterpret_cast<const uint8_t*>(Buffer.data());
   }
   else if (Format == "base64")
   {
     total_size = EncodedSize(Buffer);
-    chunk_size = DataChannel->maxMessageSize() - 4;
-    chunks = std::max(total_size / chunk_size, static_cast<std::size_t>(1));
+    chunk_size = this->MaxMessageSize - 4;
+    chunks = total_size / chunk_size + 1;
     const auto ConvertedDat = Encode64(Buffer);
     const std::string DebugTest(ConvertedDat.begin(), ConvertedDat.end());
     Source = reinterpret_cast<const uint8_t*>(ConvertedDat.data());
@@ -494,7 +504,7 @@ void WebRTCBridge::DataConnector::SendBuffer(const std::span<const uint8_t>& Buf
   for (int i = 0; i < chunks; i++)
   {
     const auto remaining = std::min(chunk_size, total_size - i * chunk_size);
-    if(bytes.size() > remaining + 4)
+    if (bytes.size() > remaining + 4)
     {
       bytes.resize(remaining + 4);
       bytes.at(bytes.size() - 1) = std::byte(0);
@@ -516,7 +526,7 @@ void WebRTCBridge::DataConnector::SendBuffer(const std::span<const uint8_t>& Buf
   LDEBUG << Prefix << "Sent stop message" << std::endl;
   // restore the original callback
   MessageReceptionCallback = msg_callback;
-  if(NeedToDelete)
+  if (NeedToDelete)
   {
     delete[] Source;
   }
@@ -539,8 +549,8 @@ void WebRTCBridge::DataConnector::SendInt32Buffer(const std::vector<int32_t>& Bu
 }
 
 void WebRTCBridge::DataConnector::SendGeometry(const std::vector<double>& Vertices, const std::vector<uint32_t>& Indices,
-                                               const std::vector<double>& Normals, std::string Name, std::optional<std::vector<double>> UVs,
-                                               std::optional<std::vector<double>> Tangents)
+  const std::vector<double>& Normals, std::string Name, std::optional<std::vector<double>> UVs,
+  std::optional<std::vector<double>> Tangents)
 {
   json Message = { {"type","geometry"},{"name",Name} };
   // calculate the total size[bytes] of the message if we were to send it as a single buffer
@@ -558,7 +568,7 @@ void WebRTCBridge::DataConnector::SendGeometry(const std::vector<double>& Vertic
     total_size += EncodedSize(Tangents.value());
   }
   // check if we can send the message as a single buffer
-  if (total_size < this->DataChannel->maxMessageSize())
+  if (total_size < this->MaxMessageSize)
   {
     Message["type"] = "directbase64";
     Message["vertices"] = Encode64(Vertices);
@@ -579,7 +589,7 @@ void WebRTCBridge::DataConnector::SendGeometry(const std::vector<double>& Vertic
     // we need to send the message in chunks
     Message["state"] = "start";
     std::span<const uint8_t> data(reinterpret_cast<const uint8_t*>(Vertices.data()), reinterpret_cast<const uint8_t*>(Vertices.data() + Vertices.size()));
-    
+
     this->SendJSON(Message);
     // send the vertices
     this->SendBuffer(data, "points", "base64");
@@ -680,7 +690,7 @@ bool WebRTCBridge::DataConnector::IsRunning()
 // a method that outputs data channel information
 void WebRTCBridge::DataConnector::PrintCommunicationData()
 {
-  auto max_message = DataChannel->maxMessageSize();
+  auto max_message = this->MaxMessageSize;
   auto protocol = DataChannel->protocol();
   auto label = DataChannel->label();
   std::cout << Prefix << "Data Channel " << label << " has protocol " << protocol << " and max message size " << max_message << std::endl;

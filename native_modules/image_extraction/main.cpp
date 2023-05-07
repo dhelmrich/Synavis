@@ -78,11 +78,13 @@ int main(int args, char** argv)
 
   std::this_thread::sleep_for(1s);
 
-  for (int i = 1; i < 10; ++i)
+  for (int i = 10; i < 11; ++i)
   {
-    std::vector<double> TestGeometry(3 * i);
+    std::vector<double> TestGeometry(3000 * i);
     // fill with increasing numbers
     std::generate(TestGeometry.begin(), TestGeometry.end(), [n = 0]() mutable { return n++; });
+    auto encoded = ::Encode64(TestGeometry);
+    std::cout << "Encoded: " << encoded << std::endl;
     dc->SendFloat64Buffer(TestGeometry, "points", "base64");
     
     while (Messages.size() == 0)
@@ -91,7 +93,13 @@ int main(int args, char** argv)
     }
     // remove last message
     auto message = Messages.back();
+    if(json::parse(message)["type"] == "error")
+    {
+      std::cout << "Error received: " << message << std::endl;
+      return EXIT_FAILURE;
+    }
     Messages.clear();
+    delete [] encoded.data();
     std::this_thread::sleep_for(1s);
   }
   return EXIT_SUCCESS;

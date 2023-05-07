@@ -81,6 +81,7 @@ protected:
   bool Block = false;
   bool FailIfNotComplete = false;
   unsigned int MessagesReceived{ 0 };
+  std::size_t MaxMessageSize{ static_cast<std::size_t>(-1) };
   std::vector<std::string> RequiredCandidate;
   json config_{
     {"SignallingIP", int()},

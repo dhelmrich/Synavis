@@ -84,7 +84,7 @@ while True :
   plant = pb.MappedPlant()
   path = "./coupling/"
   plant.readParameters(path + "P0_plant.xml")
-  stime = 3
+  stime = 10
   leaf_res = 30
   for p in plant.getOrganRandomParameter(pb.leaf):
     p.lb =  0 # length of leaf stem
@@ -144,6 +144,12 @@ while True :
   print("Number of triangles: ", len(triangles))
   # fetch normals
   normals = plant.GetGeometryNormals()
+  normals = np.array(normals).astype("float32")
+  normals = normals.reshape((int(len(normals) / 3), 3))
+  # get the flat array again for base64 encoding
+  normals = normals.flatten()
+  print("Number of normals: ", len(normals))
+  
 
   texcoords = plant.GetGeometryTextureCoordinates()
   node_ids = plant.GetGeometryNodeIds()
