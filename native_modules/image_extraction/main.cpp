@@ -48,14 +48,10 @@ int main(int args, char** argv)
   std::cout << "Fetching IP, " << Config["SignallingIP"].get<std::string>() << std::endl;
   dc->SetConfig(Config);
   dc->StartSignalling();
-  dc->SetMessageCallback([&bWantData,&Messages](auto message)
+  dc->SetMessageCallback([&bWantData, &Messages](auto message)
     {
       Messages.push_back(message);
       std::cout << "Received message: " << message << std::endl;
-      if (bWantData)
-      {
-        bWantData = false;
-      }
     });
   dc->SetDataCallback([&bWantData, &Data](auto data)
     {
@@ -71,10 +67,6 @@ int main(int args, char** argv)
       {
         std::cout << "Received data: " << dataView << std::endl;
       }
-      if (bWantData)
-      {
-        bWantData = false;
-      }
     });
   while (dc->GetState() != WebRTCBridge::EConnectionState::CONNECTED)
   {
@@ -84,34 +76,31 @@ int main(int args, char** argv)
   dc->PrintCommunicationData();
   //dc->SendString("test");
 
-  json Command = { {"type","query"} };
+  std::this_thread::sleep_for(1s);
 
-  // test all byte values
-  dc->DataChannelByte = 50_b;
-  std::cout << "Sending command: " << Command.dump() << std::endl;
-  dc->SendJSON(Command);
-  std::cout << "Waiting for any answer" << std::endl;
-  while (Messages.size() == 0)
+  for (int i = 10; i < 11; ++i)
   {
-    std::this_thread::sleep_for(100ms);
+    std::vector<double> TestGeometry(3000 * i);
+    // fill with increasing numbers
+    std::generate(TestGeometry.begin(), TestGeometry.end(), [n = 0]() mutable { return n++; });
+    auto encoded = ::Encode64(TestGeometry);
+    std::cout << "Encoded: " << encoded << std::endl;
+    dc->SendFloat64Buffer(TestGeometry, "points", "base64");
+    
+    while (Messages.size() == 0)
+    {
+      std::this_thread::sleep_for(10ms);
+    }
+    // remove last message
+    auto message = Messages.back();
+    if(json::parse(message)["type"] == "error")
+    {
+      std::cout << "Error received: " << message << std::endl;
+      return EXIT_FAILURE;
+    }
+    Messages.clear();
+    delete [] encoded.data();
+    std::this_thread::sleep_for(1s);
   }
-  // remove last message
-  auto message = Messages.back();
-  Messages.clear();
-  json j = json::parse(message);
-  // get a random element from the array j["data"]
-  auto randomElement = j["data"].at(rand() % j["data"].size());
-  // send a query for the random element
-  json Query = { {"type","query"}, {"object",randomElement} };
-  std::string debug_string_rep = Query.dump();
-  std::cout << "Sending query: " << debug_string_rep << std::endl;
-  dc->SendJSON(Query);
-  while (Messages.size() == 0)
-  {
-    std::this_thread::sleep_for(100ms);
-  }
-  auto message2 = Messages.back();
-  std::cout << "Received message: " << message2 << std::endl;
-
   return EXIT_SUCCESS;
 }

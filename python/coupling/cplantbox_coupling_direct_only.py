@@ -64,7 +64,6 @@ dataconnector.SetTakeFirstStep(True)
 dataconnector.StartSignalling()
 dataconnector.SetDataCallback(data_callback)
 dataconnector.SetMessageCallback(message_callback)
-dataconnector.SetRetryOnErrorResponse(True)
 
 while not dataconnector.GetState() == rtc.EConnectionState.CONNECTED:
   time.sleep(0.1)
@@ -72,19 +71,25 @@ while not dataconnector.GetState() == rtc.EConnectionState.CONNECTED:
 reset_message()
 
 # send a message
-dataconnector.SendJSON({"type":"parameter", "object":"BP_SynavisDrone_C_1", "property":"MaxVelocity", "value": 100.0})
-dataconnector.SendJSON({"type":"parameter", "object":"BP_SynavisDrone_C_1", "property":"RenderMode", "value": 3})
-dataconnector.SendJSON({"type":"parameter", "object":"BP_SynavisDrone_C_1", "property":"DistanceToLandscape", "value": 100.0})
+dataconnector.SendJSON({"type":"query"})
 
+# wait for the answer
+answer = get_message()
+print(answer)
+
+time.sleep(1)
 
 # run forever
 while True :
-  time.sleep(2)
+  time.sleep(1)
+  if not dataconnector.GetState() == rtc.EConnectionState.CONNECTED:
+    print("Connection lost")
+    break
   # Setting up the simulation
   plant = pb.MappedPlant()
   path = "./coupling/"
   plant.readParameters(path + "P0_plant.xml")
-  stime = 30
+  stime = 10
   leaf_res = 30
   for p in plant.getOrganRandomParameter(pb.leaf):
     p.lb =  0 # length of leaf stem
@@ -109,7 +114,8 @@ while True :
   # Simulate
   plant.simulate(stime, True)
 
-  plant.ComputeGeometry()
+  plant.ComputeGeometryForOrganType(pb.stem)
+  plant.ComputeGeometryForOrganType(pb.leaf)
 
   # fetch point data
   points = plant.GetGeometry()
@@ -120,19 +126,14 @@ while True :
   # increase the z coordinate by 10cm
   points[:, 2] += 10
   # add a spread in the xy plane of 100cm
-  x_spread = np.random.uniform(-200, 200)
-  y_spread = np.random.uniform(-200, 200)
+  x_spread = np.random.uniform(-1000, 1000)
+  y_spread = np.random.uniform(-1000, 1000)
   points[:, 0] += x_spread
   points[:, 1] += y_spread
-  points[:, 2] += 200
   # get the flat array again for base64 encoding
   points = points.flatten()
 
   print("Number of points: ", len(points))
-
-  # print the first few points to compare with Unreal
-  for i in range(0, 10) :
-    print(points[i])
 
   # fetch triangle data
   triangles = plant.GetGeometryIndices()
@@ -145,21 +146,26 @@ while True :
   print("Number of triangles: ", len(triangles))
   # fetch normals
   normals = plant.GetGeometryNormals()
-  normals = np.array(normals).astype("float32")
-  normals = normals.reshape((int(len(normals) / 3), 3))
-  # get the flat array again for base64 encoding
-  normals = normals.flatten()
-  print("Number of normals: ", len(normals))
-  
 
   texcoords = plant.GetGeometryTextureCoordinates()
   node_ids = plant.GetGeometryNodeIds()
   scalars = plant.GetGeometryNodeIds()
-  
-  print("Number of normals: ", len(normals))
-  print("Number of texcoords: ", len(texcoords))
-  print("Number of node_ids: ", len(node_ids))
-  print("Sending data to Unreal")
-  dataconnector.SendGeometry(points, triangles, normals, "name", texcoords, None)
+  # prepare the metadata
+  data = {"type": "directbase64"}
+  # send the points
+  data["points"] = base64.b64encode(np.array(points).tobytes()).decode("utf-8")
+  data["triangles"] = base64.b64encode(np.array(triangles).tobytes()).decode("utf-8")	
+  data["normals"] = base64.b64encode(np.array(normals).tobytes()).decode("utf-8")	
+  data["texcoords"] = base64.b64encode(np.array(texcoords).tobytes()).decode("utf-8")
+  #data["time"] = time
+
+  # data as string
+  string_data = json.dumps(data)
+  # check length
+  if len(string_data) > 1000000 :
+    print("Error: Message too long, ", len(string_data), " bytes")
+    sys.exit(1)
+  # send the metadata
+  dataconnector.SendJSON(data)
 
 

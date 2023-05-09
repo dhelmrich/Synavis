@@ -10,10 +10,10 @@ import os
 import json
 
 # WebRTCBridge: Find build
-path = "../../"
+path = "../"
 # if windows
 if os.name == 'nt' :
-  path = path + "build/webrtcbridge/Release/"
+  path = path + "build_workwin/webrtcbridge/Release/"
   print(path)
 else :
   path = path + "build/"
@@ -21,7 +21,7 @@ sys.path.append(path)
 import PyWebRTCBridge as rtc
 from signalling_server import start_signalling
 
-#start_signalling(True)
+#start_signalling(False)
 
 HEIGHT = 512
 WIDTH = 512
@@ -55,36 +55,40 @@ def data_callback(data) :
 def frame_callback(frame) :
   print("Received frame.")
 
-Media = rtc.MediaReceiver()
+m = rtc.MediaReceiver()
 #Media.SetConfigFile("config.json")
-Media.SetConfig({"SignallingIP": "127.0.0.1","SignallingPort":8080})
-Media.SetTakeFirstStep(False)
-Media.StartSignalling()
-Media.SetDataCallback(data_callback)
-Media.SetMessageCallback(message_callback)
-Media.SetFrameReceptionCallback(frame_callback)
+m.SetConfig({"SignallingIP": "127.0.0.1","SignallingPort":8080})
+m.SetTakeFirstStep(False)
+m.StartSignalling()
+m.SetDataCallback(data_callback)
+m.SetMessageCallback(message_callback)
+m.SetFrameReceptionCallback(frame_callback)
 
-while not Media.GetState() == rtc.EConnectionState.CONNECTED:
+while not m.GetState() == rtc.EConnectionState.CONNECTED:
   time.sleep(0.1)
 
 print("Starting")
 
 time.sleep(1)
 
+reset_message()
 
-Media.SendJSON({"type":"query"})
+data = np.random.rand(50000)
+
+m.SendFloat64Buffer(data, "points", "base64")
+
+#m.SendJSON({"type":"query"})
 answer = get_message()
 
-print("In main thread: ", answer)
 # try parse json
-answer = json.loads(answer)
+#answer = json.loads(answer)
 # get a random entry form answer["data"]
-entry = answer["data"][np.random.randint(0, len(answer["data"]))]
+#entry = answer["data"][np.random.randint(0, len(answer["data"]))]
 # send the entry to the server with a query again
-msg = {"type":"query", "object":entry}
-print("Sending: ", msg)
-Media.SendJSON(msg)
-answer = get_message()
-print("In main thread: ", answer)
+#msg = {"type":"query", "object":entry}
+#print("Sending: ", msg)
+#m.SendJSON(msg)
+#answer = get_message()
+#print("In main thread: ", answer)
 
 

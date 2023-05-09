@@ -50,30 +50,57 @@ template < typename T, typename... Args > std::size_t InsertIntoBinary(rtc::bina
   return InsertIntoBinary(Binary, offset + sizeof(Data), args...);
 }
 
+// a type trait for checking whether a container can be converted to a pointer
+// this is to avoid the unfortunate type confusion in MSVC about rtc::binary
+// even if it is a std::vector<uint8_t> but it won't convert the types to one another
+template < typename T, typename _ = void >
+struct is_pointer_convertible : std::false_type
+{
+};
+template < typename ... Runoff >
+struct is_pointer_convertible_helper {};
+
+template < typename T >
+struct is_pointer_convertible<T,
+  std::conditional_t<
+  false,
+  is_pointer_convertible_helper<
+  typename T::value_type,
+  typename T::size_type,
+  decltype(std::declval<T>().data()),
+  decltype(std::declval<T>().size())
+  >, void >> : public std::true_type
+{
+};
+
 // a function to encode a rtc::binary object into a base64 string
 // adapted from https://stackoverflow.com/questions/180947/base64-decode-snippet-in-c
-static std::string Encode64(const rtc::binary& Data)
+template < typename T >
+static std::string_view Encode64(const T& Data)
 {
+  // check if the data is convertible to a pointer
+  static_assert(is_pointer_convertible<T>::value, "Data must be convertible to a pointer");
+  std::size_t byte_size = Data.size() * sizeof(decltype(*Data.data()));
   // convert data to string of bytes
-  std::string_view strdata(reinterpret_cast<const char*>(Data.data()), Data.size());
+  std::string_view strdata(reinterpret_cast<const char*>(Data.data()), byte_size);
   // base64 encoding table
   constexpr char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   // compute the size of the encoded string
-  std::size_t encoded_length = 4 * ((strdata.size() + 2) / 3);
-  std::string result(encoded_length, '\0');
+  std::size_t encoded_length = 4 * ((byte_size + 2) / 3);
+  char* c = new char[encoded_length];
+  std::string_view c_result = { c, encoded_length };
   std::size_t i;
-  char* c = const_cast<char*>(result.c_str());
-  for (i = 0; i < strdata.size() - 2; i += 3)
+  for (i = 0; i < byte_size - 2; i += 3)
   {
     *c++ = table[(strdata[i] >> 2) & 0x3F];
     *c++ = table[((strdata[i] & 0x3) << 4) | ((int)(strdata[i + 1] & 0xF0) >> 4)];
     *c++ = table[((strdata[i + 1] & 0xF) << 2) | ((int)(strdata[i + 2] & 0xC0) >> 6)];
     *c++ = table[strdata[i + 2] & 0x3F];
   }
-  if (i < strdata.size())
+  if (i < byte_size)
   {
     *c++ = table[(strdata[i] >> 2) & 0x3F];
-    if (i == (strdata.size() - 1))
+    if (i == (byte_size - 1))
     {
       *c++ = table[((strdata[i] & 0x3) << 4)];
       *c++ = '=';
@@ -85,9 +112,21 @@ static std::string Encode64(const rtc::binary& Data)
     }
     *c++ = '=';
   }
-  return result;
+  // return the encoded string as a string_view because this way the data
+  // is not deleted when the scope ends in which this function is called
+  return  c_result;
 }
 
+// a function to retrieve the encoded size of a buffer for base64 encoding
+template < typename T >
+static size_t EncodedSize(const T& Data)
+{
+  // check if the data is convertible to a pointer
+  static_assert(is_pointer_convertible<T>::value, "Data must be convertible to a pointer");
+  // compute the size of the encoded string
+  std::size_t encoded_length = 4 * ((((Data.size() * sizeof(decltype(*Data.data())))) + 2) / 3);
+  return encoded_length;
+}
 
 namespace WebRTCBridge
 {
@@ -101,6 +140,46 @@ namespace WebRTCBridge
   public:
   protected:
   private:
+  };
+
+  // a class to represent access to a buffer in reverse byte order
+  template < typename T >
+  class WEBRTCBRIDGE_EXPORT EndianBuffer
+  {
+    std::span<uint8_t> Data;
+    EndianBuffer(const std::vector<T>& Data)
+    {
+      Data = std::span<uint8_t>(reinterpret_cast<uint8_t*>(Data.data()), Data.size() * sizeof(T));
+    }
+    EndianBuffer(const std::span<T>& Data)
+    {
+      Data = std::span<uint8_t>(reinterpret_cast<uint8_t*>(Data.data()), Data.size() * sizeof(T));
+    }
+    uint8_t& operator[](std::size_t index)
+    {
+      // reverse packs of bytes of size T in the buffer
+      const std::size_t size = sizeof(T);
+      const std::size_t offset = (index / size) * size; // integer division
+      const std::size_t remainder = index % size;
+      return Data[offset + (size - remainder - 1)];
+    }
+    const T at(std::size_t index) const
+    {
+      // returns the object at the index in the original type, with the bytes reversed
+      const std::size_t size = sizeof(T);
+      const std::size_t offset = (index / size) * size; // integer division
+      const std::size_t remainder = index % size;
+      union
+      {
+        T value;
+        uint8_t bytes[size];
+      } result;
+      for (std::size_t i = 0; i < size; ++i)
+      {
+        result.bytes[i] = Data[offset + (size - i - 1)];
+      }
+      return result.value;
+    }
   };
 
   class WEBRTCBRIDGE_EXPORT BridgeSocket
@@ -220,6 +299,16 @@ namespace WebRTCBridge
     None = (std::uint8_t)EDataReceptionPolicy::Loss + 1u,
     Critical,
     All
+  };
+
+  enum class WEBRTCBRIDGE_EXPORT ELogVerbosity
+  {
+    None = (std::uint8_t)EMessageTimeoutPolicy::All + 1u,
+    Error,
+    Warning,
+    Info,
+    Debug,
+    Verbose
   };
 
   using StreamVariant = std::variant<std::shared_ptr<rtc::DataChannel>,

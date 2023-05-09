@@ -125,7 +125,7 @@ namespace WebRTCBridge{
   {
     using T::T;
     using T::json;
-
+    
   };
 
   template < typename T = BridgeSocket > class PyBridgeSocket : public T
@@ -156,6 +156,17 @@ namespace WebRTCBridge{
       .value("RTCERROR", EConnectionState::RTCERROR)
       .export_values()
     ;
+
+    py::enum_<ELogVerbosity>(m, "LogVerbosity")
+      .value("NoLogging", ELogVerbosity::None)
+      .value("Error", ELogVerbosity::Error)
+      .value("Warning", ELogVerbosity::Warning)
+      .value("Info", ELogVerbosity::Info)
+      .value("Debug", ELogVerbosity::Debug)
+      .value("Verbose", ELogVerbosity::Verbose)
+      .export_values()
+    ;
+
     
     py::class_<UnrealReceiver, PyReceiver, std::shared_ptr<UnrealReceiver>>(m, "UnrealReceiver")
       .def(py::init<>())
@@ -199,6 +210,13 @@ namespace WebRTCBridge{
       .def("SetBlock", &DataConnector::SetBlock,py::arg("Block"))
       .def("IsBlocking",&DataConnector::IsBlocking)
       .def("GetState", &DataConnector::GetState)
+      .def("SendBuffer", &DataConnector::SendBuffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
+    .def("SendFloat64Buffer", &DataConnector::SendFloat64Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
+      .def("SendInt32Buffer", &DataConnector::SendInt32Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
+      .def("SendFloat32Buffer", &DataConnector::SendFloat32Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
+      .def("SendGeometry", &DataConnector::SendGeometry, py::arg("Vertices"), py::arg("Indices"), py::arg("Normals"), py::arg("Name"), py::arg("UVs"), py::arg("Tangents"))
+      .def("SetLogVerbosity", &DataConnector::SetLogVerbosity, py::arg("Verbosity"))
+      .def("SetRetryOnErrorResponse", &DataConnector::SetRetryOnErrorResponse, py::arg("Retry"))
     ;
 
     py::class_<MediaReceiver, PyMediaReceiver<>, std::shared_ptr<MediaReceiver>>(m, "MediaReceiver")
@@ -219,6 +237,13 @@ namespace WebRTCBridge{
       .def("SetBlock", &MediaReceiver::SetBlock, py::arg("Block"))
       .def("IsBlocking", &MediaReceiver::IsBlocking)
       .def("GetState", &MediaReceiver::GetState)
+      .def("SendBuffer", &MediaReceiver::SendBuffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
+      .def("SendFloat64Buffer", &MediaReceiver::SendFloat64Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
+      .def("SendInt32Buffer", &MediaReceiver::SendInt32Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
+      .def("SendFloat32Buffer", &MediaReceiver::SendFloat32Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
+      .def("SendGeometry", &MediaReceiver::SendGeometry, py::arg("Vertices"), py::arg("Indices"), py::arg("Normals"), py::arg("Name"), py::arg("UVs"), py::arg("Tangents"))
+      .def("SetLogVerbosity", &MediaReceiver::SetLogVerbosity, py::arg("Verbosity"))
+      .def("SetRetryOnErrorResponse", &MediaReceiver::SetRetryOnErrorResponse, py::arg("Retry"))
     ;
 
     py::enum_<rtc::PeerConnection::GatheringState>(m, "GatheringState")

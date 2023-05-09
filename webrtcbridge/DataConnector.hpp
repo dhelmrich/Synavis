@@ -28,6 +28,12 @@ public:
   virtual void SendData(rtc::binary Data);
   void SendString(std::string Message);
   void SendJSON(json Message);
+  bool SendBuffer(const std::span<const uint8_t>& Buffer, std::string Name, std::string Format = "raw");
+  void SendFloat64Buffer(const std::vector<double>& Buffer, std::string Name, std::string Format = "raw");
+  void SendFloat32Buffer(const std::vector<float>& Buffer, std::string Name, std::string Format = "raw");
+  void SendInt32Buffer(const std::vector<int32_t>& Buffer, std::string Name, std::string Format = "raw");
+  void SendGeometry(const std::vector<double>& Vertices, const std::vector<uint32_t>& Indices, const std::vector<double>& Normals, std::string Name,
+                    std::optional<std::vector<double>> UVs = std::nullopt, std::optional<std::vector<double>> Tangents = std::nullopt);
   EConnectionState GetState();
   std::optional<std::function<void(rtc::binary)>> DataReceptionCallback;
   std::optional<std::function<void(std::string)>> MessageReceptionCallback;
@@ -47,7 +53,11 @@ public:
   void SetOnFailedCallback(std::function<void(void)> Callback) { OnFailedCallback = Callback; }
   void SetOnClosedCallback(std::function<void(void)> Callback) { OnClosedCallback = Callback; }
   void SetOnIceGatheringFinished(std::function<void(void)> Callback) { OnIceGatheringFinished = Callback; }
+  void SetRetryOnErrorResponse(bool Retry) { RetryOnErrorResponse = Retry; }
   void CommunicateSDPs();
+
+  void SetLogVerbosity(ELogVerbosity Verbosity) { LogVerbosity = Verbosity; }
+
 protected:
 
   /**
@@ -57,6 +67,8 @@ protected:
   std::optional<std::function<void(void)>> OnFailedCallback;
   std::optional<std::function<void(void)>> OnClosedCallback;
   std::optional<std::function<void(void)>> OnIceGatheringFinished;
+
+  ELogVerbosity LogVerbosity = ELogVerbosity::Warning;
 
   EConnectionState state_;
 
@@ -69,7 +81,9 @@ protected:
   bool IsServer = false;
   bool Block = false;
   bool FailIfNotComplete = false;
+  bool RetryOnErrorResponse = false;
   unsigned int MessagesReceived{ 0 };
+  std::size_t MaxMessageSize{ static_cast<std::size_t>(-1) };
   std::vector<std::string> RequiredCandidate;
   json config_{
     {"SignallingIP", int()},
