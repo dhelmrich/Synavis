@@ -441,12 +441,12 @@ void WebRTCBridge::DataConnector::SendJSON(json Message)
   DataChannel->sendBuffer(bytes);
 }
 
-void WebRTCBridge::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, std::string Name, std::string Format)
+bool WebRTCBridge::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, std::string Name, std::string Format)
 {
   // this method briefly exchanges the callback for message reception
   auto msg_callback = MessageReceptionCallback;
-  int MessageState = -1;
-  int StateTracker = 0;
+  int MessageState = 0;
+  int StateTracker = 1;
   this->SetMessageCallback([&msg_callback, &MessageState, this](std::string Message)
     {
       std::cout << "Message received: " << Message << std::endl;
@@ -454,6 +454,10 @@ void WebRTCBridge::DataConnector::SendBuffer(const std::span<const uint8_t>& Buf
       if (content["type"] == "buffer")
       {
         MessageState = MessageState + 1;
+      }
+      else if(content["type"] == "error")
+      {
+        MessageState = -1;
       }
       else if (msg_callback.has_value())
       {
@@ -486,14 +490,17 @@ void WebRTCBridge::DataConnector::SendBuffer(const std::span<const uint8_t>& Buf
   }
   if (!Source)
   {
-    std::cout << Prefix << "Invalid format for buffer transmission" << std::endl;
-    return;
+    if(NeedToDelete)
+    {
+      delete[] Source;
+    }
+    throw std::runtime_error(Prefix + "Invalid format for buffer transmission");
   }
   // transmit
   LDEBUG << Prefix << "Transmitting buffer of size " << Buffer.size() << " in " << chunks << " chunks of size " << chunk_size << std::endl;
   this->SendJSON({ {"type","buffer"}, {"start",Name }, {"size", total_size}, {"format", Format} });
   LDEBUG << Prefix << "Sent start message" << std::endl;
-  while (MessageState < StateTracker) { std::this_thread::yield(); }
+  while (MessageState < StateTracker) { std::this_thread::yield(); if(MessageState < 0) break; }
   StateTracker++;
   LDEBUG << Prefix << "Received start message" << std::endl;
   rtc::binary bytes(std::min(chunk_size, total_size) + 4);
@@ -501,7 +508,7 @@ void WebRTCBridge::DataConnector::SendBuffer(const std::span<const uint8_t>& Buf
   uint8_t* buffer = reinterpret_cast<uint8_t*>(&(bytes.at(3)));
   bytes.at(0) = DataChannelByte;
   // move through the chunks
-  for (int i = 0; i < chunks; i++)
+  for (int i = 0; i < chunks && MessageState > 0; i++)
   {
     const auto remaining = std::min(chunk_size, total_size - i * chunk_size);
     if (bytes.size() > remaining + 4)
@@ -517,12 +524,12 @@ void WebRTCBridge::DataConnector::SendBuffer(const std::span<const uint8_t>& Buf
     DataChannel->sendBuffer(bytes);
     LDEBUG << Prefix << "Sent chunk " << i << " of length " << remaining << std::endl;
     // wait for the message to be received
-    while (MessageState < StateTracker) { std::this_thread::yield(); }
+    while (MessageState < StateTracker) { std::this_thread::yield(); if(MessageState < 0) break; }
     LDEBUG << Prefix << "Received message " << i << std::endl;
     StateTracker++;
   }
   this->SendJSON({ {"type","buffer"},{"stop",Name} });
-  while (MessageState < StateTracker) { std::this_thread::yield(); }
+  while (MessageState < StateTracker) { std::this_thread::yield(); if(MessageState < 0) break; }
   LDEBUG << Prefix << "Sent stop message" << std::endl;
   // restore the original callback
   MessageReceptionCallback = msg_callback;
@@ -530,6 +537,7 @@ void WebRTCBridge::DataConnector::SendBuffer(const std::span<const uint8_t>& Buf
   {
     delete[] Source;
   }
+  return MessageState > 0;
 }
 
 void WebRTCBridge::DataConnector::SendFloat64Buffer(const std::vector<double>& Buffer, std::string Name, std::string Format)
@@ -586,34 +594,34 @@ void WebRTCBridge::DataConnector::SendGeometry(const std::vector<double>& Vertic
   }
   else
   {
-    // we need to send the message in chunks
-    Message["state"] = "start";
+    bool state = false;
     std::span<const uint8_t> data(reinterpret_cast<const uint8_t*>(Vertices.data()), reinterpret_cast<const uint8_t*>(Vertices.data() + Vertices.size()));
-
-    this->SendJSON(Message);
     // send the vertices
-    this->SendBuffer(data, "points", "base64");
+    do { state = this->SendBuffer(data, "points", "base64"); } while(!state && RetryOnErrorResponse);
+    state = false;
     // send the indices
     data = std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(Indices.data()), Indices.size() * sizeof(float));
-    this->SendBuffer(data, "triangles", "base64");
+    do { state = this->SendBuffer(data, "triangles", "base64"); } while(!state && RetryOnErrorResponse);
+    state = false;
     // send the normals
     data = std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(Normals.data()), Normals.size() * sizeof(float));
-    this->SendBuffer(data, "normals", "base64");
+    do {state = this->SendBuffer(data, "normals", "base64");} while(!state && RetryOnErrorResponse);
+    state = false;
     // send the UVs
     if (UVs.has_value())
     {
       data = std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(UVs.value().data()), UVs.value().size() * sizeof(float));
-      this->SendBuffer(data, "uvs", "base64");
+      do {state = this->SendBuffer(data, "uvs", "base64");} while(!state && RetryOnErrorResponse);
+      state = false;
     }
     // send the tangents
     if (Tangents.has_value())
     {
       data = std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(Tangents.value().data()), Tangents.value().size() * sizeof(float));
-      this->SendBuffer(data, "tangents", "base64");
+      do {state = this->SendBuffer(data, "tangents", "base64");} while(!state && RetryOnErrorResponse);
+      state = false;
     }
-    // send the stop message
-    Message["state"] = "stop";
-    this->SendJSON(Message);
+    this->SendJSON({{"type","spawn"},{"object","ProceduralMeshComponent"}});
   }
 }
 

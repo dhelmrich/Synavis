@@ -216,6 +216,7 @@ namespace WebRTCBridge{
       .def("SendFloat32Buffer", &DataConnector::SendFloat32Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
       .def("SendGeometry", &DataConnector::SendGeometry, py::arg("Vertices"), py::arg("Indices"), py::arg("Normals"), py::arg("Name"), py::arg("UVs"), py::arg("Tangents"))
       .def("SetLogVerbosity", &DataConnector::SetLogVerbosity, py::arg("Verbosity"))
+      .def("SetRetryOnErrorResponse", &DataConnector::SetRetryOnErrorResponse, py::arg("Retry"))
     ;
 
     py::class_<MediaReceiver, PyMediaReceiver<>, std::shared_ptr<MediaReceiver>>(m, "MediaReceiver")
@@ -242,6 +243,7 @@ namespace WebRTCBridge{
       .def("SendFloat32Buffer", &MediaReceiver::SendFloat32Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
       .def("SendGeometry", &MediaReceiver::SendGeometry, py::arg("Vertices"), py::arg("Indices"), py::arg("Normals"), py::arg("Name"), py::arg("UVs"), py::arg("Tangents"))
       .def("SetLogVerbosity", &MediaReceiver::SetLogVerbosity, py::arg("Verbosity"))
+      .def("SetRetryOnErrorResponse", &MediaReceiver::SetRetryOnErrorResponse, py::arg("Retry"))
     ;
 
     py::enum_<rtc::PeerConnection::GatheringState>(m, "GatheringState")

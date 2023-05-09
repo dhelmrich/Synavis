@@ -28,7 +28,7 @@ public:
   virtual void SendData(rtc::binary Data);
   void SendString(std::string Message);
   void SendJSON(json Message);
-  void SendBuffer(const std::span<const uint8_t>& Buffer, std::string Name, std::string Format = "raw");
+  bool SendBuffer(const std::span<const uint8_t>& Buffer, std::string Name, std::string Format = "raw");
   void SendFloat64Buffer(const std::vector<double>& Buffer, std::string Name, std::string Format = "raw");
   void SendFloat32Buffer(const std::vector<float>& Buffer, std::string Name, std::string Format = "raw");
   void SendInt32Buffer(const std::vector<int32_t>& Buffer, std::string Name, std::string Format = "raw");
@@ -53,6 +53,7 @@ public:
   void SetOnFailedCallback(std::function<void(void)> Callback) { OnFailedCallback = Callback; }
   void SetOnClosedCallback(std::function<void(void)> Callback) { OnClosedCallback = Callback; }
   void SetOnIceGatheringFinished(std::function<void(void)> Callback) { OnIceGatheringFinished = Callback; }
+  void SetRetryOnErrorResponse(bool Retry) { RetryOnErrorResponse = Retry; }
   void CommunicateSDPs();
 
   void SetLogVerbosity(ELogVerbosity Verbosity) { LogVerbosity = Verbosity; }
@@ -80,6 +81,7 @@ protected:
   bool IsServer = false;
   bool Block = false;
   bool FailIfNotComplete = false;
+  bool RetryOnErrorResponse = false;
   unsigned int MessagesReceived{ 0 };
   std::size_t MaxMessageSize{ static_cast<std::size_t>(-1) };
   std::vector<std::string> RequiredCandidate;
