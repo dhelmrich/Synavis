@@ -140,8 +140,6 @@ namespace WebRTCBridge{
 
   template < typename T = MediaReceiver > class PyMediaReceiver : public PyDataConnector<T>
   {
-  public:
-    using T::json;
 
   };
 

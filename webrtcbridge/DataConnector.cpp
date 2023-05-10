@@ -380,13 +380,13 @@ void WebRTCBridge::DataConnector::SendData(rtc::binary Data)
   {
     rtc::binary Chunk(this->MaxMessageSize);
     const auto meta_size = sizeof(int) + sizeof(int) + sizeof(uint16_t) + sizeof(std::byte);
-    unsigned int chunks{ 0 };
+    unsigned int chunks{ 1 };
     for (; (meta_size * chunks + Data.size()) / chunks < this->MaxMessageSize; ++chunks);
 
     // iterate through the chunks
     for (auto i = 0u; i < chunks; ++i)
     {
-      unsigned int n = 0u;
+      std::size_t n = 0u;
       n = InsertIntoBinary(Chunk, n, std::byte(50), uint16_t(0));
       n = InsertIntoBinary(Chunk, n, i, chunks);
       memcpy(Chunk.data() + n, Data.data() + i * chunks, this->MaxMessageSize - meta_size);
@@ -519,7 +519,7 @@ bool WebRTCBridge::DataConnector::SendBuffer(const std::span<const uint8_t>& Buf
     // copy the chunk into the buffer, the std::min is to avoid copying too much
     memcpy(buffer, Source + i * chunk_size, remaining);
     // set the second and third bytes to the chunk size
-    *(reinterpret_cast<uint16_t*>(&(bytes.at(1)))) = remaining;
+    *(reinterpret_cast<uint16_t*>(&(bytes.at(1)))) = static_cast<uint16_t>(remaining);
     // send the buffer
     DataChannel->sendBuffer(bytes);
     LDEBUG << Prefix << "Sent chunk " << i << " of length " << remaining << std::endl;

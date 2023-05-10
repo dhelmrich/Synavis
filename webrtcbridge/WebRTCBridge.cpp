@@ -34,7 +34,7 @@ int WebRTCBridge::BridgeSocket::Receive(bool invalidIsFailure)
 #endif
 }
 
-long WebRTCBridge::TimeSince(std::chrono::system_clock::time_point t)
+int64_t WebRTCBridge::TimeSince(std::chrono::system_clock::time_point t)
 {
   std::chrono::system_clock::time_point sysnow = std::chrono::system_clock::now();
   auto orig_diff = sysnow - t;

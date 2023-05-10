@@ -106,7 +106,7 @@ void WebRTCBridge::Provider::RemoteMessage(json Message)
     // the details on the extension maps for the rtp packages
     // so we can actually read the info that is being included
     rtc::Description desc(Message["sdp"]);
-    for (auto i = 0; i < desc.mediaCount(); ++i)
+    for (unsigned i = 0; i < desc.mediaCount(); ++i)
     {
       auto media = desc.media(i);
       if (std::holds_alternative<rtc::Description::Application*>(media))
