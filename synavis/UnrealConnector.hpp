@@ -3,7 +3,7 @@
 #include "Adapter.hpp"
 #include "Provider.hpp"
 
-namespace WebRTCBridge
+namespace Synavis
 {
 
 
@@ -11,7 +11,7 @@ namespace WebRTCBridge
    * class UnrealConnector
    * A class that contains a whole application mimick to serve as webrtc peer.
    */
-  class WEBRTCBRIDGE_EXPORT UnrealConnector : public Adapter
+  class SYNAVIS_EXPORT UnrealConnector : public Adapter
   {
   public:
     friend class Provider;

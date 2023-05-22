@@ -6,17 +6,17 @@
 #include <span>
 #include <variant>
 #include <rtc/rtc.hpp>
-#include "WebRTCBridge/export.hpp"
+#include "Synavis/export.hpp"
 
-#include "WebRTCBridge.hpp"
+#include "Synavis.hpp"
 #include <rtc/peerconnection.hpp>
 #include <rtc/datachannel.hpp>
 #include <rtc/configuration.hpp>
 
-namespace WebRTCBridge
+namespace Synavis
 {
 
-class WEBRTCBRIDGE_EXPORT DataConnector : public std::enable_shared_from_this<DataConnector>
+class SYNAVIS_EXPORT DataConnector : public std::enable_shared_from_this<DataConnector>
 {
 public:
   using json = nlohmann::json;
@@ -33,7 +33,7 @@ public:
   void SendFloat32Buffer(const std::vector<float>& Buffer, std::string Name, std::string Format = "raw");
   void SendInt32Buffer(const std::vector<int32_t>& Buffer, std::string Name, std::string Format = "raw");
   void SendGeometry(const std::vector<double>& Vertices, const std::vector<uint32_t>& Indices, const std::vector<double>& Normals, std::string Name,
-                    std::optional<std::vector<double>> UVs = std::nullopt, std::optional<std::vector<double>> Tangents = std::nullopt);
+                    std::optional<std::vector<double>> UVs = std::nullopt, std::optional<std::vector<double>> Tangents = std::nullopt, bool AutoMessage = true);
   EConnectionState GetState();
   std::optional<std::function<void(rtc::binary)>> DataReceptionCallback;
   std::optional<std::function<void(std::string)>> MessageReceptionCallback;

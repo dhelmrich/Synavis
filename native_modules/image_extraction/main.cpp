@@ -33,7 +33,7 @@ int main(int args, char** argv)
   }
   std::this_thread::sleep_for(std::chrono::seconds(2));
   using namespace std::chrono_literals;
-  auto dc = std::make_shared<WebRTCBridge::DataConnector>();
+  auto dc = std::make_shared<Synavis::DataConnector>();
   dc->SetTakeFirstStep(true);
   using json = nlohmann::json;
 
@@ -68,7 +68,7 @@ int main(int args, char** argv)
         std::cout << "Received data: " << dataView << std::endl;
       }
     });
-  while (dc->GetState() != WebRTCBridge::EConnectionState::CONNECTED)
+  while (dc->GetState() != Synavis::EConnectionState::CONNECTED)
   {
     std::this_thread::yield();
   }
@@ -83,7 +83,7 @@ int main(int args, char** argv)
     std::vector<double> TestGeometry(3000 * i);
     // fill with increasing numbers
     std::generate(TestGeometry.begin(), TestGeometry.end(), [n = 0]() mutable { return n++; });
-    auto encoded = ::Encode64(TestGeometry);
+    auto encoded = Synavis::Encode64(TestGeometry);
     std::cout << "Encoded: " << encoded << std::endl;
     dc->SendFloat64Buffer(TestGeometry, "points", "base64");
     

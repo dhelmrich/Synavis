@@ -2,7 +2,6 @@
 # PROJECTNAME: ${PROJECTNAME_UPPER}
 # path: ${librarypath}
 
-message("This is ${projectname}")
 set(PYPROJECT "Py${projectname}")
 
 include(GenerateExportHeader)
@@ -10,7 +9,7 @@ include(GenerateExportHeader)
 file(GLOB RECEIVERSOURCES *.cpp)
 file(GLOB RECEIVERHEADERS *.hpp)
 set(PLAINSOURCES ${RECEIVERSOURCES})
-list(FILTER PLAINSOURCES EXCLUDE REGEX ".*PyWebRTCBridge.cpp$")
+list(FILTER PLAINSOURCES EXCLUDE REGEX ".*PySynavis.cpp$")
 # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -openmp:llvm -openmp:experimental")
 
 #set(PYBIND11_PYTHON_VERSION 3.9)
@@ -25,7 +24,6 @@ add_library(${projectname}
   ${RECEIVERHEADERS}
 )
 
-message(Warning "${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/include")
 target_include_directories(${projectname}
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
   PUBLIC ${CMAKE_CURRENT_BINARY_DIR}

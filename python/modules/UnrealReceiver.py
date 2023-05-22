@@ -9,16 +9,16 @@ import sys
 import os
 import json
 
-# WebRTCBridge: Find build
+# Synavis: Find build
 path = "../"
 # if windows
 if os.name == 'nt' :
-  path = path + "build_workwin/webrtcbridge/Release/"
+  path = path + "build/synavis/Release/"
   print(path)
 else :
   path = path + "build/"
 sys.path.append(path)
-import PyWebRTCBridge as rtc
+import PySynavis as rtc
 from signalling_server import start_signalling
 
 #start_signalling(False)
@@ -73,12 +73,7 @@ time.sleep(1)
 
 reset_message()
 
-data = np.random.rand(50000)
 
-m.SendFloat64Buffer(data, "points", "base64")
-
-#m.SendJSON({"type":"query"})
-answer = get_message()
 
 # try parse json
 #answer = json.loads(answer)

@@ -6,13 +6,8 @@ import time
 import json
 
 
-# check if CPLANTBOX_ROOT is set
-if "CPLANTBOX_ROOT" in os.environ:
-  #sys.path.append(os.environ["CPLANTBOX_ROOT"])
-  sys.path.append("G:/Work/CPlantBox/build_vs/src/Release/")
-else :
-  sys.path.append("G:/Work/CPlantBox/build_vs/src/Release/")
-  print("CPLANTBOX_ROOT is not set, but I will try to import plantbox from your PYTHONPATH")
+sys.path.append("/mnt/g/temp/CPlantBox/")
+sys.path.append("/mnt/g/temp/CPlantBox/src/visualisation")
 
 
 try :
@@ -21,6 +16,15 @@ except Exception as e :
   print("Error: Could not import plantbox, please set CPLANTBOX_ROOT or add plantbox to your PYTHONPATH")
   sys.exit(1)
 
+# a function that turns a vector by a angle clockwise around the z axis
+def rotate_z(vector, angle) :
+  angle = np.radians(angle)
+  matrix = np.array([
+    [np.cos(angle), -np.sin(angle), 0],
+    [np.sin(angle), np.cos(angle), 0],
+    [0, 0, 1]
+  ])
+  return np.dot(matrix, vector)
 
 message_buffer = []
 
@@ -51,15 +55,16 @@ def data_callback(data) :
 # Path: cplantbox_coupling.py
 # if we are on windows, the path to the dll is different
 if sys.platform == "win32" :
-  sys.path.append("../build/webrtcbridge/Release/")
+  sys.path.append("../build/synavis/Release/")
 else :
-  sys.path.append("../../build/")
+  sys.path.append("../unix/")
 sys.path.append("../modules/")
-import PyWebRTCBridge as rtc
+import PySynavis as rtc
+
 
 #make the data connector
 dataconnector = rtc.DataConnector()
-dataconnector.SetConfig({"SignallingIP": "127.0.0.1","SignallingPort":8080})
+dataconnector.SetConfig({"SignallingIP": "172.29.192.1","SignallingPort":8080})
 dataconnector.SetTakeFirstStep(True)
 dataconnector.StartSignalling()
 dataconnector.SetDataCallback(data_callback)
@@ -71,22 +76,25 @@ while not dataconnector.GetState() == rtc.EConnectionState.CONNECTED:
 reset_message()
 
 # send a message
-dataconnector.SendJSON({"type":"query"})
-
-# wait for the answer
-answer = get_message()
-print(answer)
+#dataconnector.SendJSON({"type":"parameter", "object":"BP_SynavisDrone_C_1", "property":"MaxVelocity", "value": 100.0})
+#dataconnector.SendJSON({"type":"parameter", "object":"BP_SynavisDrone_C_1", "property":"DistanceToLandscape", "value": 100.0})
+dataconnector.SendJSON({"type":"settings", "settings": {
+  "DistanceScale": 2000,
+  "BlackDistance": 500
+}})
+#dataconnector.SendJSON({"type":"command", "name":"cam", "camera": "scene"})
 
 time.sleep(1)
 
 # run forever
 while True :
-  time.sleep(1)
+  #time.sleep(1)
   if not dataconnector.GetState() == rtc.EConnectionState.CONNECTED:
     print("Connection lost")
     break
   # Setting up the simulation
   plant = pb.MappedPlant()
+  vis = pb.PlantVisualiser(plant)
   path = "./coupling/"
   plant.readParameters(path + "P0_plant.xml")
   stime = 10
@@ -109,25 +117,32 @@ while True :
   # Initialize
 
   plant.initialize()
-  plant.SetGeometryResolution(8)
-  plant.SetLeafResolution(leaf_res)
+  vis.SetGeometryResolution(8)
+  vis.SetLeafResolution(leaf_res)
   # Simulate
   plant.simulate(stime, True)
 
-  plant.ComputeGeometryForOrganType(pb.stem)
-  plant.ComputeGeometryForOrganType(pb.leaf)
+  vis.ResetGeometry()
+  vis.ComputeGeometryForOrganType(pb.stem, False)
+  vis.ComputeGeometryForOrganType(pb.leaf, False)
 
   # fetch point data
-  points = plant.GetGeometry()
+  points = vis.GetGeometry()
   points = np.array(points)
   points = points.reshape((int(len(points) / 3), 3))
+
+  # random per-instance angle
+  angle = np.random.uniform(0, 360) / 180. * np.pi
+  # rotate the points
+  points = np.array([rotate_z(p, angle) for p in points])
+
   # convert to cm
   points *= 10 # convert to cm
   # increase the z coordinate by 10cm
   points[:, 2] += 10
   # add a spread in the xy plane of 100cm
-  x_spread = np.random.uniform(-1000, 1000)
-  y_spread = np.random.uniform(-1000, 1000)
+  x_spread = np.random.uniform(-800, 400)
+  y_spread = np.random.uniform(-400, 800)
   points[:, 0] += x_spread
   points[:, 1] += y_spread
   # get the flat array again for base64 encoding
@@ -136,27 +151,29 @@ while True :
   print("Number of points: ", len(points))
 
   # fetch triangle data
-  triangles = plant.GetGeometryIndices()
+  triangles = vis.GetGeometryIndices()
   triangles = np.array(triangles)
   triangles = triangles.reshape((int(len(triangles) / 3), 3))
+  # first 10 triangles printed
+  print("Triangles: ", triangles[:10])
   # change the order of the triangles
   triangles = np.flip(triangles, 1)
   # get the flat array again for base64 encoding
   triangles = triangles.flatten()
   print("Number of triangles: ", len(triangles))
   # fetch normals
-  normals = plant.GetGeometryNormals()
+  normals = vis.GetGeometryNormals()
 
-  texcoords = plant.GetGeometryTextureCoordinates()
-  node_ids = plant.GetGeometryNodeIds()
-  scalars = plant.GetGeometryNodeIds()
+  texcoords = vis.GetGeometryTextureCoordinates()
+  node_ids = vis.GetGeometryNodeIds()
+  scalars = vis.GetGeometryNodeIds()
   # prepare the metadata
   data = {"type": "directbase64"}
   # send the points
-  data["points"] = base64.b64encode(np.array(points).tobytes()).decode("utf-8")
-  data["triangles"] = base64.b64encode(np.array(triangles).tobytes()).decode("utf-8")	
-  data["normals"] = base64.b64encode(np.array(normals).tobytes()).decode("utf-8")	
-  data["texcoords"] = base64.b64encode(np.array(texcoords).tobytes()).decode("utf-8")
+  data["points"] = base64.b64encode(np.array(points).astype("float64")).decode("utf-8")
+  data["triangles"] = base64.b64encode(np.array(triangles).astype("int32")).decode("utf-8")	
+  data["normals"] = base64.b64encode(np.array(normals).astype("float64")).decode("utf-8")	
+  data["texcoords"] = base64.b64encode(np.array(texcoords).astype("float64")).decode("utf-8")
   #data["time"] = time
 
   # data as string

@@ -5,7 +5,7 @@ sys.path.append("../../unix/")
 #sys.path.append(os.environ["FFMPEG_PATH"])
 import numpy as np
 import asyncio
-import PyWebRTCBridge as UR
+import PySynavis as UR
 import subprocess
 import threading
 import time

@@ -1,20 +1,20 @@
 #pragma once
-#ifndef WEBRTC_PROVIDER_HPP
-#define WEBRTC_PROVIDER_HPP
+#ifndef SYNAVIS_PROVIDER_HPP
+#define SYNAVIS_PROVIDER_HPP
 #include <rtc/rtc.hpp>
 #include <json.hpp>
-#include "WebRTCBridge.hpp"
+#include "Synavis.hpp"
 #include "UnrealReceiver.hpp"
-#include "WebRTCBridge/export.hpp"
+#include "Synavis/export.hpp"
 
-namespace WebRTCBridge
+namespace Synavis
 {
 
   class UnrealReceiver;
   class UnrealConnector;
 
   // this is a bridge class that is used on the UE side
-  class WEBRTCBRIDGE_EXPORT Provider : public Bridge
+  class SYNAVIS_EXPORT Provider : public Bridge
   {
   public:
     using json = nlohmann::json;

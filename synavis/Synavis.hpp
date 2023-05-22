@@ -8,7 +8,7 @@
 #include <variant>
 #include <chrono>
 #include <rtc/rtc.hpp>
-#include "WebRTCBridge/export.hpp"
+#include "Synavis/export.hpp"
 
 #define MAX_RTP_SIZE 208 * 1024
 
@@ -31,8 +31,9 @@ bool ParseTimeFromString(std::string Source, std::chrono::time_point<std::chrono
 #endif
 
 
-namespace WebRTCBridge
+namespace Synavis
 {
+  
   template < typename T > std::weak_ptr<T> weaken(std::shared_ptr<T> const& ptr)
   {
     return std::weak_ptr<T>(ptr);
@@ -135,7 +136,7 @@ namespace WebRTCBridge
 
   int64_t TimeSince(std::chrono::system_clock::time_point t);
 
-  class WEBRTCBRIDGE_EXPORT JSONScheme
+  class SYNAVIS_EXPORT JSONScheme
   {
   public:
   protected:
@@ -144,7 +145,7 @@ namespace WebRTCBridge
 
   // a class to represent access to a buffer in reverse byte order
   template < typename T >
-  class WEBRTCBRIDGE_EXPORT EndianBuffer
+  class SYNAVIS_EXPORT EndianBuffer
   {
     std::span<uint8_t> Data;
     EndianBuffer(const std::vector<T>& Data)
@@ -182,7 +183,7 @@ namespace WebRTCBridge
     }
   };
 
-  class WEBRTCBRIDGE_EXPORT BridgeSocket
+  class SYNAVIS_EXPORT BridgeSocket
   {
   public:
     bool Valid = false;
@@ -254,7 +255,7 @@ namespace WebRTCBridge
   };
 #pragma pack(pop)
 
-  enum class WEBRTCBRIDGE_EXPORT EClientMessageType
+  enum class SYNAVIS_EXPORT EClientMessageType
   {
     QualityControlOwnership = 0u,
     Response,
@@ -266,7 +267,7 @@ namespace WebRTCBridge
     InitialSettings
   };
 
-  enum class WEBRTCBRIDGE_EXPORT EConnectionState
+  enum class SYNAVIS_EXPORT EConnectionState
   {
     STARTUP = (std::uint8_t)EClientMessageType::InitialSettings + 1u,
     SIGNUP,
@@ -277,14 +278,14 @@ namespace WebRTCBridge
     RTCERROR,
   };
 
-  enum class WEBRTCBRIDGE_EXPORT EBridgeConnectionType
+  enum class SYNAVIS_EXPORT EBridgeConnectionType
   {
     LockedMode = (std::uint8_t)EConnectionState::RTCERROR + 1u,
     BridgeMode,
     DirectMode
   };
 
-  enum class WEBRTCBRIDGE_EXPORT EDataReceptionPolicy
+  enum class SYNAVIS_EXPORT EDataReceptionPolicy
   {
     TempFile = (std::uint8_t)EBridgeConnectionType::DirectMode + 1u,
     BinaryCallback,
@@ -294,14 +295,14 @@ namespace WebRTCBridge
     Loss
   };
 
-  enum class WEBRTCBRIDGE_EXPORT EMessageTimeoutPolicy
+  enum class SYNAVIS_EXPORT EMessageTimeoutPolicy
   {
     None = (std::uint8_t)EDataReceptionPolicy::Loss + 1u,
     Critical,
     All
   };
 
-  enum class WEBRTCBRIDGE_EXPORT ELogVerbosity
+  enum class SYNAVIS_EXPORT ELogVerbosity
   {
     None = (std::uint8_t)EMessageTimeoutPolicy::All + 1u,
     Error,
@@ -314,7 +315,7 @@ namespace WebRTCBridge
   using StreamVariant = std::variant<std::shared_ptr<rtc::DataChannel>,
     std::shared_ptr<rtc::Track>>;
 
-  class WEBRTCBRIDGE_EXPORT NoBufferThread
+  class SYNAVIS_EXPORT NoBufferThread
   {
   public:
     const int ReceptionSize = 208 * 1024 * 1024;
@@ -330,7 +331,7 @@ namespace WebRTCBridge
     std::shared_ptr<BridgeSocket> SocketConnection;
   };
 
-  class WEBRTCBRIDGE_EXPORT WorkerThread
+  class SYNAVIS_EXPORT WorkerThread
   {
   public:
     WorkerThread();
@@ -345,7 +346,7 @@ namespace WebRTCBridge
     bool Running = true;
   };
 
-  class WEBRTCBRIDGE_EXPORT Bridge
+  class SYNAVIS_EXPORT Bridge
   {
   public:
     using json = nlohmann::json;

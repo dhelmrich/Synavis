@@ -1,6 +1,6 @@
 #pragma once
-#ifndef WEBRTC_SEEKER_HPP
-#define WEBRTC_SEEKER_HPP
+#ifndef SYNAVIS_SEEKER_HPP
+#define SYNAVIS_SEEKER_HPP
 #include "rtc/rtc.hpp"
 #include <json.hpp>
 #include <vector>
@@ -9,18 +9,18 @@
 #include <functional>
 #include <memory>
 
-#include "WebRTCBridge.hpp"
+#include "Synavis.hpp"
 
-#include "WebRTCBridge/export.hpp"
+#include "Synavis/export.hpp"
 #include <span>
 
 
-namespace WebRTCBridge
+namespace Synavis
 {
   class Connector;
   class BridgeSocket;
 
-  class WEBRTCBRIDGE_EXPORT Seeker : public Bridge, std::enable_shared_from_this<Seeker>
+  class SYNAVIS_EXPORT Seeker : public Bridge, std::enable_shared_from_this<Seeker>
   {
   public:
     using json = nlohmann::json;

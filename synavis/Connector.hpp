@@ -11,11 +11,11 @@
 #include <thread>
 
 
-#include "WebRTCBridge/export.hpp"
+#include "Synavis/export.hpp"
 #include "Seeker.hpp"
 #include "Adapter.hpp"
 
-namespace WebRTCBridge
+namespace Synavis
 {
   class BridgeSocket;
   class NoBufferThread;
@@ -27,7 +27,7 @@ namespace WebRTCBridge
    * A class that contains a whole unreal mimick to serve as webrtc peer.
    *
    */
-  class WEBRTCBRIDGE_EXPORT Connector : public Adapter
+  class SYNAVIS_EXPORT Connector : public Adapter
   {
     friend class Seeker;
   public:

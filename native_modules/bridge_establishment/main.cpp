@@ -37,10 +37,10 @@ void ProviderMain(const json& Config)
 {
   const std::string _pref = "[ProviderThread]: ";
   std::this_thread::sleep_for(2500ms);
-  auto BridgeProvider = std::make_shared<WebRTCBridge::Provider>();
+  auto BridgeProvider = std::make_shared<Synavis::Provider>();
   std::cout << _pref  << "Provider Thread started" << std::endl;
   BridgeProvider->UseConfig(Config);
-  BridgeProvider->SetTimeoutPolicy(WebRTCBridge::EMessageTimeoutPolicy::None, 10s);
+  BridgeProvider->SetTimeoutPolicy(Synavis::EMessageTimeoutPolicy::None, 10s);
   BridgeProvider->InitConnection();
   if(BridgeProvider->EstablishedConnection(false))
   {
@@ -58,12 +58,12 @@ void SeekerMain(const json& Config)
 {
   const std::string _pref = "[SeekerThread]:   ";
   std::this_thread::sleep_for(2000ms);
-  auto BridgeSeeker = std::make_shared<WebRTCBridge::Seeker>();
+  auto BridgeSeeker = std::make_shared<Synavis::Seeker>();
   // Switch in and out ports
 
   std::cout << _pref  << "Seeker Thread started" << std::endl;
   BridgeSeeker->UseConfig(Config);
-  BridgeSeeker->SetTimeoutPolicy(WebRTCBridge::EMessageTimeoutPolicy::None, 10s);
+  BridgeSeeker->SetTimeoutPolicy(Synavis::EMessageTimeoutPolicy::None, 10s);
   BridgeSeeker->InitConnection();
   if(BridgeSeeker->EstablishedConnection(false))
   {

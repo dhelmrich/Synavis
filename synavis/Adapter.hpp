@@ -1,19 +1,19 @@
 #pragma once
-#ifndef WEBRTC_ADAPTER_HPP
-#define WEBRTC_ADAPTER_HPP
+#ifndef SYNAVIS_ADAPTER_HPP
+#define SYNAVIS_ADAPTER_HPP
 
 #include <json.hpp>
 #include <variant>
 #include <rtc/rtc.hpp>
-#include "WebRTCBridge/export.hpp"
+#include "Synavis/export.hpp"
 
-#include "WebRTCBridge.hpp"
+#include "Synavis.hpp"
 
 #ifndef __forceinline
 #define __forceinline inline
 #endif
 
-namespace WebRTCBridge
+namespace Synavis
 {
     template<typename... Ts>
   __forceinline std::vector<std::byte> literalbytes(Ts&&... args) noexcept {
@@ -21,7 +21,7 @@ namespace WebRTCBridge
   }
 
   // This is a general class that wraps the actual webrtc endpoint communication
-  class WEBRTCBRIDGE_EXPORT Adapter
+  class SYNAVIS_EXPORT Adapter
   {
   public:
     virtual ~Adapter() = default;

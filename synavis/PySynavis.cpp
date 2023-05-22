@@ -6,6 +6,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <json.hpp>
 #include "pybind11/pybind11.h"
 #include "pybind11/stl.h"
 #include <pybind11/numpy.h>
@@ -20,14 +21,15 @@
 namespace py = pybind11;
 
 #include "UnrealReceiver.hpp"
-#include "WebRTCBridge.hpp"
+#include "Synavis.hpp"
 #include "Seeker.hpp"
 #include "Adapter.hpp"
 #include "Provider.hpp"
 #include "UnrealConnector.hpp"
 #include <rtc/common.hpp>
 
-namespace WebRTCBridge{
+namespace Synavis
+{
 
   class PyReceiver : public UnrealReceiver
   {
@@ -47,6 +49,7 @@ namespace WebRTCBridge{
   {
   public:
     using T::T;
+    using json = nlohmann::json;
     std::string GenerateSDP() override { PYBIND11_OVERRIDE(std::string, T, GenerateSDP, ); }
     std::string Offer() override { PYBIND11_OVERRIDE(std::string, T, Offer, ); }
     std::string Answer() override { PYBIND11_OVERRIDE(std::string, T, Answer, ); }
@@ -57,7 +60,7 @@ namespace WebRTCBridge{
     void OnLocalDescription(rtc::Description inDescription) override { PYBIND11_OVERLOAD_PURE(void,T,OnLocalDescription,inDescription);}
     void OnLocalCandidate(rtc::Candidate inCandidate) override { PYBIND11_OVERLOAD_PURE(void,T,OnLocalCandidate,inCandidate);}
     void OnDataChannel(std::shared_ptr<rtc::DataChannel> inChannel) override { PYBIND11_OVERLOAD_PURE(void,T,OnDataChannel,inChannel);}
-    void OnRemoteInformation(T::json message) override { PYBIND11_OVERLOAD_PURE(void,T,OnRemoteInformation,message);}
+    void OnRemoteInformation(json message) override { PYBIND11_OVERLOAD_PURE(void,T,OnRemoteInformation,message);}
     void OnChannelPackage(rtc::binary inPackage) override { PYBIND11_OVERLOAD_PURE(void,T,OnChannelPackage,inPackage);}
     void OnChannelMessage(std::string inMessage) override { PYBIND11_OVERLOAD_PURE(void,T,OnChannelMessage,inMessage);}
   };
@@ -65,9 +68,9 @@ namespace WebRTCBridge{
   template < typename T = Connector > class PyConnector : public PyAdapter<T>
   {
   public:
-    using T::json;
+    using json = nlohmann::json;
     //using PyAdapter<T>::PyAdapter;
-    void OnRemoteInformation(T::json message) override { PYBIND11_OVERRIDE(void, T, OnRemoteInformation, message); }
+    void OnRemoteInformation(json message) override { PYBIND11_OVERRIDE(void, T, OnRemoteInformation, message); }
     void OnDataChannel(std::shared_ptr<rtc::DataChannel> inChannel) override { PYBIND11_OVERRIDE(void, T, OnDataChannel, inChannel);}
   };
 
@@ -75,7 +78,7 @@ namespace WebRTCBridge{
   {
   public:
     using T::T;
-    using T::json;
+    using json = nlohmann::json;
     void BridgeRun() override { PYBIND11_OVERRIDE(void, T, BridgeRun, ); }
     void Listen() override { PYBIND11_OVERRIDE(void, T, Listen, ); }
     bool CheckSignallingActive() override { PYBIND11_OVERRIDE(bool, T, CheckSignallingActive, ); }
@@ -86,17 +89,17 @@ namespace WebRTCBridge{
     // todo include pybind11_json for nlohmann::json binding
     // through cmake_fetchcontent https://github.com/pybind/pybind11_json
     //void RemoteMessage(json Message) override { PYBIND11_OVERLOAD_PURE(void, RemoteMessage, T, Message, ); }
-    void RemoteMessage(T::json Message) override {}
+    void RemoteMessage(json Message) override {}
     void OnSignallingData(rtc::binary Message) override { PYBIND11_OVERLOAD_PURE(void, T, OnSignallingData, Message); }
   };
 
   template < typename T = Provider > class PyProvider : public PyBridge<T>
   {
   public:
-    using T::json;
+    using json = nlohmann::json;
     using PyBridge<T>::PyBridge;
     void OnSignallingMessage(std::string Message) override { PYBIND11_OVERRIDE(void, T, OnSignallingMessage, Message); }
-    void RemoteMessage(T::json Message) override {  }
+    void RemoteMessage(json Message) override {  }
     void OnSignallingData(rtc::binary Message) override { PYBIND11_OVERRIDE(void, T, OnSignallingData, Message); }
     bool EstablishedConnection(bool Shallow) override { PYBIND11_OVERRIDE(bool, T, EstablishedConnection, Shallow); }
   };
@@ -104,9 +107,9 @@ namespace WebRTCBridge{
   template < typename T = Seeker > class PySeeker : public PyBridge<T>
   {
   public:
-    using T::json;
+    using json = nlohmann::json;
     using T::T;
-    void OnRemoteInformation(T::json message) override { PYBIND11_OVERRIDE(void, T, OnRemoteInformation, message);  }
+    void OnRemoteInformation(json message) override { PYBIND11_OVERRIDE(void, T, OnRemoteInformation, message);  }
     void OnGatheringStateChange(rtc::PeerConnection::GatheringState inState) override { PYBIND11_OVERRIDE(void, T, OnGatheringStateChange, inState); };
     void OnTrack(std::shared_ptr<rtc::Track> inTrack) override { PYBIND11_OVERRIDE(void, T, OnTrack, inTrack); };
     void OnLocalDescription(rtc::Description inDescription) override { PYBIND11_OVERRIDE(void, T, OnLocalDescription, inDescription); };
@@ -117,14 +120,15 @@ namespace WebRTCBridge{
   template < typename T = UnrealConnector> class PyUnrealConnector : public PyAdapter<T>
   {
   public:
-    void OnRemoteInformation(T::json message) override { PYBIND11_OVERRIDE(void, T, OnRemoteInformation, message); }
+    using json = nlohmann::json;
+    void OnRemoteInformation(json message) override { PYBIND11_OVERRIDE(void, T, OnRemoteInformation, message); }
     void OnDataChannel(std::shared_ptr<rtc::DataChannel> inChannel) override { PYBIND11_OVERRIDE(void, T, OnDataChannel, inChannel);}
   };
 
   template < typename T = DataConnector > class PyDataConnector : public T
   {
     using T::T;
-    using T::json;
+    using json = nlohmann::json;
     
   };
 
@@ -143,7 +147,7 @@ namespace WebRTCBridge{
 
   };
 
-  PYBIND11_MODULE(PyWebRTCBridge, m)
+  PYBIND11_MODULE(PySynavis, m)
   {
     py::enum_<EConnectionState>(m, "EConnectionState")
       .value("STARTUP", EConnectionState::STARTUP)
@@ -212,7 +216,7 @@ namespace WebRTCBridge{
     .def("SendFloat64Buffer", &DataConnector::SendFloat64Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
       .def("SendInt32Buffer", &DataConnector::SendInt32Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
       .def("SendFloat32Buffer", &DataConnector::SendFloat32Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
-      .def("SendGeometry", &DataConnector::SendGeometry, py::arg("Vertices"), py::arg("Indices"), py::arg("Normals"), py::arg("Name"), py::arg("UVs"), py::arg("Tangents"))
+      .def("SendGeometry", &DataConnector::SendGeometry, py::arg("Vertices"), py::arg("Indices"), py::arg("Normals"), py::arg("Name"), py::arg("UVs"), py::arg("Tangents"), py::arg("AutoMessage"))
       .def("SetLogVerbosity", &DataConnector::SetLogVerbosity, py::arg("Verbosity"))
       .def("SetRetryOnErrorResponse", &DataConnector::SetRetryOnErrorResponse, py::arg("Retry"))
     ;
@@ -239,7 +243,7 @@ namespace WebRTCBridge{
       .def("SendFloat64Buffer", &MediaReceiver::SendFloat64Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
       .def("SendInt32Buffer", &MediaReceiver::SendInt32Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
       .def("SendFloat32Buffer", &MediaReceiver::SendFloat32Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
-      .def("SendGeometry", &MediaReceiver::SendGeometry, py::arg("Vertices"), py::arg("Indices"), py::arg("Normals"), py::arg("Name"), py::arg("UVs"), py::arg("Tangents"))
+      .def("SendGeometry", &MediaReceiver::SendGeometry, py::arg("Vertices"), py::arg("Indices"), py::arg("Normals"), py::arg("Name"), py::arg("UVs"), py::arg("Tangents"), py::arg("AutoMessage"))
       .def("SetLogVerbosity", &MediaReceiver::SetLogVerbosity, py::arg("Verbosity"))
       .def("SetRetryOnErrorResponse", &MediaReceiver::SetRetryOnErrorResponse, py::arg("Retry"))
     ;

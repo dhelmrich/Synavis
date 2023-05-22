@@ -18,7 +18,7 @@
 
 #endif
 
-namespace WebRTCBridge
+namespace Synavis
 {
 
 

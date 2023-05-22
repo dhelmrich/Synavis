@@ -13,7 +13,7 @@
 void Sender()
 {
   using namespace std::chrono_literals;
-  auto BridgeSocket = std::make_shared<WebRTCBridge::BridgeSocket>();
+  auto BridgeSocket = std::make_shared<Synavis::BridgeSocket>();
   BridgeSocket->Address = "127.0.0.1";
   BridgeSocket->Port = 81;
   BridgeSocket->Outgoing = true;
@@ -39,7 +39,7 @@ void Sender()
 void Receiver()
 {
   using namespace std::chrono_literals;
-  auto BridgeSocket = std::make_shared<WebRTCBridge::BridgeSocket>();
+  auto BridgeSocket = std::make_shared<Synavis::BridgeSocket>();
   BridgeSocket->Address = "127.0.0.1";
   BridgeSocket->Port = 81;
   BridgeSocket->Outgoing = false;

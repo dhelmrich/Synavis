@@ -14,13 +14,13 @@ void AppMain(std::string role = "receiver")
 {
   json Config = { {"SignallingIP","localhost"}, {"SignallingPort", 8080} };
   std::vector <uint64_t> times;
-  auto dc = std::make_shared<WebRTCBridge::DataConnector>();
+  auto dc = std::make_shared<Synavis::DataConnector>();
   dc->Prefix = "[" + role + "]: ";
   if (role == "sender")
   {
     Config["SignallingPort"] = 8888;
     dc->SetTakeFirstStep(true);
-    dc->SetOnIceGatheringFinished([wdc = std::weak_ptr< WebRTCBridge::DataConnector>(dc)]()
+    dc->SetOnIceGatheringFinished([wdc = std::weak_ptr< Synavis::DataConnector>(dc)]()
       {
         auto dc = wdc.lock();
         if (dc)
@@ -46,13 +46,13 @@ void AppMain(std::string role = "receiver")
   }
   dc->SetConfig(Config);
   dc->StartSignalling();
-  while (dc->GetState() != WebRTCBridge::EConnectionState::CONNECTED)
+  while (dc->GetState() != Synavis::EConnectionState::CONNECTED)
   {
     std::this_thread::yield();
   }
   if (role == "sender")
   {
-    while (dc->GetState() == WebRTCBridge::EConnectionState::CONNECTED)
+    while (dc->GetState() == Synavis::EConnectionState::CONNECTED)
     {
       // prepare json message containing the unix timestamp
       json msg = { {"timestamp", std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()} };

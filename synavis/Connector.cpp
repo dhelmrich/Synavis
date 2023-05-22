@@ -10,7 +10,7 @@
 
 
 
-void WebRTCBridge::Connector::SetupApplicationConnection()
+void Synavis::Connector::SetupApplicationConnection()
 {
 
   // at this point we need the answer from the bridge, potentially, before we set anything up!
@@ -24,13 +24,13 @@ void WebRTCBridge::Connector::SetupApplicationConnection()
   rtc::Description::Audio A2A("audio", rtc::Description::Direction::SendOnly);
 }
 
-void WebRTCBridge::Connector::AwaitSignalling()
+void Synavis::Connector::AwaitSignalling()
 {
   // todo: wait for signalling to boot up, use future from onOpen
   //       or a flag of the class set by onopen
 }
 
-void WebRTCBridge::Connector::OnRemoteInformation(json message)
+void Synavis::Connector::OnRemoteInformation(json message)
 {
   if (message.find("type") != message.end())
   {
@@ -105,13 +105,13 @@ void WebRTCBridge::Connector::OnRemoteInformation(json message)
   }
 }
 
-void WebRTCBridge::Connector::SetReceptionPolicy(EDataReceptionPolicy inPolicy)
+void Synavis::Connector::SetReceptionPolicy(EDataReceptionPolicy inPolicy)
 {
   this->Policy = inPolicy;
 }
 
 
-void WebRTCBridge::Connector::OnGatheringStateChange(rtc::PeerConnection::GatheringState inState)
+void Synavis::Connector::OnGatheringStateChange(rtc::PeerConnection::GatheringState inState)
 {
   if(inState == rtc::PeerConnection::GatheringState::Complete)
   {
@@ -119,53 +119,53 @@ void WebRTCBridge::Connector::OnGatheringStateChange(rtc::PeerConnection::Gather
   }
 }
 
-void WebRTCBridge::Connector::OnTrack(std::shared_ptr<rtc::Track> inTrack)
+void Synavis::Connector::OnTrack(std::shared_ptr<rtc::Track> inTrack)
 {
   FromApplication.push_back(std::move(inTrack));
 }
 
-void WebRTCBridge::Connector::OnLocalDescription(rtc::Description inDescription)
+void Synavis::Connector::OnLocalDescription(rtc::Description inDescription)
 {
 }
 
-void WebRTCBridge::Connector::OnLocalCandidate(rtc::Candidate inCandidate)
+void Synavis::Connector::OnLocalCandidate(rtc::Candidate inCandidate)
 {
 }
 
-void WebRTCBridge::Connector::OnDataChannel(std::shared_ptr<rtc::DataChannel> inChannel)
+void Synavis::Connector::OnDataChannel(std::shared_ptr<rtc::DataChannel> inChannel)
 {
   // Data Channels in webRTC are generally both directions. This is important
   // since it might imply that a client is either able to consume data or not
   // and subsequently also has an inclination of producing commands
 }
 
-WebRTCBridge::Connector::Connector() : Adapter()
+Synavis::Connector::Connector() : Adapter()
 {
 
 }
 
-void WebRTCBridge::Connector::OnChannelPackage(rtc::binary inPackage)
+void Synavis::Connector::OnChannelPackage(rtc::binary inPackage)
 {
 }
 
-void WebRTCBridge::Connector::OnChannelMessage(std::string inMessage)
+void Synavis::Connector::OnChannelMessage(std::string inMessage)
 {
   // todo: channel message contains string content, needs to be observed, might contain related data
 }
 
-std::string WebRTCBridge::Connector::GetConnectionString()
+std::string Synavis::Connector::GetConnectionString()
 {
   return this->config_.dump();
 }
 
-WebRTCBridge::Connector::~Connector()
+Synavis::Connector::~Connector()
 {
 }
 
-WebRTCBridge::Connector::Connector(Connector&& other)
+Synavis::Connector::Connector(Connector&& other)
 {
 }
 
-void WebRTCBridge::Connector::StartFrameReception()
+void Synavis::Connector::StartFrameReception()
 {
 }

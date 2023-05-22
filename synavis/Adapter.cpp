@@ -1,6 +1,6 @@
 #include "Adapter.hpp"
 
-void WebRTCBridge::Adapter::SetupWebRTC()
+void Synavis::Adapter::SetupWebRTC()
 {
   pc_ = std::make_shared<rtc::PeerConnection>();
   
@@ -62,12 +62,12 @@ void WebRTCBridge::Adapter::SetupWebRTC()
     });
 }
 
-void WebRTCBridge::Adapter::CheckBridgeExtention(const std::string& SDP)
+void Synavis::Adapter::CheckBridgeExtention(const std::string& SDP)
 {
   
 }
 
-std::string WebRTCBridge::Adapter::GenerateSDP()
+std::string Synavis::Adapter::GenerateSDP()
 {
   auto sdp = pc_->localDescription();
   std::string description{};
@@ -78,23 +78,23 @@ std::string WebRTCBridge::Adapter::GenerateSDP()
   return description;
 }
 
-std::string WebRTCBridge::Adapter::Offer()
+std::string Synavis::Adapter::Offer()
 {
   return generated_offer_.dump();
 }
 
-std::string WebRTCBridge::Adapter::Answer()
+std::string Synavis::Adapter::Answer()
 {
   return generated_answer_.dump();
 }
 
-void WebRTCBridge::Adapter::OnRemoteInformation(json message)
+void Synavis::Adapter::OnRemoteInformation(json message)
 {
  
 }
 
 
-std::string WebRTCBridge::Adapter::PushSDP(std::string SDP)
+std::string Synavis::Adapter::PushSDP(std::string SDP)
 {
   pc_->setRemoteDescription(SDP);
   if(pc_->localDescription().has_value())
@@ -105,12 +105,12 @@ std::string WebRTCBridge::Adapter::PushSDP(std::string SDP)
     return "";
 }
 
-rtc::PeerConnection* WebRTCBridge::Adapter::GetPeerConnection()
+rtc::PeerConnection* Synavis::Adapter::GetPeerConnection()
 {
     return pc_.get();
 }
 
-void WebRTCBridge::Adapter::SetID(WebRTCBridge::Bridge* Instigator, uint32_t ID)
+void Synavis::Adapter::SetID(Synavis::Bridge* Instigator, uint32_t ID)
 {
   if(OwningBridge && OwningBridge->EstablishedConnection(true))
   {

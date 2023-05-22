@@ -37,7 +37,7 @@ elif clean_build == 1 :
   # change path to the directory where the library is located
   os.chdir("../../unix/")
   # build the library
-  subprocess.call("make webrtcbridge -j4", shell=True)
+  subprocess.call("make synavis -j4", shell=True)
   # change path back to the original path
   os.chdir(cwd)
 
@@ -46,7 +46,7 @@ def OnData(data) :
   print("OnData: " + data)
 
 sys.path.append("../../unix/")
-import PyWebRTCBridge as rtc
+import PySynavis as rtc
 
 ss.glog.info("Starting signalling server")
 ss.client_port = 8080

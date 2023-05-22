@@ -309,6 +309,10 @@ async def main() :
     # checking if we have lightmode enabled
     if "--lightmode" in sys.argv :
       glog.set_light_mode(True)
+    elif "--help" in sys.argv :
+      print("Usage: python3 signalling.py", end = " ")
+      print("[--lightmode]", end = " ")
+      return
   # start the signalling server
   glog.info("Starting server...")
   async with ws.serve(connection, target_ip, server_port, compression = None) as ServerConnection, \

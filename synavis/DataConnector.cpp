@@ -21,7 +21,7 @@ inline constexpr std::byte operator "" _b(unsigned long long i) noexcept
   return static_cast<std::byte>(i);
 }
 
-WebRTCBridge::DataConnector::DataConnector()
+Synavis::DataConnector::DataConnector()
 {
   PeerConnection = std::make_shared<rtc::PeerConnection>(rtcconfig_);
   PeerConnection->onGatheringStateChange([this](auto state)
@@ -273,7 +273,6 @@ WebRTCBridge::DataConnector::DataConnector()
             if (OnIceGatheringFinished.has_value())
             {
               OnIceGatheringFinished.value()();
-
             }
           }
           else
@@ -351,7 +350,7 @@ WebRTCBridge::DataConnector::DataConnector()
     });
 }
 
-WebRTCBridge::DataConnector::~DataConnector()
+Synavis::DataConnector::~DataConnector()
 {
   SignallingServer->close();
   PeerConnection->close();
@@ -359,7 +358,7 @@ WebRTCBridge::DataConnector::~DataConnector()
     std::this_thread::yield();
 }
 
-void WebRTCBridge::DataConnector::StartSignalling()
+void Synavis::DataConnector::StartSignalling()
 {
   std::string address = "ws://" + config_["SignallingIP"].get<std::string>()
     + ":" + std::to_string(config_["SignallingPort"].get<unsigned>());
@@ -372,7 +371,7 @@ void WebRTCBridge::DataConnector::StartSignalling()
   }
 }
 
-void WebRTCBridge::DataConnector::SendData(rtc::binary Data)
+void Synavis::DataConnector::SendData(rtc::binary Data)
 {
   if (this->state_ != EConnectionState::CONNECTED)
     return;
@@ -399,7 +398,7 @@ void WebRTCBridge::DataConnector::SendData(rtc::binary Data)
   }
 }
 
-void WebRTCBridge::DataConnector::SendString(std::string Message)
+void Synavis::DataConnector::SendString(std::string Message)
 {
   if (this->state_ != EConnectionState::CONNECTED)
     return;
@@ -421,7 +420,7 @@ void WebRTCBridge::DataConnector::SendString(std::string Message)
   DataChannel->sendBuffer(bytes);
 }
 
-void WebRTCBridge::DataConnector::SendJSON(json Message)
+void Synavis::DataConnector::SendJSON(json Message)
 {
   if (this->state_ != EConnectionState::CONNECTED)
     return;
@@ -441,7 +440,7 @@ void WebRTCBridge::DataConnector::SendJSON(json Message)
   DataChannel->sendBuffer(bytes);
 }
 
-bool WebRTCBridge::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, std::string Name, std::string Format)
+bool Synavis::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, std::string Name, std::string Format)
 {
   // this method briefly exchanges the callback for message reception
   auto msg_callback = MessageReceptionCallback;
@@ -540,25 +539,25 @@ bool WebRTCBridge::DataConnector::SendBuffer(const std::span<const uint8_t>& Buf
   return MessageState > 0;
 }
 
-void WebRTCBridge::DataConnector::SendFloat64Buffer(const std::vector<double>& Buffer, std::string Name, std::string Format)
+void Synavis::DataConnector::SendFloat64Buffer(const std::vector<double>& Buffer, std::string Name, std::string Format)
 {
   this->SendBuffer(std::span(reinterpret_cast<const uint8_t*>(Buffer.data()), Buffer.size() * sizeof(double)), Name, Format);
 }
 
-void WebRTCBridge::DataConnector::SendFloat32Buffer(const std::vector<float>& Buffer, std::string Name, std::string Format)
+void Synavis::DataConnector::SendFloat32Buffer(const std::vector<float>& Buffer, std::string Name, std::string Format)
 {
   this->SendBuffer(std::span(reinterpret_cast<const uint8_t*>(Buffer.data()), Buffer.size() * sizeof(float)), Name, Format);
 }
 
-void WebRTCBridge::DataConnector::SendInt32Buffer(const std::vector<int32_t>& Buffer, std::string Name,
+void Synavis::DataConnector::SendInt32Buffer(const std::vector<int32_t>& Buffer, std::string Name,
   std::string Format)
 {
   this->SendBuffer(std::span(reinterpret_cast<const uint8_t*>(Buffer.data()), Buffer.size() * sizeof(int32_t)), Name, Format);
 }
 
-void WebRTCBridge::DataConnector::SendGeometry(const std::vector<double>& Vertices, const std::vector<uint32_t>& Indices,
+void Synavis::DataConnector::SendGeometry(const std::vector<double>& Vertices, const std::vector<uint32_t>& Indices,
   const std::vector<double>& Normals, std::string Name, std::optional<std::vector<double>> UVs,
-  std::optional<std::vector<double>> Tangents)
+  std::optional<std::vector<double>> Tangents, bool AutoMessage)
 {
   json Message = { {"type","geometry"},{"name",Name} };
   // calculate the total size[bytes] of the message if we were to send it as a single buffer
@@ -621,26 +620,27 @@ void WebRTCBridge::DataConnector::SendGeometry(const std::vector<double>& Vertic
       do {state = this->SendBuffer(data, "tangents", "base64");} while(!state && RetryOnErrorResponse);
       state = false;
     }
-    this->SendJSON({{"type","spawn"},{"object","ProceduralMeshComponent"}});
+    if(AutoMessage)
+      this->SendJSON({{"type","spawn"},{"object","ProceduralMeshComponent"}});
   }
 }
 
-WebRTCBridge::EConnectionState WebRTCBridge::DataConnector::GetState()
+Synavis::EConnectionState Synavis::DataConnector::GetState()
 {
   return state_;
 }
 
-void WebRTCBridge::DataConnector::SetDataCallback(std::function<void(rtc::binary)> Callback)
+void Synavis::DataConnector::SetDataCallback(std::function<void(rtc::binary)> Callback)
 {
   this->DataReceptionCallback = Callback;
 }
 
-void WebRTCBridge::DataConnector::SetMessageCallback(std::function<void(std::string)> Callback)
+void Synavis::DataConnector::SetMessageCallback(std::function<void(std::string)> Callback)
 {
   this->MessageReceptionCallback = Callback;
 }
 
-void WebRTCBridge::DataConnector::SetConfigFile(std::string ConfigFile)
+void Synavis::DataConnector::SetConfigFile(std::string ConfigFile)
 {
   std::ifstream file(ConfigFile);
   if (!file.is_open())
@@ -652,7 +652,7 @@ void WebRTCBridge::DataConnector::SetConfigFile(std::string ConfigFile)
   SetConfig(js);
 }
 
-void WebRTCBridge::DataConnector::SetConfig(json Config)
+void Synavis::DataConnector::SetConfig(json Config)
 {
   bool all_found = true;
   // use items iterator for config to check if all required values are present
@@ -688,7 +688,7 @@ void WebRTCBridge::DataConnector::SetConfig(json Config)
 
 }
 
-bool WebRTCBridge::DataConnector::IsRunning()
+bool Synavis::DataConnector::IsRunning()
 {
   // returns true if the connection is in a state where it can send and receive data
   return state_ < EConnectionState::CLOSED || SignallingServer->isOpen();
@@ -696,7 +696,7 @@ bool WebRTCBridge::DataConnector::IsRunning()
 }
 
 // a method that outputs data channel information
-void WebRTCBridge::DataConnector::PrintCommunicationData()
+void Synavis::DataConnector::PrintCommunicationData()
 {
   auto max_message = this->MaxMessageSize;
   auto protocol = DataChannel->protocol();
@@ -705,7 +705,7 @@ void WebRTCBridge::DataConnector::PrintCommunicationData()
 
 }
 
-void WebRTCBridge::DataConnector::CommunicateSDPs()
+void Synavis::DataConnector::CommunicateSDPs()
 {
   if (PeerConnection->localDescription().has_value())
   {

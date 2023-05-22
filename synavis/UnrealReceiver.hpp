@@ -1,6 +1,6 @@
 #pragma once
-#ifndef WEBRTC_UNREAL_RECEIVER_HPP
-#define WEBRTC_UNREAL_RECEIVER_HPP
+#ifndef SYNAVIS_UNREAL_RECEIVER_HPP
+#define SYNAVIS_UNREAL_RECEIVER_HPP
 // FORWARD DEFINITIONS
 #include <rtc/rtc.hpp>
 #include <json.hpp>
@@ -9,14 +9,14 @@
 #include <compare>
 #include <functional>
 
-#include "WebRTCBridge.hpp"
-#include "WebRTCBridge/export.hpp"
+#include "Synavis.hpp"
+#include "Synavis/export.hpp"
 
 #include "Adapter.hpp"
 
-namespace WebRTCBridge
+namespace Synavis
 {
-struct WEBRTCBRIDGE_EXPORT SaveRTP
+struct SYNAVIS_EXPORT SaveRTP
 {
   uint32_t timestamp{0};
   uint32_t ssrc{0};
@@ -66,7 +66,7 @@ struct WEBRTCBRIDGE_EXPORT SaveRTP
 
 };
 
-class WEBRTCBRIDGE_EXPORT UnrealReceiver
+class SYNAVIS_EXPORT UnrealReceiver
 {
 public:
   using json = nlohmann::json;

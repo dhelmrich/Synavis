@@ -16,7 +16,7 @@ std::string FormatTime(std::chrono::utc_time<std::chrono::system_clock::duration
 }
 #endif
 
-void WebRTCBridge::Provider::FindBridge()
+void Synavis::Provider::FindBridge()
 {
   std::cout << this->Prefix() << "Find Bridge" << std::endl;
   const std::lock_guard<std::mutex> lock(QueueAccess);
@@ -70,24 +70,24 @@ void WebRTCBridge::Provider::FindBridge()
   }
 }
 
-std::shared_ptr<WebRTCBridge::UnrealConnector> WebRTCBridge::Provider::CreateConnection()
+std::shared_ptr<Synavis::UnrealConnector> Synavis::Provider::CreateConnection()
 {
   // Todo setup the connection
-  struct Wrap { Wrap() : cont(WebRTCBridge::UnrealConnector()) {} WebRTCBridge::UnrealConnector cont; };
+  struct Wrap { Wrap() : cont(Synavis::UnrealConnector()) {} Synavis::UnrealConnector cont; };
   auto t = std::make_shared<Wrap>();
-  std::shared_ptr<WebRTCBridge::UnrealConnector> Connection{ std::move(t), &t->cont };
+  std::shared_ptr<Synavis::UnrealConnector> Connection{ std::move(t), &t->cont };
   Connection->OwningBridge = std::shared_ptr<Provider>(this);
   Connection->SetID(this,++NextID);
   return Connection;
 }
 
-uint32_t WebRTCBridge::Provider::SignalNewEndpoint()
+uint32_t Synavis::Provider::SignalNewEndpoint()
 {
   // todo: once a new unreal instance is created (possibly here), we need to notify the bridges
   return 0;
 }
 
-void WebRTCBridge::Provider::RemoteMessage(json Message)
+void Synavis::Provider::RemoteMessage(json Message)
 {
   // this is the initial message when also the playerID is being generated
   if (Message["type"] == "connected")
@@ -127,7 +127,7 @@ void WebRTCBridge::Provider::RemoteMessage(json Message)
   }
 }
 
-bool WebRTCBridge::Provider::EstablishedConnection(bool Shallow)
+bool Synavis::Provider::EstablishedConnection(bool Shallow)
 {
   using namespace std::chrono_literals;
   if(Shallow)
@@ -176,17 +176,17 @@ bool WebRTCBridge::Provider::EstablishedConnection(bool Shallow)
   }
 }
 
-void WebRTCBridge::Provider::InitConnection()
+void Synavis::Provider::InitConnection()
 {
   Bridge::InitConnection();
 }
 
-std::string WebRTCBridge::Provider::Prefix()
+std::string Synavis::Provider::Prefix()
 {
   return "[ProviderThread]: ";
 }
 
-void WebRTCBridge::Provider::OnSignallingMessage(std::string Message)
+void Synavis::Provider::OnSignallingMessage(std::string Message)
 {
   json Content;
   try
@@ -230,7 +230,7 @@ void WebRTCBridge::Provider::OnSignallingMessage(std::string Message)
   }
 }
 
-void WebRTCBridge::Provider::OnSignallingData(rtc::binary Message)
+void Synavis::Provider::OnSignallingData(rtc::binary Message)
 {
   // I would not know what to do here
 }

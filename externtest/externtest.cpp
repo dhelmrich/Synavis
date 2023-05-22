@@ -6,7 +6,7 @@
 
 int main()
 {
-  auto BridgeProvider = std::make_shared<WebRTCBridge::Provider>();
+  auto BridgeProvider = std::make_shared<Synavis::Provider>();
   std::cout << "Testing connection" << std::endl;
   if(BridgeProvider->EstablishedConnection())
   {

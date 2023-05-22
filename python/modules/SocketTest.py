@@ -1,9 +1,9 @@
 import sys
 import time
 
-sys.path.append("../../build/webrtcbridge/Debug/")
+sys.path.append("../../build/synavis/Debug/")
 
-import PyWebRTCBridge as rtc
+import PySynavis as rtc
 
 socket = rtc.BridgeSocket()
 socket.Address = "localhost"

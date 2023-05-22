@@ -1,4 +1,4 @@
-#include "WebRTCBridge.hpp"
+#include "Synavis.hpp"
 #include "Adapter.hpp"
 
 #include <variant>
@@ -7,7 +7,7 @@
 
 // std::cout << "" << std::endl;
 
-int WebRTCBridge::BridgeSocket::Receive(bool invalidIsFailure)
+int Synavis::BridgeSocket::Receive(bool invalidIsFailure)
 {
 #ifdef _WIN32
   int length = sizeof(Remote);
@@ -34,7 +34,7 @@ int WebRTCBridge::BridgeSocket::Receive(bool invalidIsFailure)
 #endif
 }
 
-int64_t WebRTCBridge::TimeSince(std::chrono::system_clock::time_point t)
+int64_t Synavis::TimeSince(std::chrono::system_clock::time_point t)
 {
   std::chrono::system_clock::time_point sysnow = std::chrono::system_clock::now();
   auto orig_diff = sysnow - t;
@@ -42,13 +42,13 @@ int64_t WebRTCBridge::TimeSince(std::chrono::system_clock::time_point t)
   return diff.count();
 }
 
-void WebRTCBridge::BridgeSocket::SetAddress(std::string inAddress)
+void Synavis::BridgeSocket::SetAddress(std::string inAddress)
 { this->Address = inAddress; }
 
-std::string WebRTCBridge::BridgeSocket::GetAddress()
+std::string Synavis::BridgeSocket::GetAddress()
 { return this->Address; }
 
-void WebRTCBridge::BridgeSocket::SetBlockingEnabled(bool Blocking)
+void Synavis::BridgeSocket::SetBlockingEnabled(bool Blocking)
 {
   unsigned long Mode = !Blocking;
 #ifdef _WIN32
@@ -70,11 +70,11 @@ void WebRTCBridge::BridgeSocket::SetBlockingEnabled(bool Blocking)
 #endif
 }
 
-WebRTCBridge::BridgeSocket::BridgeSocket():Reception(new char[MAX_RTP_SIZE])
+Synavis::BridgeSocket::BridgeSocket():Reception(new char[MAX_RTP_SIZE])
 {
 }
 
-WebRTCBridge::BridgeSocket::~BridgeSocket()
+Synavis::BridgeSocket::~BridgeSocket()
 {
     
 #ifdef _WIN32
@@ -89,13 +89,13 @@ WebRTCBridge::BridgeSocket::~BridgeSocket()
   delete[] Reception;
 }
 
-int WebRTCBridge::BridgeSocket::GetSocketPort()
+int Synavis::BridgeSocket::GetSocketPort()
 {return Port;}
 
-void WebRTCBridge::BridgeSocket::SetSocketPort(int Port)
+void Synavis::BridgeSocket::SetSocketPort(int Port)
 {this->Port = Port;}
 
-std::string WebRTCBridge::BridgeSocket::What()
+std::string Synavis::BridgeSocket::What()
 {
 #ifdef _WIN32
   std::string message;
@@ -111,7 +111,7 @@ std::string WebRTCBridge::BridgeSocket::What()
 #endif
 }
 
-bool WebRTCBridge::BridgeSocket::Connect()
+bool Synavis::BridgeSocket::Connect()
 {
   if(Address == "localhost")
   {
@@ -225,7 +225,7 @@ bool WebRTCBridge::BridgeSocket::Connect()
     
 }
 
-void WebRTCBridge::BridgeSocket::Disconnect()
+void Synavis::BridgeSocket::Disconnect()
 {
 #ifdef _WIN32
   closesocket(Sock);
@@ -235,7 +235,7 @@ void WebRTCBridge::BridgeSocket::Disconnect()
 #endif
 }
 
-int WebRTCBridge::BridgeSocket::ReadSocketFromBinding()
+int Synavis::BridgeSocket::ReadSocketFromBinding()
 {
 #ifdef _WIN32
   int size = sizeof(info);
@@ -247,7 +247,7 @@ int WebRTCBridge::BridgeSocket::ReadSocketFromBinding()
   return 0;
 }
 
-WebRTCBridge::BridgeSocket WebRTCBridge::BridgeSocket::GetFreeSocket(std::string adr)
+Synavis::BridgeSocket Synavis::BridgeSocket::GetFreeSocket(std::string adr)
 {
   BridgeSocket s;
   s.Address = adr;
@@ -283,7 +283,7 @@ WebRTCBridge::BridgeSocket WebRTCBridge::BridgeSocket::GetFreeSocket(std::string
   return s;
 }
 
-int WebRTCBridge::BridgeSocket::Peek()
+int Synavis::BridgeSocket::Peek()
 {
 #ifdef _WIN32
   SetBlockingEnabled(false);
@@ -313,7 +313,7 @@ int WebRTCBridge::BridgeSocket::Peek()
   return size;
 }
 
-bool WebRTCBridge::BridgeSocket::Send(std::variant<rtc::binary, std::string> message)
+bool Synavis::BridgeSocket::Send(std::variant<rtc::binary, std::string> message)
 {
   if(Outgoing && this->Valid)
   {
@@ -346,25 +346,25 @@ bool WebRTCBridge::BridgeSocket::Send(std::variant<rtc::binary, std::string> mes
   }
 }
 
-WebRTCBridge::NoBufferThread::NoBufferThread(std::shared_ptr<BridgeSocket> inDataSource)
+Synavis::NoBufferThread::NoBufferThread(std::shared_ptr<BridgeSocket> inDataSource)
     : SocketConnection(inDataSource)
 {
-  Thread = std::async(&WebRTCBridge::NoBufferThread::Run,this);
+  Thread = std::async(&Synavis::NoBufferThread::Run,this);
 }
 
-std::size_t WebRTCBridge::NoBufferThread::AddRTC(StreamVariant inRTC)
+std::size_t Synavis::NoBufferThread::AddRTC(StreamVariant inRTC)
 {
 
   return std::size_t();
 }
 
-std::size_t WebRTCBridge::NoBufferThread::AddRTC(StreamVariant&& inRTC)
+std::size_t Synavis::NoBufferThread::AddRTC(StreamVariant&& inRTC)
 {
 
   return std::size_t();
 }
 
-void WebRTCBridge::NoBufferThread::Run()
+void Synavis::NoBufferThread::Run()
 {
   // Consume buffer until close (this should never be empty but we never know)
   
@@ -403,17 +403,17 @@ void WebRTCBridge::NoBufferThread::Run()
   }
 }
 
-WebRTCBridge::WorkerThread::WorkerThread()
+Synavis::WorkerThread::WorkerThread()
 {
   Thread = std::async(std::launch::async, &WorkerThread::Run, this);
 }
 
-WebRTCBridge::WorkerThread::~WorkerThread()
+Synavis::WorkerThread::~WorkerThread()
 {
   Running = false;
 }
 
-void WebRTCBridge::WorkerThread::Run()
+void Synavis::WorkerThread::Run()
 {
   using namespace std::chrono_literals;
   std::unique_lock<std::mutex> lock(TaskMutex);
@@ -433,16 +433,16 @@ void WebRTCBridge::WorkerThread::Run()
   }
 }
 
-void WebRTCBridge::WorkerThread::AddTask(std::function<void()>&& Task)
+void Synavis::WorkerThread::AddTask(std::function<void()>&& Task)
 {
   std::unique_lock<std::mutex> lock(TaskMutex);
   Tasks.push(Task);
   this->TaskCondition.notify_all();
 }
 
-WebRTCBridge::Bridge::Bridge()
+Synavis::Bridge::Bridge()
 {
-  std::cout << Prefix() << "An instance of the WebRTCBridge was started, we are starting the threads..." << std::endl;
+  std::cout << Prefix() << "An instance of the Synavis was started, we are starting the threads..." << std::endl;
   BridgeThread = std::async(std::launch::async, &Bridge::BridgeRun,this);
   std::cout << Prefix() << "Bridge Thread started" << std::endl;
   ListenerThread = std::async(std::launch::async,&Bridge::Listen, this);
@@ -455,7 +455,7 @@ WebRTCBridge::Bridge::Bridge()
   SignallingConnection = std::make_shared<rtc::WebSocket>();
 }
 
-WebRTCBridge::Bridge::~Bridge()
+Synavis::Bridge::~Bridge()
 {
   if(SignallingConnection->isOpen())
   {
@@ -463,19 +463,19 @@ WebRTCBridge::Bridge::~Bridge()
   }
 }
 
-std::string WebRTCBridge::Bridge::Prefix()
+std::string Synavis::Bridge::Prefix()
 {
-  return "[WebRTCBridge]: ";
+  return "[Synavis]: ";
 }
 
-void WebRTCBridge::Bridge::SetTimeoutPolicy(EMessageTimeoutPolicy inPolicy,
+void Synavis::Bridge::SetTimeoutPolicy(EMessageTimeoutPolicy inPolicy,
   std::chrono::system_clock::duration inTimeout)
 {
   this->Timeout = inTimeout;
   this->TimeoutPolicy = inPolicy;
 }
 
-void WebRTCBridge::Bridge::BridgeSynchronize(Adapter* Instigator, nlohmann::json Message, bool bFailIfNotResolved)
+void Synavis::Bridge::BridgeSynchronize(Adapter* Instigator, nlohmann::json Message, bool bFailIfNotResolved)
 {
   if(Instigator != nullptr)
     Message["id"] = Instigator->ID;
@@ -526,14 +526,14 @@ void WebRTCBridge::Bridge::BridgeSynchronize(Adapter* Instigator, nlohmann::json
   }
 }
 
-void WebRTCBridge::Bridge::CreateTask(std::function<void()>&& Task)
+void Synavis::Bridge::CreateTask(std::function<void()>&& Task)
 {
   std::unique_lock<std::mutex> lock(QueueAccess);
   CommInstructQueue.push(Task);
   this->TaskAvaliable.notify_all();
 }
 
-void WebRTCBridge::Bridge::BridgeSubmit(Adapter* Instigator, StreamVariant origin, std::variant<rtc::binary, std::string> Message) const
+void Synavis::Bridge::BridgeSubmit(Adapter* Instigator, StreamVariant origin, std::variant<rtc::binary, std::string> Message) const
 {
   // we need to break this up because of json lib compatibility
   if (std::holds_alternative<std::string>(Message))
@@ -554,7 +554,7 @@ void WebRTCBridge::Bridge::BridgeSubmit(Adapter* Instigator, StreamVariant origi
   }
 }
 
-void WebRTCBridge::Bridge::InitConnection()
+void Synavis::Bridge::InitConnection()
 {
   std::cout << Prefix() << "Init connection" << std::endl;
   BridgeConnection.In->Outgoing = false;
@@ -590,12 +590,12 @@ void WebRTCBridge::Bridge::InitConnection()
   */
 }
 
-void WebRTCBridge::Bridge::SetHeaderByteStart(uint32_t Byte)
+void Synavis::Bridge::SetHeaderByteStart(uint32_t Byte)
 {
   this->DataInThread->RtpDestinationHeader = Byte;
 }
 
-void WebRTCBridge::Bridge::BridgeRun()
+void Synavis::Bridge::BridgeRun()
 {
   using namespace std::chrono_literals;
   std::unique_lock<std::mutex> lock(QueueAccess);
@@ -626,7 +626,7 @@ void WebRTCBridge::Bridge::BridgeRun()
   std::cout << Prefix() << "BridgeThread ended!" << std::endl;
 }
 
-void WebRTCBridge::Bridge::Listen()
+void Synavis::Bridge::Listen()
 {
   std::unique_lock<std::mutex> lock(CommandAccess);
   while (Run)
@@ -654,12 +654,12 @@ void WebRTCBridge::Bridge::Listen()
   }
 }
 
-bool WebRTCBridge::Bridge::CheckSignallingActive()
+bool Synavis::Bridge::CheckSignallingActive()
 {
   return SignallingConnection->isOpen();
 }
 
-bool WebRTCBridge::Bridge::EstablishedConnection(bool Shallow)
+bool Synavis::Bridge::EstablishedConnection(bool Shallow)
 {
   using namespace std::chrono_literals;
   auto status_bridge_thread = BridgeThread.wait_for(0ms);
@@ -673,12 +673,12 @@ bool WebRTCBridge::Bridge::EstablishedConnection(bool Shallow)
          && status_command_thread != std::future_status::ready);
 }
 
-void WebRTCBridge::Bridge::FindBridge()
+void Synavis::Bridge::FindBridge()
 {
   
 }
 
-void WebRTCBridge::Bridge::StartSignalling(std::string IP, int Port, bool keepAlive, bool useAuthentification)
+void Synavis::Bridge::StartSignalling(std::string IP, int Port, bool keepAlive, bool useAuthentification)
 {
   using namespace std::chrono_literals;
   SignallingConnection = std::make_shared<rtc::WebSocket>();
@@ -719,7 +719,7 @@ void WebRTCBridge::Bridge::StartSignalling(std::string IP, int Port, bool keepAl
   std::cout << Prefix() << "Connected!" << std::endl;
 }
 
-void WebRTCBridge::Bridge::ConfigureTrackOutput(std::shared_ptr<rtc::Track> OutputStream, rtc::Description::Media* Media)
+void Synavis::Bridge::ConfigureTrackOutput(std::shared_ptr<rtc::Track> OutputStream, rtc::Description::Media* Media)
 {
   // this is from media to track, as there is no direct function of configuring the track using the media
   // and the specific implementation of the rtc is largely hidden behind templated constructs.
@@ -728,7 +728,7 @@ void WebRTCBridge::Bridge::ConfigureTrackOutput(std::shared_ptr<rtc::Track> Outp
   // which we cannot provide as we do not actually packetize any frames
 }
 
-void WebRTCBridge::Bridge::SubmitToSignalling(json Message, Adapter* Endpoint)
+void Synavis::Bridge::SubmitToSignalling(json Message, Adapter* Endpoint)
 {
   if(SignallingConnection->isOpen())
   {
@@ -740,7 +740,7 @@ void WebRTCBridge::Bridge::SubmitToSignalling(json Message, Adapter* Endpoint)
   }
 }
 
-void WebRTCBridge::Bridge::Stop()
+void Synavis::Bridge::Stop()
 {
   std::cout << Prefix() << "Stopping Bridge" << std::endl;
   Run = false;
@@ -748,19 +748,19 @@ void WebRTCBridge::Bridge::Stop()
   SignallingConnection->close();
 }
 
-WebRTCBridge::EMessageTimeoutPolicy WebRTCBridge::Bridge::GetTimeoutPolicy()
+Synavis::EMessageTimeoutPolicy Synavis::Bridge::GetTimeoutPolicy()
 {
   return this->TimeoutPolicy;
 }
 
-void WebRTCBridge::Bridge::UseConfig(std::string filename)
+void Synavis::Bridge::UseConfig(std::string filename)
 {
   std::ifstream file(filename);
   auto fileConfig = json::parse(file);
   UseConfig(fileConfig);
 }
 
-void WebRTCBridge::Bridge::UseConfig(json fileConfig)
+void Synavis::Bridge::UseConfig(json fileConfig)
 {
 
   this->Config = fileConfig;

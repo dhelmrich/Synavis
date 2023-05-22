@@ -8,7 +8,7 @@ import time
 import sys
 import os
 
-# WebRTCBridge: Find build
+# Synavis: Find build
 path = "../../"
 # if windows
 if os.name == 'nt' :
@@ -16,7 +16,7 @@ if os.name == 'nt' :
 else :
   path = path + "build/"
 sys.path.append(path)
-import WebRTCBridge as rtc
+import Synavis as rtc
 
 HEIGHT = 512
 WIDTH = 512

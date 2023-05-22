@@ -10,7 +10,7 @@
 
 int main()
 {
-  auto BridgeSocket = std::make_shared<WebRTCBridge::BridgeSocket>();
+  auto BridgeSocket = std::make_shared<Synavis::BridgeSocket>();
   BridgeSocket->Address = "localhost";
   BridgeSocket->Port = 51250;
   BridgeSocket->Outgoing = false;

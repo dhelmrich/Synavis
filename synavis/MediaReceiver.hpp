@@ -1,19 +1,19 @@
-#ifndef WEBRTC_MEDIA_RECEIVER_HPP
-#define WEBRTC_MEDIA_RECEIVER_HPP
+#ifndef SYNAVIS_MEDIA_RECEIVER_HPP
+#define SYNAVIS_MEDIA_RECEIVER_HPP
 #pragma once
 
-#include "WebRTCBridge/export.hpp"
-#include "WebRTCBridge.hpp"
+#include "Synavis/export.hpp"
+#include "Synavis.hpp"
 #include "DataConnector.hpp"
 #include <json.hpp>
 
 #include "rtc/description.hpp"
 
-namespace WebRTCBridge
+namespace Synavis
 {
 
 // a class that handles the WebRTC connection for a client that receives media
-class WEBRTCBRIDGE_EXPORT MediaReceiver : public DataConnector, public std::enable_shared_from_this<MediaReceiver>
+class SYNAVIS_EXPORT MediaReceiver : public DataConnector, public std::enable_shared_from_this<MediaReceiver>
 {
 public:
   using json = nlohmann::json;
@@ -51,7 +51,7 @@ protected:
 
 };
 
-} // namespace WebRTCBridge
+} // namespace Synavis
 
 #endif
 

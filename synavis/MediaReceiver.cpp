@@ -3,8 +3,8 @@
 #include <iostream>
 #include <rtc/rtc.hpp>
 
-WebRTCBridge::MediaReceiver::MediaReceiver()
-  : WebRTCBridge::DataConnector()
+Synavis::MediaReceiver::MediaReceiver()
+  : Synavis::DataConnector()
 {
   std::cout << "MediaReceiver created" << std::endl;
   const unsigned int bitrate = 3000;
@@ -58,25 +58,25 @@ WebRTCBridge::MediaReceiver::MediaReceiver()
 
 }
 
-WebRTCBridge::MediaReceiver::~MediaReceiver()
+Synavis::MediaReceiver::~MediaReceiver()
 {
   FrameRelay->Disconnect();
 }
 
-void WebRTCBridge::MediaReceiver::ConfigureRelay(std::string IP, int Port)
+void Synavis::MediaReceiver::ConfigureRelay(std::string IP, int Port)
 {
   FrameRelay->SetAddress(IP);
   FrameRelay->SetSocketPort(Port);
 }
 
-void WebRTCBridge::MediaReceiver::PrintCommunicationData()
+void Synavis::MediaReceiver::PrintCommunicationData()
 {
   DataConnector::PrintCommunicationData();
   std::cout << "FrameRelay: " << FrameRelay->GetAddress() << ":" << FrameRelay->GetSocketPort() << std::endl;
   std::cout << "Track (" << Track->mid() << ") has a maximum Message size of " << Track->maxMessageSize() << std::endl;
 }
 
-std::vector<uint8_t> WebRTCBridge::MediaReceiver::DecodeFrame(rtc::binary Frame)
+std::vector<uint8_t> Synavis::MediaReceiver::DecodeFrame(rtc::binary Frame)
 {
   // Decode a H264 frame into a vector of bytes
   std::vector<uint8_t> DecodedFrame(2000 * 1000);
@@ -87,7 +87,7 @@ std::vector<uint8_t> WebRTCBridge::MediaReceiver::DecodeFrame(rtc::binary Frame)
   return DecodedFrame;
 }
 
-void WebRTCBridge::MediaReceiver::MediaHandler(rtc::message_variant DataOrMessage)
+void Synavis::MediaReceiver::MediaHandler(rtc::message_variant DataOrMessage)
 {
   if (std::holds_alternative<rtc::binary>(DataOrMessage))
   {

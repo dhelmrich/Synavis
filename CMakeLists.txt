@@ -11,7 +11,7 @@
 
 cmake_minimum_required(VERSION 3.12.0)
 
-set(projectname WebRTCBridge)
+set(projectname Synavis)
 string(TOUPPER ${projectname} PROJECTNAME_UPPER)
 string(TOLOWER ${projectname} PROJECTNAME_LOWER)
 # lib path?
@@ -82,7 +82,7 @@ if(NOT pybind11_json_POPULATED)
     add_subdirectory(${pybind11_json_SOURCE_DIR} ${pybind11_json_BINARY_DIR})
 endif()
 
-add_subdirectory(webrtcbridge)
+add_subdirectory(synavis)
 add_subdirectory(externtest)
 add_subdirectory(native_modules)
 

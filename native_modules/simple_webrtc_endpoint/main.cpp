@@ -20,7 +20,7 @@ int main(int args, char** arg)
     role = "receiver";
   }
   role = arg[1];
-  auto dc = std::make_shared<WebRTCBridge::DataConnector>();
+  auto dc = std::make_shared<Synavis::DataConnector>();
   if(role == "sender")
   {
     Config["SignallingPort"] = 8888;
@@ -39,13 +39,13 @@ int main(int args, char** arg)
   }
   dc->SetConfig(Config);
   dc->StartSignalling();
-  while(dc->GetState() != WebRTCBridge::EConnectionState::CONNECTED)
+  while(dc->GetState() != Synavis::EConnectionState::CONNECTED)
   {
     std::this_thread::yield();
   }
   if(role == "sender")
   {
-    while (dc->GetState() == WebRTCBridge::EConnectionState::CONNECTED)
+    while (dc->GetState() == Synavis::EConnectionState::CONNECTED)
     {
       // prepare json message containing the unix timestamp
       json msg = { {"timestamp", std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()} };
