@@ -214,7 +214,7 @@ namespace Synavis
       .def("IsBlocking",&DataConnector::IsBlocking)
       .def("GetState", &DataConnector::GetState)
       .def("SendBuffer", &DataConnector::SendBuffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
-    .def("SendFloat64Buffer", &DataConnector::SendFloat64Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
+      .def("SendFloat64Buffer", &DataConnector::SendFloat64Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
       .def("SendInt32Buffer", &DataConnector::SendInt32Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
       .def("SendFloat32Buffer", &DataConnector::SendFloat32Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
       .def("SendGeometry", &DataConnector::SendGeometry, py::arg("Vertices"), py::arg("Indices"), py::arg("Normals"), py::arg("Name"), py::arg("UVs"), py::arg("Tangents"), py::arg("AutoMessage"))
@@ -248,6 +248,7 @@ namespace Synavis
       .def("SendGeometry", &MediaReceiver::SendGeometry, py::arg("Vertices"), py::arg("Indices"), py::arg("Normals"), py::arg("Name"), py::arg("UVs"), py::arg("Tangents"), py::arg("AutoMessage"))
       .def("SetLogVerbosity", &MediaReceiver::SetLogVerbosity, py::arg("Verbosity"))
       .def("SetRetryOnErrorResponse", &MediaReceiver::SetRetryOnErrorResponse, py::arg("Retry"))
+      .def("RequestKeyFrame", &MediaReceiver::RequestKeyFrame)
     ;
 
     py::enum_<rtc::PeerConnection::GatheringState>(m, "GatheringState")

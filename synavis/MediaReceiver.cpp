@@ -87,6 +87,11 @@ std::vector<uint8_t> Synavis::MediaReceiver::DecodeFrame(rtc::binary Frame)
   return DecodedFrame;
 }
 
+void Synavis::MediaReceiver::RequestKeyFrame()
+{
+   Track->requestKeyframe();
+}
+
 void Synavis::MediaReceiver::MediaHandler(rtc::message_variant DataOrMessage)
 {
   if (std::holds_alternative<rtc::binary>(DataOrMessage))

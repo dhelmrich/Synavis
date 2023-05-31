@@ -36,6 +36,8 @@ public:
 
   std::vector<uint8_t> DecodeFrame(rtc::binary Frame);
 
+  void RequestKeyFrame();
+
   
 
 protected:
