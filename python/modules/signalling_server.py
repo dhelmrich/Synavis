@@ -24,12 +24,12 @@ class Logger() :
     # also open a log file
     i = 0
     timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
-    fname = "log_"+timestamp+"_"+str(i)+".txt"
+    fname = "sig_"+timestamp+"_"+str(i)+".log"
     # check if the file exists
     while os.path.exists(fname) :
       i += 1
-      fname = "log_"+timestamp+"_"+str(i)+".txt"
-    self.log_file = open("log_"+timestamp+".txt", "w")
+      fname = "sig_"+timestamp+"_"+str(i)+".log"
+    self.log_file = open(fname, "w")
   #enddef
   # desctructor
   def __del__(self) :
