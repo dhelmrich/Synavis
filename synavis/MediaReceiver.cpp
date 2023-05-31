@@ -100,14 +100,6 @@ void Synavis::MediaReceiver::MediaHandler(rtc::message_variant DataOrMessage)
     {
       FrameReceptionCallback.value()(std::get<rtc::binary>(DataOrMessage));
     }
-    else
-    {
-      std::cout << "FrameReceptionCallback not set" << std::endl;
-    }
     FrameRelay->Send(std::get<rtc::binary>(DataOrMessage));
-  }
-  else
-  {
-    std::cout << "MediaHandler Received: " << std::get<std::string>(DataOrMessage) << std::endl;
   }
 }
