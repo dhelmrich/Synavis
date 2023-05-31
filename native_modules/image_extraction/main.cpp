@@ -4,6 +4,8 @@
 #include <chrono>
 #include <rtc/common.hpp>
 
+#include "MediaReceiver.hpp"
+
 
 inline constexpr std::byte operator "" _b(unsigned long long i) noexcept
 {
@@ -33,10 +35,11 @@ int main(int args, char** argv)
   }
   std::this_thread::sleep_for(std::chrono::seconds(2));
   using namespace std::chrono_literals;
-  auto dc = std::make_shared<Synavis::DataConnector>();
-  dc->SetTakeFirstStep(true);
+  auto dc = std::make_shared<Synavis::MediaReceiver>();
+  dc->ConfigureRelay("127.0.0.1", 53326);
+  dc->SetTakeFirstStep(false);
   using json = nlohmann::json;
-
+  
 
   bool bWantData = false;
   json Data;
@@ -68,39 +71,47 @@ int main(int args, char** argv)
         std::cout << "Received data: " << dataView << std::endl;
       }
     });
+  dc->SetFrameReceptionCallback([](auto frame)
+  {
+    //std::cout << "Received frame: " << frame.size() << std::endl;
+  });
   while (dc->GetState() != Synavis::EConnectionState::CONNECTED)
   {
     std::this_thread::yield();
   }
   std::cout << "Found out that we are connected" << std::endl;
   dc->PrintCommunicationData();
+  dc->SendJSON(json({{"type","console"}, {"command", "t.maxFPS 20"}}));
   //dc->SendString("test");
 
-  std::this_thread::sleep_for(1s);
-
-  for (int i = 10; i < 11; ++i)
+  while(Synavis::EConnectionState::CONNECTED == dc->GetState())
   {
-    std::vector<double> TestGeometry(3000 * i);
-    // fill with increasing numbers
-    std::generate(TestGeometry.begin(), TestGeometry.end(), [n = 0]() mutable { return n++; });
-    auto encoded = Synavis::Encode64(TestGeometry);
-    std::cout << "Encoded: " << encoded << std::endl;
-    dc->SendFloat64Buffer(TestGeometry, "points", "base64");
-    
-    while (Messages.size() == 0)
-    {
-      std::this_thread::sleep_for(10ms);
-    }
-    // remove last message
-    auto message = Messages.back();
-    if(json::parse(message)["type"] == "error")
-    {
-      std::cout << "Error received: " << message << std::endl;
-      return EXIT_FAILURE;
-    }
-    Messages.clear();
-    delete [] encoded.data();
-    std::this_thread::sleep_for(1s);
+    std::this_thread::sleep_for(10ms);
   }
+
+  // for (int i = 10; i < 11; ++i)
+  // {
+  //   std::vector<double> TestGeometry(3000 * i);
+  //   // fill with increasing numbers
+  //   std::generate(TestGeometry.begin(), TestGeometry.end(), [n = 0]() mutable { return n++; });
+  //   auto encoded = Synavis::Encode64(TestGeometry);
+  //   std::cout << "Encoded: " << encoded << std::endl;
+  //   dc->SendFloat64Buffer(TestGeometry, "points", "base64");
+  //   
+  //   while (Messages.size() == 0)
+  //   {
+  //     std::this_thread::sleep_for(10ms);
+  //   }
+  //   // remove last message
+  //   auto message = Messages.back();
+  //   if(json::parse(message)["type"] == "error")
+  //   {
+  //     std::cout << "Error received: " << message << std::endl;
+  //     return EXIT_FAILURE;
+  //   }
+  //   Messages.clear();
+  //   delete [] encoded.data();
+  //   std::this_thread::sleep_for(1s);
+  // }
   return EXIT_SUCCESS;
 }
