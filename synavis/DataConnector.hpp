@@ -53,6 +53,7 @@ public:
   void SetOnFailedCallback(std::function<void(void)> Callback) { OnFailedCallback = Callback; }
   void SetOnClosedCallback(std::function<void(void)> Callback) { OnClosedCallback = Callback; }
   void SetOnIceGatheringFinished(std::function<void(void)> Callback) { OnIceGatheringFinished = Callback; }
+  void SetOnRemoteDescriptionCallback(std::function<void(std::string)> Callback) { OnRemoteDescriptionCallback = Callback; }
   void SetRetryOnErrorResponse(bool Retry) { RetryOnErrorResponse = Retry; }
   void CommunicateSDPs();
 
@@ -67,6 +68,7 @@ protected:
   std::optional<std::function<void(void)>> OnFailedCallback;
   std::optional<std::function<void(void)>> OnClosedCallback;
   std::optional<std::function<void(void)>> OnIceGatheringFinished;
+  std::optional<std::function<void(std::string)>> OnRemoteDescriptionCallback;
 
   ELogVerbosity LogVerbosity = ELogVerbosity::Warning;
 

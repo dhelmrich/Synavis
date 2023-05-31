@@ -198,6 +198,8 @@ Synavis::DataConnector::DataConnector()
           std::string sdp = content["sdp"].get<std::string>();
           std::string type = content["type"].get<std::string>();
           rtc::Description remote(sdp, type);
+          if(OnRemoteDescriptionCallback.has_value())
+            OnRemoteDescriptionCallback.value()(message);
           if (content["type"] == "answer" && TakeFirstStep)
             PeerConnection->setRemoteDescription(remote);
           else if (content["type"] == "offer" && !TakeFirstStep)
