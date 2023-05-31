@@ -44,3 +44,4 @@ unix/*
 node*/*
 __pycache__/*
 *.pyc
+*.log
