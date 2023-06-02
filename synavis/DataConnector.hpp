@@ -56,6 +56,7 @@ public:
   void SetOnRemoteDescriptionCallback(std::function<void(std::string)> Callback) { OnRemoteDescriptionCallback = Callback; }
   void SetRetryOnErrorResponse(bool Retry) { RetryOnErrorResponse = Retry; }
   void CommunicateSDPs();
+  void WriteSDPsToFile(std::string Filename);
 
   void SetLogVerbosity(ELogVerbosity Verbosity) { LogVerbosity = Verbosity; }
 

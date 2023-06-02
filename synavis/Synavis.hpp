@@ -136,12 +136,6 @@ namespace Synavis
 
   int64_t TimeSince(std::chrono::system_clock::time_point t);
 
-  class SYNAVIS_EXPORT JSONScheme
-  {
-  public:
-  protected:
-  private:
-  };
 
   // a class to represent access to a buffer in reverse byte order
   template < typename T >

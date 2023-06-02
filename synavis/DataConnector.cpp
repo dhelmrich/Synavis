@@ -13,8 +13,10 @@
 #undef min
 #undef max
 
-#define LDEBUG if(LogVerbosity >= ELogVerbosity::Debug) std::cout
-#define LINFO if(LogVerbosity >= ELogVerbosity::Info) std::cout
+#define LDEBUG if(LogVerbosity >= ELogVerbosity::Debug) std::cout << Prefix 
+#define LINFO if(LogVerbosity >= ELogVerbosity::Info) std::cout << Prefix 
+#define LWARNING if(LogVerbosity >= ELogVerbosity::Warning) std::cout << Prefix 
+#define LERROR if(LogVerbosity >= ELogVerbosity::Error) std::cerr << Prefix 
 
 inline constexpr std::byte operator "" _b(unsigned long long i) noexcept
 {
@@ -49,7 +51,7 @@ Synavis::DataConnector::DataConnector()
     });
   PeerConnection->onDataChannel([this](auto datachannel)
     {
-      std::cout << Prefix << "I received a channel I did not ask for" << std::endl;
+      LWARNING << "I received a channel I did not ask for" << std::endl;
       datachannel->onOpen([this]()
         {
           std::cout << Prefix << "THEIR DataChannel connection is setup!" << std::endl;
@@ -57,21 +59,21 @@ Synavis::DataConnector::DataConnector()
     });
   PeerConnection->onTrack([this](auto track)
     {
-      std::cout << Prefix << "I received a track I did not ask for" << std::endl;
+      LWARNING << "I received a track I did not ask for" << std::endl;
       track->onOpen([this, track]()
         {
-          std::cout << Prefix << "Track connection is setup!" << std::endl;
+          LINFO << "Track connection is setup!" << std::endl;
           track->send(rtc::binary({ (std::byte)(EClientMessageType::QualityControlOwnership) }));
           track->send(rtc::binary({ std::byte{72},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0} }));
         });
     });
   PeerConnection->onSignalingStateChange([this](auto state)
     {
-      std::cout << Prefix << "SS State changed: " << state << std::endl;
+      LINFO << "SS State changed: " << state << std::endl;
     });
   PeerConnection->onStateChange([this](rtc::PeerConnection::State state)
     {
-      std::cout << Prefix << "State changed: " << state << std::endl;
+      LINFO << "State changed: " << state << std::endl;
       if (state == rtc::PeerConnection::State::Failed && OnFailedCallback.has_value())
       {
         OnFailedCallback.value()();
@@ -81,16 +83,16 @@ Synavis::DataConnector::DataConnector()
   DataChannel = PeerConnection->createDataChannel("DataConnectionChannel");
   DataChannel->onOpen([this]()
     {
-      std::cout << Prefix << "OUR DataChannel connection is setup!" << std::endl;
+      LINFO << "OUR DataChannel connection is setup!" << std::endl;
       // display a warning if the data channel message size is larger than the UE size byte uint16
       if (DataChannel->maxMessageSize() > std::numeric_limits<uint16_t>::max() - 3)
       {
         // make a framed warning
-        std::cout << Prefix << "****************************************************************************" << std::endl;
-        std::cout << Prefix << "*                                                                          *" << std::endl;
-        std::cout << Prefix << "* WARNING: DataChannel message size is larger than the UE size byte uint16 *" << std::endl;
-        std::cout << Prefix << "*                                                                          *" << std::endl;
-        std::cout << Prefix << "****************************************************************************" << std::endl;
+        LWARNING << "****************************************************************************" << std::endl;
+        LWARNING << "*                                                                          *" << std::endl;
+        LWARNING << "* WARNING: DataChannel message size is larger than the UE size byte uint16 *" << std::endl;
+        LWARNING << "*                                                                          *" << std::endl;
+        LWARNING << "****************************************************************************" << std::endl;
       }
       this->MaxMessageSize = std::min(DataChannel->maxMessageSize(), static_cast<std::size_t>(std::numeric_limits<uint16_t>::max() - 3));
     });
@@ -123,7 +125,7 @@ Synavis::DataConnector::DataConnector()
     });
   DataChannel->onError([this](std::string error)
     {
-      std::cerr << "DataChannel error: " << error << std::endl;
+      LERROR << "DataChannel error: " << error << std::endl;
     });
   DataChannel->onAvailable([this]()
     {
@@ -136,11 +138,11 @@ Synavis::DataConnector::DataConnector()
     });
   DataChannel->onBufferedAmountLow([this]()
     {
-      std::cout << Prefix << "DataChannel buffered amount low" << std::endl;
+      LINFO << "DataChannel buffered amount low" << std::endl;
     });
   DataChannel->onClosed([this]()
     {
-      std::cout << Prefix << "DataChannel is CLOSED again" << std::endl;
+      LINFO << "DataChannel is CLOSED again" << std::endl;
       this->state_ = EConnectionState::CLOSED;
       if (OnClosedCallback.has_value())
       {
@@ -151,11 +153,11 @@ Synavis::DataConnector::DataConnector()
   SignallingServer->onOpen([this]()
     {
       state_ = EConnectionState::SIGNUP;
-      std::cout << Prefix << "Signalling server connected" << std::endl;
+      LINFO << "Signalling server connected" << std::endl;
       if (TakeFirstStep)
       {
         json role_request = { {"type","request"},{"request","role"} };
-        std::cout << Prefix << "Attempting to prompt for role, this will fail if the server is not configured to do so" << std::endl;
+        LINFO << "Attempting to prompt for role, this will fail if the server is not configured to do so" << std::endl;
         //SignallingServer->send(role_request.dump());
       }
       if (TakeFirstStep && PeerConnection->localDescription().has_value())
@@ -163,11 +165,11 @@ Synavis::DataConnector::DataConnector()
         json offer = { {"type","offer"}, {"endpoint", "data"},{"sdp",PeerConnection->localDescription().value()} };
         if (PeerConnection->hasMedia())
         {
-          std::cout << "PeerConnection has Media!" << std::endl;
+          LINFO << "PeerConnection has Media!" << std::endl;
         }
         else
         {
-          std::cout << "PeerConnection has no Media!" << std::endl;
+          LINFO << "PeerConnection has no Media!" << std::endl;
         }
         SignallingServer->send(offer.dump());
         state_ = EConnectionState::OFFERED;
@@ -189,12 +191,12 @@ Synavis::DataConnector::DataConnector()
         }
         catch (json::exception e)
         {
-          std::cout << Prefix << "Could not read package:" << e.what() << std::endl;
+          LERROR << "Could not read package:" << e.what() << std::endl;
         }
-        std::cout << Prefix << "I received a message of type: " << content["type"] << std::endl;
+        LDEBUG << "I received a message of type: " << content["type"] << std::endl;
         if (content["type"] == "answer" || content["type"] == "offer")
         {
-          std::cout << "Received an " << content["type"] << " from the server" << std::endl;
+          LDEBUG << "Received an " << content["type"] << " from the server" << std::endl;
           std::string sdp = content["sdp"].get<std::string>();
           std::string type = content["type"].get<std::string>();
           rtc::Description remote(sdp, type);
@@ -237,7 +239,7 @@ Synavis::DataConnector::DataConnector()
         else if (content["type"] == "iceCandidate")
         {
           // {"type": "iceCandidate", "candidate": {"candidate": "candidate:1 1 UDP 2122317823 172.26.15.227 42835 typ host", "sdpMLineIndex": "0", "sdpMid": "0"}}
-          std::cout << Prefix << "Parsing" << std::endl;
+          LDEBUG << "Parsing" << std::endl;
           std::string sdpMid, candidate_string;
           int sdpMLineIndex;
           try
@@ -248,10 +250,10 @@ Synavis::DataConnector::DataConnector()
           }
           catch (std::exception e)
           {
-            std::cout << Prefix << "Could not parse candidate: " << e.what() << std::endl;
+            LWARNING << "Could not parse candidate: " << e.what() << std::endl;
             return;
           }
-          std::cout << Prefix << "I received a candidate for " << sdpMid << " with index " << sdpMLineIndex << " and candidate " << candidate_string << std::endl;
+          LDEBUG << "I received a candidate for " << sdpMid << " with index " << sdpMLineIndex << " and candidate " << candidate_string << std::endl;
           rtc::Candidate ice(candidate_string, sdpMid);
           try
           {
@@ -261,12 +263,12 @@ Synavis::DataConnector::DataConnector()
           }
           catch (std::exception e)
           {
-            std::cout << Prefix << "Could not add remote candidate: " << e.what() << std::endl;
+            LERROR << "Could not add remote candidate: " << e.what() << std::endl;
           }
           // if we have no more required candidates, we can send an answer
           if (RequiredCandidate.size() == 0)
           {
-            std::cout << Prefix << "I have received all required candidates" << std::endl;
+            LINFO << "I have received all required candidates" << std::endl;
             if (!TakeFirstStep && PeerConnection->localDescription().has_value() && state_ < EConnectionState::OFFERED)
             {
               this->state_ = EConnectionState::OFFERED;
@@ -279,27 +281,27 @@ Synavis::DataConnector::DataConnector()
           }
           else
           {
-            std::cout << Prefix << "I still have " << RequiredCandidate.size() << " required candidates: ";
+            LDEBUG << "I still have " << RequiredCandidate.size() << " required candidates: ";
             for (auto i = 0; i < RequiredCandidate.size(); ++i)
             {
-              std::cout << Prefix << RequiredCandidate[i] << " ";
+              if(this->LogVerbosity >= ELogVerbosity::Debug) std::cout << RequiredCandidate[i] << " ";
             }
-            std::cout << Prefix << std::endl;
+            if(this->LogVerbosity >= ELogVerbosity::Debug) std::cout << std::endl;
           }
         }
         else if (content["type"] == "control")
         {
-          std::cout << Prefix << "Received a control message: " << content["message"] << std::endl;
+          LDEBUG << "Received a control message: " << content["message"] << std::endl;
         }
         else if (content["type"] == "id")
         {
           this->config_["id"] = content["id"];
-          std::cout << Prefix << "Received an id: " << content["id"] << std::endl;
+          LINFO << "Received an id: " << content["id"] << std::endl;
         }
         else if (content["type"] == "serverDisconnected")
         {
           PeerConnection.reset();
-          std::cout << Prefix << "Reset peer connection because we received a disconnect" << std::endl;
+          LWARNING << "Reset peer connection because we received a disconnect" << std::endl;
         }
         else if (content["type"] == "config")
         {
@@ -308,11 +310,11 @@ Synavis::DataConnector::DataConnector()
         }
         else if (content["type"] == "playerCount")
         {
-          std::cout << Prefix << "There are " << content["count"] << " players connected" << std::endl;
+          LINFO << "There are " << content["count"] << " players connected" << std::endl;
         }
         else if (content["type"] == "role")
         {
-          std::cout << Prefix << "Received a role: " << content["role"] << std::endl;
+          LINFO << "Received a role: " << content["role"] << std::endl;
           if (content["role"] == "server")
           {
             this->IsServer = true;
@@ -328,11 +330,11 @@ Synavis::DataConnector::DataConnector()
         else if (content["type"] == "playerDisconnected")
         {
           PeerConnection.reset();
-          std::cout << Prefix << "Resetting connection because we must be in server role and the player disconnected" << std::endl;
+          LWARNING << "Resetting connection because we must be in server role and the player disconnected" << std::endl;
         }
         else
         {
-          std::cout << Prefix << "unknown message?" << std::endl << content.dump() << std::endl;
+          LWARNING << "unknown message?" << std::endl << content.dump() << std::endl;
         }
       }
     });
@@ -341,14 +343,14 @@ Synavis::DataConnector::DataConnector()
       state_ = EConnectionState::CLOSED;
       auto unix_time = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 
-      std::cout << Prefix << "Signalling server was closed at timestamp " << unix_time << std::endl;
+      LINFO << "Signalling server was closed at timestamp " << unix_time << std::endl;
 
     });
   SignallingServer->onError([this](std::string error)
     {
       state_ = EConnectionState::STARTUP;
       SignallingServer->close();
-      std::cerr << "Signalling server error: " << error << std::endl;
+      LERROR << "Signalling server error: " << error << std::endl;
     });
 }
 
@@ -364,7 +366,7 @@ void Synavis::DataConnector::StartSignalling()
 {
   std::string address = "ws://" + config_["SignallingIP"].get<std::string>()
     + ":" + std::to_string(config_["SignallingPort"].get<unsigned>());
-  LINFO << Prefix << "Starting Signalling to " << address << std::endl;
+  LINFO << "Starting Signalling to " << address << std::endl;
   state_ = EConnectionState::STARTUP;
   SignallingServer->open(address);
   while (Block && state_ < EConnectionState::SIGNUP)
@@ -498,12 +500,12 @@ bool Synavis::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, 
     throw std::runtime_error(Prefix + "Invalid format for buffer transmission");
   }
   // transmit
-  LDEBUG << Prefix << "Transmitting buffer of size " << Buffer.size() << " in " << chunks << " chunks of size " << chunk_size << std::endl;
+  LDEBUG << "Transmitting buffer of size " << Buffer.size() << " in " << chunks << " chunks of size " << chunk_size << std::endl;
   this->SendJSON({ {"type","buffer"}, {"start",Name }, {"size", total_size}, {"format", Format} });
-  LDEBUG << Prefix << "Sent start message" << std::endl;
+  LDEBUG << "Sent start message" << std::endl;
   while (MessageState < StateTracker) { std::this_thread::yield(); if(MessageState < 0) break; }
   StateTracker++;
-  LDEBUG << Prefix << "Received start message" << std::endl;
+  LDEBUG << "Received start message" << std::endl;
   rtc::binary bytes(std::min(chunk_size, total_size) + 4);
   bytes.at(bytes.size() - 1) = std::byte(0);
   uint8_t* buffer = reinterpret_cast<uint8_t*>(&(bytes.at(3)));
@@ -523,15 +525,15 @@ bool Synavis::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, 
     *(reinterpret_cast<uint16_t*>(&(bytes.at(1)))) = static_cast<uint16_t>(remaining);
     // send the buffer
     DataChannel->sendBuffer(bytes);
-    LDEBUG << Prefix << "Sent chunk " << i << " of length " << remaining << std::endl;
+    LDEBUG << "Sent chunk " << i << " of length " << remaining << std::endl;
     // wait for the message to be received
     while (MessageState < StateTracker) { std::this_thread::yield(); if(MessageState < 0) break; }
-    LDEBUG << Prefix << "Received message " << i << std::endl;
+    LDEBUG << "Received message " << i << std::endl;
     StateTracker++;
   }
   this->SendJSON({ {"type","buffer"},{"stop",Name} });
   while (MessageState < StateTracker) { std::this_thread::yield(); if(MessageState < 0) break; }
-  LDEBUG << Prefix << "Sent stop message" << std::endl;
+  LDEBUG << "Sent stop message" << std::endl;
   // restore the original callback
   MessageReceptionCallback = msg_callback;
   if (NeedToDelete)
@@ -668,8 +670,8 @@ void Synavis::DataConnector::SetConfig(json Config)
   }
   if (!all_found)
   {
-    std::cerr << "Config is missing required values" << std::endl;
-    std::cerr << "Required values are: " << std::endl;
+    LERROR << "Config is missing required values" << std::endl;
+    LERROR << "Required values are: " << std::endl;
     for (auto& [key, value] : config_.items())
     {
       std::cerr << key << " ";
@@ -703,8 +705,7 @@ void Synavis::DataConnector::PrintCommunicationData()
   auto max_message = this->MaxMessageSize;
   auto protocol = DataChannel->protocol();
   auto label = DataChannel->label();
-  std::cout << Prefix << "Data Channel " << label << " has protocol " << protocol << " and max message size " << max_message << std::endl;
-
+  LINFO << "Data Channel " << label << " has protocol " << protocol << " and max message size " << max_message << std::endl;
 }
 
 void Synavis::DataConnector::CommunicateSDPs()
@@ -722,4 +723,17 @@ void Synavis::DataConnector::CommunicateSDPs()
       SignallingServer->send(ice.dump());
     }
   }
+}
+
+void Synavis::DataConnector::WriteSDPsToFile(std::string Filename)
+{
+  LDEBUG << "Set Writing SDPs to file; Note that you need to call this function AFTER setting the RemoteInformation Callback." << std::endl;
+  this->OnRemoteDescriptionCallback = [f_ = this->OnRemoteDescriptionCallback, Filename](std::string sdp)
+  {
+    std::ofstream file(Filename);
+    file << sdp;
+    file.close();
+    if(f_.has_value())
+      f_.value()(sdp);
+  };
 }

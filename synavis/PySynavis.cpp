@@ -220,6 +220,7 @@ namespace Synavis
       .def("SendGeometry", &DataConnector::SendGeometry, py::arg("Vertices"), py::arg("Indices"), py::arg("Normals"), py::arg("Name"), py::arg("UVs"), py::arg("Tangents"), py::arg("AutoMessage"))
       .def("SetLogVerbosity", &DataConnector::SetLogVerbosity, py::arg("Verbosity"))
       .def("SetRetryOnErrorResponse", &DataConnector::SetRetryOnErrorResponse, py::arg("Retry"))
+      .def("WriteSDPsToFile", &DataConnector::WriteSDPsToFile, py::arg("Filename"))
     ;
 
     py::class_<MediaReceiver, PyMediaReceiver<>, std::shared_ptr<MediaReceiver>>(m, "MediaReceiver")
@@ -249,6 +250,7 @@ namespace Synavis
       .def("SetLogVerbosity", &MediaReceiver::SetLogVerbosity, py::arg("Verbosity"))
       .def("SetRetryOnErrorResponse", &MediaReceiver::SetRetryOnErrorResponse, py::arg("Retry"))
       .def("RequestKeyFrame", &MediaReceiver::RequestKeyFrame)
+      .def("WriteSDPsToFile", &MediaReceiver::WriteSDPsToFile, py::arg("Filename"))
     ;
 
     py::enum_<rtc::PeerConnection::GatheringState>(m, "GatheringState")
