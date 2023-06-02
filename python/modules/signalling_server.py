@@ -12,10 +12,47 @@ import os
 
 ws.debug = True
 
+
+
 target_ip = "0.0.0.0"
 server_port = 8888
 client_port = 8080
 sfu_port = 8889 # not used yet, but this is the port that the SFU listens on for signalling
+global_options = {
+#  "PixelStreaming": {
+#    "AllowPixelStreamingCommands": True,
+#    "DisableLatencyTest": True
+#  },
+#  "Encoder":{
+#    "TargetBitrate": -1,
+#    "MaxBitrate": 20000000,
+#    "MinQP": 0,
+#    "MaxQP": 51,
+#    "RateControl": "CBR",
+#    "FillerData": 0,
+#    "MultiPass": "FULL"
+#  },
+#  "WebRTC":{
+#    "DegradationPref": "MAINTAIN_QUALITY",
+#    "FPS": 10,
+#    "MinBitrate": 100000,
+#    "MaxBitrate": 100000000,
+#    "LowQP": 25,
+#    "HighQP": 37
+#    },
+#    "ConfigOptions": { }
+}
+
+class NoLog() :
+  def write(self, message) :
+    pass
+  #enddef
+  def close(self) :
+    pass
+  #enddef
+  def flush(self) :
+    pass
+#endclass
 
 class Logger() :
   def __init__ (self):
@@ -60,6 +97,10 @@ class Logger() :
     self.log(message, Fore.GREEN)
   #enddef
 
+  def set_log_file(self, fname) :
+    self.log_file.close()
+    self.log_file = open(fname, "w")
+
   def log_outgoing(self, message, receiver = None) :
     if receiver != None :
       self.log(str(receiver.role) + "[" + str(receiver.id) + "]" + " -> " + str(message), Fore.BLUE)
@@ -94,6 +135,34 @@ glog = Logger()
 
 connections = {}
 active_server = None
+cluster_mode = False
+
+# a method that searches network interfaces and selects an infiniband interface if available
+def get_infiniband_interface() :
+  # get the list of network interfaces
+  interfaces = subprocess.check_output(["ifconfig", "-a"]).decode("utf-8").split("\n")
+  # search for an infiniband interface
+  for interface in interfaces :
+    if "ib" in interface :
+      return interface.split(":")[0]
+    #endif
+  #endfor
+  return None
+
+# a method that produces ice candidates for a given network interface
+def get_ice_candidates(interface) :
+  ice_candidates = []
+  # get the ip address from the interface
+  ifconfig = subprocess.check_output(["ifconfig", interface]).decode("utf-8").split("\n")
+  ip = ""
+  for i in range(len(ifconfig)) :
+    if interface in ifconfig[i] and "RUNNING" in ifconfig[i] :
+      ip = ifconfig[i+1].split(" ")[1]
+      break
+    #endif
+  #endfor
+#enddef
+
 
 # a method that returns all connections that do not have any other connections assigned to them
 # parameter role: "server" or "client"
@@ -241,7 +310,7 @@ async def handle(connection, message) :
 #enddef
 
 async def connection(websocket, path) :
-  global connections, glog, active_server, active_client
+  global connections, glog, active_server, active_client, global_options
   glog.log_many("info", "{" , str([id for id in connections]) , "}")
   connection = next((connections[id] for id in connections if connections[id].websocket == websocket), Connection(websocket))
   if connection.is_recent() :
@@ -265,7 +334,7 @@ async def connection(websocket, path) :
   #endif
   # wait for a tiny moment and then send config
   #await asyncio.sleep(0.1)
-  await connection.send(json.dumps({"type": "config", "peerConnectionOptions": { }}))
+  await connection.send(json.dumps({"type": "config", "peerConnectionOptions": global_options}))
   while True :
     try :
       message = await asyncio.wait_for(websocket.recv(), timeout = 1.0)
@@ -303,7 +372,7 @@ async def connection(websocket, path) :
 #endeif
 
 async def main() :
-  global connections, glog
+  global connections, glog, cluster_mode, server_port, client_port, target_ip, global_options
   # checking if we have command line arguments
   if len(sys.argv) > 1 :
     # checking if we have lightmode enabled
@@ -312,7 +381,36 @@ async def main() :
     elif "--help" in sys.argv :
       print("Usage: python3 signalling.py", end = " ")
       print("[--lightmode]", end = " ")
+      print("[--cluster]")
+      print("[--server-port <port>]", end = " ")
+      print("[--client-port <port>]", end = " ")
+      print("[--target-ip <ip>]")
+      print("[--log-file <file>]", end = " ")
+      print("[--no-log]")
+      print("\n")
+      print("  --lightmode: disables colored output")
+      print("  --cluster: enables cluster mode")
+      print("  --server-port <port>: sets the port for the server")
+      print("  --client-port <port>: sets the port for the client")
+      print("  --target-ip <ip>: sets the target ip for the client")
+      print("  --log-file <file>: sets the log file")
+      print("  --no-log: disables logging")
       return
+    elif any(p in a for a in sys.argv for p in ["--server-port", "-s"]) :
+      # get the port number
+      server_port = int(sys.argv[sys.argv.index("--server-port") + 1])
+    elif any(p in a for a in sys.argv for p in ["--client-port", "-c"]) :
+      client_port = int(sys.argv[sys.argv.index("--client-port") + 1])
+    elif any(p in a for a in sys.argv for p in ["--target-ip", "-t"]) :
+      target_ip = sys.argv[sys.argv.index("--target-ip") + 1]
+    elif any(p in a for a in sys.argv for p in ["--log-file", "-l"]) :
+      glog.set_log_file(sys.argv[sys.argv.index("--log-file") + 1])
+    elif any(p in a for a in sys.argv for p in ["--cluster", "-j"]) :
+      # cluster mode, communicate that certain ICE candidates are preffered to UE
+      glog.info("Cluster mode enabled")
+      cluster_mode = True
+    elif "--no-log" in sys.argv :
+      glog.set_log_file(NoLog())
   # start the signalling server
   glog.info("Starting server...")
   async with ws.serve(connection, target_ip, server_port, compression = None) as ServerConnection, \

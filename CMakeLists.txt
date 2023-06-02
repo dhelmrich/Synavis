@@ -61,6 +61,8 @@ if(NOT pybind11_FOUND)
     GIT_TAG        v2.10.3
     GIT_SHALLOW True
   )
+else()
+  message(STATUS "Found pybind11 v${pybind11_VERSION}: ${pybind11_INCLUDE_DIRS}")
 endif()
 
 FetchContent_Declare(
@@ -69,11 +71,12 @@ FetchContent_Declare(
     GIT_TAG        0.2.13
     GIT_SHALLOW True
 )
-
-FetchContent_GetProperties(pybind11)
-if(NOT pybind11_POPULATED)
-    FetchContent_Populate(pybind11)
-    add_subdirectory(${pybind11_SOURCE_DIR} ${pybind11_BINARY_DIR})
+if(NOT pybind11_FOUND)
+  FetchContent_GetProperties(pybind11)
+  if(NOT pybind11_POPULATED)
+      FetchContent_Populate(pybind11)
+      add_subdirectory(${pybind11_SOURCE_DIR} ${pybind11_BINARY_DIR})
+  endif()
 endif()
 
 FetchContent_GetProperties(pybind11_json)

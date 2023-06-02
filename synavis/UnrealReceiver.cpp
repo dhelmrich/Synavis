@@ -190,12 +190,10 @@ UnrealReceiver::UnrealReceiver()
     std::cout << "I will request the initial settings." << std::endl;
     rtc::message_ptr outmessage;
 
-
     //sess_->send(rtc::make_message({(std::byte)(EClientMessageType::InitialSettings)}));
 
     track_->send(rtc::binary({ (std::byte)(EClientMessageType::QualityControlOwnership) }));
     track_->send(rtc::binary({ std::byte{72},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0} }));
-
     state_ = EConnectionState::VIDEO;
   });
   vdc_->onMessage([this](auto message)

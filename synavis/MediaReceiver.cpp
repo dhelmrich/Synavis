@@ -10,7 +10,6 @@ Synavis::MediaReceiver::MediaReceiver()
   const unsigned int bitrate = 3000;
   FrameRelay = std::make_shared<BridgeSocket>();
   FrameRelay->Outgoing = true;
-
   FrameRelay->Address = "127.0.0.1";
   FrameRelay->Port = 5535;
   MediaDescription.setDirection(rtc::Description::Direction::RecvOnly);
@@ -18,7 +17,8 @@ Synavis::MediaReceiver::MediaReceiver()
   // amazon h264 codec : "packetization-mode=1;profile-level-id=42e01f"
   // source: https://docs.aws.amazon.com/kinesisvideostreams/latest/dg/producer-reference-nal.html
   // MediaDescription.addH264Codec(96, "packetization-mode=1;profile-level-id=42e01f");
-  MediaDescription.addH264Codec(96);
+  //MediaDescription.addH264Codec(96);
+  MediaDescription.addVideoCodec(96, "H265", "MAIN");
   PeerConnection->onTrack([this](std::shared_ptr<rtc::Track> Track)
   {
     std::cout << "PeerConnection onTrack" << std::endl;
@@ -55,7 +55,6 @@ Synavis::MediaReceiver::MediaReceiver()
   {
     std::cout << "Media Constructor: PeerConnection has media" << std::endl;
   }
-
 }
 
 Synavis::MediaReceiver::~MediaReceiver()
@@ -96,10 +95,22 @@ void Synavis::MediaReceiver::MediaHandler(rtc::message_variant DataOrMessage)
 {
   if (std::holds_alternative<rtc::binary>(DataOrMessage))
   {
+#ifdef SYNAVIS_UPDATE_TIMECODE
+    auto Frame = std::get<rtc::binary>(DataOrMessage);
+    auto* RTP = reinterpret_cast<rtc::RtpHeader*>(Frame.data());
+    // set timestamp to unix time
+    RTP->setTimestamp(static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()));
+#endif // SYNAVIS_UPDATE_TIMECODE
     if (FrameReceptionCallback.has_value())
     {
       FrameReceptionCallback.value()(std::get<rtc::binary>(DataOrMessage));
     }
     FrameRelay->Send(std::get<rtc::binary>(DataOrMessage));
+  }
+  else if (std::holds_alternative<std::string>(DataOrMessage))
+  {
+    auto Message = std::get<std::string>(DataOrMessage);
+    rtc::binary MessageBinary((std::byte*)Message.data(), (std::byte*)(Message.data() + Message.size()));
+    FrameRelay->Send(MessageBinary);
   }
 }
