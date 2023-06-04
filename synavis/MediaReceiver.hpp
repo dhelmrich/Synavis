@@ -38,7 +38,8 @@ public:
 
   void RequestKeyFrame();
 
-  
+  void SetCodec(ECodec Codec) {this->Codec = Codec;}
+
 
 protected:
   std::shared_ptr<rtc::Track> Track;
@@ -48,6 +49,8 @@ protected:
 
   std::optional<std::function<void(rtc::binary)>> FrameReceptionCallback;
   std::optional<std::function<void(void)>> OnTrackOpenCallback;
+
+  ECodec Codec;
 
   void MediaHandler(rtc::message_variant DataOrMessage);
 

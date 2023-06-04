@@ -306,6 +306,14 @@ namespace Synavis
     Verbose
   };
 
+  enum class SYNAVIS_EXPORT ECodec
+  {
+    VP8 = (std::uint8_t)ELogVerbosity::Verbose + 1u,
+    VP9,
+    H264,
+    H265
+  };
+
   using StreamVariant = std::variant<std::shared_ptr<rtc::DataChannel>,
     std::shared_ptr<rtc::Track>>;
 

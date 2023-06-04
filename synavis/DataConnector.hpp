@@ -32,7 +32,7 @@ public:
   void SendFloat64Buffer(const std::vector<double>& Buffer, std::string Name, std::string Format = "raw");
   void SendFloat32Buffer(const std::vector<float>& Buffer, std::string Name, std::string Format = "raw");
   void SendInt32Buffer(const std::vector<int32_t>& Buffer, std::string Name, std::string Format = "raw");
-  void SendGeometry(const std::vector<double>& Vertices, const std::vector<uint32_t>& Indices, const std::vector<double>& Normals, std::string Name,
+  void SendGeometry(const std::vector<double>& Vertices, const std::vector<uint32_t>& Indices, std::string Name, std::optional<std::vector<double>> Normals = std::nullopt, 
                     std::optional<std::vector<double>> UVs = std::nullopt, std::optional<std::vector<double>> Tangents = std::nullopt, bool AutoMessage = true);
   EConnectionState GetState();
   std::optional<std::function<void(rtc::binary)>> DataReceptionCallback;

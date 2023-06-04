@@ -38,6 +38,7 @@ int main(int args, char** argv)
   auto dc = std::make_shared<Synavis::MediaReceiver>();
   dc->ConfigureRelay("127.0.0.1", 53326);
   dc->SetTakeFirstStep(false);
+  dc->SetLogVerbosity(Synavis::ELogVerbosity::Debug);
   using json = nlohmann::json;
   
 
@@ -50,6 +51,7 @@ int main(int args, char** argv)
   std::cout << "Sanity check: " << Config.dump() << std::endl;
   std::cout << "Fetching IP, " << Config["SignallingIP"].get<std::string>() << std::endl;
   dc->SetConfig(Config);
+  dc->WriteSDPsToFile("C:/Work/gstreamer/target.sdp");
   dc->StartSignalling();
   dc->SetMessageCallback([&bWantData, &Messages](auto message)
     {
@@ -68,7 +70,7 @@ int main(int args, char** argv)
       }
       catch (...)
       {
-        std::cout << "Received data: " << dataView << std::endl;
+        //std::cout << "Received data: " << dataView << std::endl;
       }
     });
   dc->SetFrameReceptionCallback([](auto frame)
@@ -81,7 +83,9 @@ int main(int args, char** argv)
   }
   std::cout << "Found out that we are connected" << std::endl;
   dc->PrintCommunicationData();
-  dc->SendJSON(json({{"type","console"}, {"command", "t.maxFPS 20"}}));
+  dc->SendJSON(json({{"type","console"}, {"command", "t.maxFPS 10"}}));
+  dc->SendJSON(json({{"type","command"},{"name","cam"}, {"camera", "scene"}}));
+  
   //dc->SendString("test");
 
   while(Synavis::EConnectionState::CONNECTED == dc->GetState())

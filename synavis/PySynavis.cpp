@@ -169,6 +169,14 @@ namespace Synavis
       .export_values()
     ;
 
+    py::enum_<ECodec>(m, "Codec")
+      .value("VP8", ECodec::VP8)
+      .value("VP9", ECodec::VP9)
+      .value("H264", ECodec::H264)
+      .value("H265", ECodec::H265)
+      .export_values()
+    ;
+
     
     py::class_<UnrealReceiver, PyReceiver, std::shared_ptr<UnrealReceiver>>(m, "UnrealReceiver")
       .def(py::init<>())
@@ -217,7 +225,7 @@ namespace Synavis
       .def("SendFloat64Buffer", &DataConnector::SendFloat64Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
       .def("SendInt32Buffer", &DataConnector::SendInt32Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
       .def("SendFloat32Buffer", &DataConnector::SendFloat32Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
-      .def("SendGeometry", &DataConnector::SendGeometry, py::arg("Vertices"), py::arg("Indices"), py::arg("Normals"), py::arg("Name"), py::arg("UVs"), py::arg("Tangents"), py::arg("AutoMessage"))
+      .def("SendGeometry", &DataConnector::SendGeometry, py::arg("Vertices"), py::arg("Indices"), py::arg("Name"), py::arg("Normals"),  py::arg("UVs"), py::arg("Tangents"), py::arg("AutoMessage"))
       .def("SetLogVerbosity", &DataConnector::SetLogVerbosity, py::arg("Verbosity"))
       .def("SetRetryOnErrorResponse", &DataConnector::SetRetryOnErrorResponse, py::arg("Retry"))
       .def("WriteSDPsToFile", &DataConnector::WriteSDPsToFile, py::arg("Filename"))
@@ -246,11 +254,12 @@ namespace Synavis
       .def("SendFloat64Buffer", &MediaReceiver::SendFloat64Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
       .def("SendInt32Buffer", &MediaReceiver::SendInt32Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
       .def("SendFloat32Buffer", &MediaReceiver::SendFloat32Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
-      .def("SendGeometry", &MediaReceiver::SendGeometry, py::arg("Vertices"), py::arg("Indices"), py::arg("Normals"), py::arg("Name"), py::arg("UVs"), py::arg("Tangents"), py::arg("AutoMessage"))
+      .def("SendGeometry", &MediaReceiver::SendGeometry, py::arg("Vertices"), py::arg("Indices"), py::arg("Name"), py::arg("Normals"),  py::arg("UVs"), py::arg("Tangents"), py::arg("AutoMessage"))
       .def("SetLogVerbosity", &MediaReceiver::SetLogVerbosity, py::arg("Verbosity"))
       .def("SetRetryOnErrorResponse", &MediaReceiver::SetRetryOnErrorResponse, py::arg("Retry"))
       .def("RequestKeyFrame", &MediaReceiver::RequestKeyFrame)
       .def("WriteSDPsToFile", &MediaReceiver::WriteSDPsToFile, py::arg("Filename"))
+      .def("SetCodec", &MediaReceiver::SetCodec, py::arg("Codec"))
     ;
 
     py::enum_<rtc::PeerConnection::GatheringState>(m, "GatheringState")

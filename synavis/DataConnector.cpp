@@ -560,7 +560,7 @@ void Synavis::DataConnector::SendInt32Buffer(const std::vector<int32_t>& Buffer,
 }
 
 void Synavis::DataConnector::SendGeometry(const std::vector<double>& Vertices, const std::vector<uint32_t>& Indices,
-  const std::vector<double>& Normals, std::string Name, std::optional<std::vector<double>> UVs,
+  std::string Name, std::optional<std::vector<double>> Normals, std::optional<std::vector<double>> UVs,
   std::optional<std::vector<double>> Tangents, bool AutoMessage)
 {
   json Message = { {"type","geometry"},{"name",Name} };
@@ -569,7 +569,10 @@ void Synavis::DataConnector::SendGeometry(const std::vector<double>& Vertices, c
   // because a single buffer would mean that we use JSON, we need to add the base64 size of the buffers
   total_size += EncodedSize(Vertices);
   total_size += EncodedSize(Indices);
-  total_size += EncodedSize(Normals);
+  if(Normals.has_value())
+  {
+    total_size += EncodedSize(Normals.value());
+  }
   if (UVs.has_value())
   {
     total_size += EncodedSize(UVs.value());
@@ -584,7 +587,10 @@ void Synavis::DataConnector::SendGeometry(const std::vector<double>& Vertices, c
     Message["type"] = "directbase64";
     Message["vertices"] = Encode64(Vertices);
     Message["indices"] = Encode64(Indices);
-    Message["normals"] = Encode64(Normals);
+    if (Normals.has_value())
+    {
+      Message["normals"] = Encode64(Normals.value());
+    }
     if (UVs.has_value())
     {
       Message["uvs"] = Encode64(UVs.value());
@@ -607,9 +613,12 @@ void Synavis::DataConnector::SendGeometry(const std::vector<double>& Vertices, c
     do { state = this->SendBuffer(data, "triangles", "base64"); } while(!state && RetryOnErrorResponse);
     state = false;
     // send the normals
-    data = std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(Normals.data()), Normals.size() * sizeof(float));
-    do {state = this->SendBuffer(data, "normals", "base64");} while(!state && RetryOnErrorResponse);
-    state = false;
+    if (UVs.has_value())
+    {
+      data = std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(Normals.value().data()), Normals.value().size() * sizeof(float));
+      do {state = this->SendBuffer(data, "normals", "base64");} while(!state && RetryOnErrorResponse);
+      state = false;
+    }
     // send the UVs
     if (UVs.has_value())
     {

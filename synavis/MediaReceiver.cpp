@@ -7,18 +7,30 @@ Synavis::MediaReceiver::MediaReceiver()
   : Synavis::DataConnector()
 {
   std::cout << "MediaReceiver created" << std::endl;
-  const unsigned int bitrate = 3000;
+  const unsigned int bitrate = 90000;
   FrameRelay = std::make_shared<BridgeSocket>();
   FrameRelay->Outgoing = true;
   FrameRelay->Address = "127.0.0.1";
   FrameRelay->Port = 5535;
   MediaDescription.setDirection(rtc::Description::Direction::RecvOnly);
   MediaDescription.setBitrate(bitrate);
+  switch(Codec)
+  {
+    case ECodec::H264:
+      MediaDescription.addH264Codec(96);
+      break;
+    case ECodec::H265:
+      MediaDescription.addVideoCodec(96, "H265", "MAIN");
+      break;
+    case ECodec::VP8:
+      MediaDescription.addVP8Codec(96);
+      break;
+    case ECodec::VP9:
+      MediaDescription.addVP9Codec(96);
+      break;
+  }
   // amazon h264 codec : "packetization-mode=1;profile-level-id=42e01f"
   // source: https://docs.aws.amazon.com/kinesisvideostreams/latest/dg/producer-reference-nal.html
-  // MediaDescription.addH264Codec(96, "packetization-mode=1;profile-level-id=42e01f");
-  //MediaDescription.addH264Codec(96);
-  MediaDescription.addVideoCodec(96, "H265", "MAIN");
   PeerConnection->onTrack([this](std::shared_ptr<rtc::Track> Track)
   {
     std::cout << "PeerConnection onTrack" << std::endl;
@@ -95,6 +107,7 @@ void Synavis::MediaReceiver::MediaHandler(rtc::message_variant DataOrMessage)
 {
   if (std::holds_alternative<rtc::binary>(DataOrMessage))
   {
+    
 #ifdef SYNAVIS_UPDATE_TIMECODE
     auto Frame = std::get<rtc::binary>(DataOrMessage);
     auto* RTP = reinterpret_cast<rtc::RtpHeader*>(Frame.data());
