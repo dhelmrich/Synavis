@@ -19,6 +19,7 @@ public:
   using json = nlohmann::json;
   MediaReceiver();
   ~MediaReceiver() override;
+  virtual void Initialize() override;
 
   void SetFrameReceptionCallback(std::function<void(rtc::binary)> Callback)
   {

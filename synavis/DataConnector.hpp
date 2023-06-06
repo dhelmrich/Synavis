@@ -23,6 +23,7 @@ public:
   std::string Prefix = "";
   DataConnector();
   virtual ~DataConnector();
+  virtual void Initialize();
   void StartSignalling();
 
   virtual void SendData(rtc::binary Data);
@@ -37,6 +38,8 @@ public:
   EConnectionState GetState();
   std::optional<std::function<void(rtc::binary)>> DataReceptionCallback;
   std::optional<std::function<void(std::string)>> MessageReceptionCallback;
+  std::optional<std::string> IP {std::nullopt};
+  std::optional<std::pair<int, int>> PortRange {std::nullopt};
   void SetDataCallback(std::function<void(rtc::binary)> Callback);
   void SetMessageCallback(std::function<void(std::string)> Callback);
   std::shared_ptr<rtc::DataChannel> DataChannel;
@@ -61,7 +64,6 @@ public:
   void SetLogVerbosity(ELogVerbosity Verbosity) { LogVerbosity = Verbosity; }
 
 protected:
-
   /**
    * Callbacks for additional custom behavior
    **/

@@ -3,9 +3,19 @@
 #include <iostream>
 #include <rtc/rtc.hpp>
 
+
 Synavis::MediaReceiver::MediaReceiver()
-  : Synavis::DataConnector()
 {
+}
+
+Synavis::MediaReceiver::~MediaReceiver()
+{
+  FrameRelay->Disconnect();
+}
+
+void Synavis::MediaReceiver::Initialize()
+{
+  DataConnector::Initialize();
   std::cout << "MediaReceiver created" << std::endl;
   const unsigned int bitrate = 90000;
   FrameRelay = std::make_shared<BridgeSocket>();
@@ -67,11 +77,6 @@ Synavis::MediaReceiver::MediaReceiver()
   {
     std::cout << "Media Constructor: PeerConnection has media" << std::endl;
   }
-}
-
-Synavis::MediaReceiver::~MediaReceiver()
-{
-  FrameRelay->Disconnect();
 }
 
 void Synavis::MediaReceiver::ConfigureRelay(std::string IP, int Port)

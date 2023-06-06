@@ -206,6 +206,7 @@ namespace Synavis
 
     py::class_<DataConnector, PyDataConnector<>, std::shared_ptr<DataConnector>>(m, "DataConnector")
       .def(py::init<>())
+      .def("Initialize", &DataConnector::Initialize)
       .def("SendData", &DataConnector::SendData, py::arg("Data"))
       .def("SendString", &DataConnector::SendString, py::arg("Message"))
       .def("SendJSON", &DataConnector::SendJSON, py::arg("Message"))
@@ -229,10 +230,13 @@ namespace Synavis
       .def("SetLogVerbosity", &DataConnector::SetLogVerbosity, py::arg("Verbosity"))
       .def("SetRetryOnErrorResponse", &DataConnector::SetRetryOnErrorResponse, py::arg("Retry"))
       .def("WriteSDPsToFile", &DataConnector::WriteSDPsToFile, py::arg("Filename"))
+      .def_readwrite("IP", &DataConnector::IP)
+      .def_readwrite("PortRange", &DataConnector::IP)
     ;
 
     py::class_<MediaReceiver, PyMediaReceiver<>, std::shared_ptr<MediaReceiver>>(m, "MediaReceiver")
       .def(py::init<>())
+      .def("Initialize", &MediaReceiver::Initialize)
       .def("SetFrameReceptionCallback", &MediaReceiver::SetFrameReceptionCallback,py::arg("Callback"))
       .def("SetOnTrackOpenCallback", &MediaReceiver::SetOnTrackOpenCallback,py::arg("Callback"))
       .def("SetOnRemoteDescriptionCallback", &MediaReceiver::SetOnRemoteDescriptionCallback, py::arg("Callback"))
@@ -260,6 +264,8 @@ namespace Synavis
       .def("RequestKeyFrame", &MediaReceiver::RequestKeyFrame)
       .def("WriteSDPsToFile", &MediaReceiver::WriteSDPsToFile, py::arg("Filename"))
       .def("SetCodec", &MediaReceiver::SetCodec, py::arg("Codec"))
+      .def_readwrite("IP", &MediaReceiver::IP)
+      .def_readwrite("PortRange", &MediaReceiver::IP)
     ;
 
     py::enum_<rtc::PeerConnection::GatheringState>(m, "GatheringState")

@@ -10,7 +10,7 @@ import os
 import json
 
 # Synavis: Find build
-path = "../"
+path = "../../"
 # if windows
 if os.name == 'nt' :
   path = path + "build/synavis/Release/"
@@ -56,6 +56,8 @@ def frame_callback(frame) :
   print("Received frame.")
 
 m = rtc.MediaReceiver()
+m.IP = "127.0.0.1"
+m.Initialize()
 #Media.SetConfigFile("config.json")
 m.SetConfig({"SignallingIP": "127.0.0.1","SignallingPort":8080})
 m.SetTakeFirstStep(False)
