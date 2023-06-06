@@ -164,7 +164,7 @@ UnrealReceiver::UnrealReceiver()
       sendto(sock, reinterpret_cast<const char*>(package.data()), int(package.size()), 0,
         reinterpret_cast<const struct sockaddr*>(&addr), sizeof(addr));
 #elif __linux__
-      write(sock,reinterpret_cast<const void*>(package.data()),package.size());
+      send(sock,reinterpret_cast<const void*>(package.data()),package.size());
 #endif
       
       Messages.push_back(std::move(rtp));
