@@ -24,18 +24,33 @@ inline std::byte operator++(std::byte& b) noexcept
 
 int main(int args, char** argv)
 {
+  auto dc = std::make_shared<Synavis::MediaReceiver>();
   // if we have arguments, we check if verbose logging is requested
   if (args > 1)
   {
-    std::string arg = argv[1];
-    if (arg == "-v")
+    for (int a = 1; a < args; ++a)
     {
-      //rtcInitLogger(RTC_LOG_VERBOSE, nullptr);
+      std::string arg = argv[a];
+      if (arg == "-v" || arg == "--verbose")
+      {
+        std::cout << "Verbose logging enabled" << std::endl;
+         rtcInitLogger(RTC_LOG_VERBOSE, nullptr);
+      }
+      if(arg == "-i" || arg == "--ip")
+      {
+        if(args < a + 1)
+        {
+          std::cout << "No IP address provided" << std::endl;
+          return -1;
+        }
+        std::cout << "Setting IP to " << argv[a + 1] << std::endl;
+        dc->IP = argv[a + 1];
+      }
     }
   }
   std::this_thread::sleep_for(std::chrono::seconds(2));
   using namespace std::chrono_literals;
-  auto dc = std::make_shared<Synavis::MediaReceiver>();
+  dc->Initialize();
   dc->ConfigureRelay("127.0.0.1", 53326);
   dc->SetTakeFirstStep(false);
   dc->SetLogVerbosity(Synavis::ELogVerbosity::Debug);
