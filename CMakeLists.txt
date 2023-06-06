@@ -4,7 +4,7 @@
 # Copyright (c) 2021 Juelich Supercomputing Centre
 # Forschungszentrum Juelich GmbH
 # --------------------------------------------------------------
-# License terms tba
+# License terms MIT License
 # --------------------------------------------------------------
 # Programmed for the inHPC Project
 # --------------------------------------------------------------
@@ -65,12 +65,6 @@ else()
   message(STATUS "Found pybind11 v${pybind11_VERSION}: ${pybind11_INCLUDE_DIRS}")
 endif()
 
-FetchContent_Declare(
-    pybind11_json
-    GIT_REPOSITORY https://github.com/pybind/pybind11_json.git
-    GIT_TAG        0.2.13
-    GIT_SHALLOW True
-)
 if(NOT pybind11_FOUND)
   FetchContent_GetProperties(pybind11)
   if(NOT pybind11_POPULATED)
@@ -79,10 +73,20 @@ if(NOT pybind11_FOUND)
   endif()
 endif()
 
-FetchContent_GetProperties(pybind11_json)
-if(NOT pybind11_json_POPULATED)
-    FetchContent_Populate(pybind11_json)
-    add_subdirectory(${pybind11_json_SOURCE_DIR} ${pybind11_json_BINARY_DIR})
+find_package(pybind11_json CONFIG)
+#if not found
+if(NOT pybind11_json)
+  FetchContent_Declare(
+      pybind11_json
+      GIT_REPOSITORY https://github.com/pybind/pybind11_json.git
+      GIT_TAG        0.2.13
+      GIT_SHALLOW True
+  )
+  FetchContent_GetProperties(pybind11_json)
+  if(NOT pybind11_json_POPULATED)
+      FetchContent_Populate(pybind11_json)
+      add_subdirectory(${pybind11_json_SOURCE_DIR} ${pybind11_json_BINARY_DIR})
+  endif()
 endif()
 
 add_subdirectory(synavis)
