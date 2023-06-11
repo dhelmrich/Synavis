@@ -64,7 +64,7 @@ time.sleep(1)
 reset_message()
 
 # open a file for the timings
-f = open("timings.txt", "w")
+f = open("timings.csv", "w")
 # write the columns to the file: test name; message size; send time; processed time; receive time; total time
 f.write("test_name;message_size;send_time;processed_time;receive_time;total_time\n")
 
