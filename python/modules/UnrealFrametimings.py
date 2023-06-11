@@ -1,3 +1,9 @@
+import numpy as np
+import base64
+import time
+import sys
+import os
+
 # Path: cplantbox_coupling.py
 # if we are on windows, the path to the dll is different
 if sys.platform == "win32" :
@@ -6,10 +12,6 @@ else :
   sys.path.append("../../build/")
 sys.path.append("../modules/")
 import PySynavis as rtc
-
-import numpy as np
-import base64
-import time
 
 
 message_buffer = []
@@ -81,7 +83,7 @@ def sphere_geometry(radius, center, resolution : int = 10) :
       indices.append([2 + (i + 1) % resolution + j * resolution,
                       2 + i + (j + 1) * resolution,
                       2 + (i + 1) % resolution + (j + 1) * resolution])
-  return vertices, indices, normals
+  return (np.array(vertices)).flatten(), (np.array(indices).flatten()), (np.array(normals).flatten())
 
 m = rtc.MediaReceiver()
 m.IP = "127.0.0.1"
@@ -111,7 +113,7 @@ m.SendJSON({"type":"command", "command":"trace File "+ tracefile})
 # set start time
 start_time = time.time()
 # runtime
-runtime = 30
+runtime = 1
 while time.time() < start_time + runtime :
   # sleep for 0.1 seconds
   time.sleep(0.1)
@@ -121,7 +123,7 @@ while time.time() < start_time + runtime :
   radius = np.random.rand() * 0.9 + 0.1
   # start sending geometries
   v, i, n = sphere_geometry(radius, pos)
-  m.SendGeometry(v, i, "sphere", n)
+  m.SendGeometry(v, i, "sphere", n, None, None, True)
 
 # send a message to stop the profiling
 m.SendJSON({"type":"command", "command":"trace stop"})

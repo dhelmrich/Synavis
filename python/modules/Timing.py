@@ -1,3 +1,7 @@
+import numpy as np
+import time
+import sys
+
 # Path: cplantbox_coupling.py
 # if we are on windows, the path to the dll is different
 if sys.platform == "win32" :
@@ -7,9 +11,7 @@ else :
 sys.path.append("../modules/")
 import PySynavis as rtc
 
-import numpy as np
 import base64
-import time
 
 
 message_buffer = []

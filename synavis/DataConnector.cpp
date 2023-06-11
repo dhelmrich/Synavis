@@ -259,15 +259,15 @@ void Synavis::DataConnector::SendGeometry(const std::vector<double>& Vertices, c
   if (total_size < this->MaxMessageSize)
   {
     Message["type"] = "directbase64";
-    Message["vertices"] = Encode64(Vertices);
-    Message["indices"] = Encode64(Indices);
+    Message["points"] = Encode64(Vertices);
+    Message["triangles"] = Encode64(Indices);
     if (Normals.has_value())
     {
       Message["normals"] = Encode64(Normals.value());
     }
     if (UVs.has_value())
     {
-      Message["uvs"] = Encode64(UVs.value());
+      Message["texcoords"] = Encode64(UVs.value());
     }
     if (Tangents.has_value())
     {
