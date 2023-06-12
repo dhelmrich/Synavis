@@ -139,6 +139,9 @@ cluster_mode = False
 
 # a method that searches network interfaces and selects an infiniband interface if available
 def get_infiniband_interface() :
+  # check operating system first (only linux is supported)
+  if not sys.platform.startswith("linux") :
+    return None
   # get the list of network interfaces
   interfaces = subprocess.check_output(["ifconfig", "-a"]).decode("utf-8").split("\n")
   # search for an infiniband interface
@@ -150,7 +153,7 @@ def get_infiniband_interface() :
   return None
 
 # a method that produces ice candidates for a given network interface
-def get_ice_candidates(interface) :
+def get_interface_ip(interface) :
   ice_candidates = []
   # get the ip address from the interface
   ifconfig = subprocess.check_output(["ifconfig", interface]).decode("utf-8").split("\n")
@@ -161,6 +164,7 @@ def get_ice_candidates(interface) :
       break
     #endif
   #endfor
+  return ip
 #enddef
 
 
@@ -373,6 +377,8 @@ async def connection(websocket, path) :
 
 async def main() :
   global connections, glog, cluster_mode, server_port, client_port, target_ip, global_options
+  # flag for whether a custom IP was provided
+  custom_ip = False
   # checking if we have command line arguments
   if len(sys.argv) > 1 :
     # checking if we have lightmode enabled
@@ -402,6 +408,7 @@ async def main() :
     elif any(p in a for a in sys.argv for p in ["--client-port", "-c"]) :
       client_port = int(sys.argv[sys.argv.index("--client-port") + 1])
     elif any(p in a for a in sys.argv for p in ["--target-ip", "-t"]) :
+      custom_ip = True
       target_ip = sys.argv[sys.argv.index("--target-ip") + 1]
     elif any(p in a for a in sys.argv for p in ["--log-file", "-l"]) :
       glog.set_log_file(sys.argv[sys.argv.index("--log-file") + 1])
@@ -411,6 +418,21 @@ async def main() :
       cluster_mode = True
     elif "--no-log" in sys.argv :
       glog.set_log_file(NoLog())
+  # endif
+  # if no custom IP was provided, check for infiniband IP
+  if not custom_ip :
+    ib = get_infiniband_interface()
+    if ib != None :
+      target_ip = get_interface_ip(ib)
+      if target_ip != None :
+        glog.info("Using infiniband IP: " + target_ip)
+      else :
+        glog.warn("Detected infiniband interface but could not get IP")
+      # endif
+    else :
+      glog.info("No infiniband interface detected")
+    # endif
+  #endif
   # start the signalling server
   glog.info("Starting server...")
   async with ws.serve(connection, target_ip, server_port, compression = None) as ServerConnection, \
