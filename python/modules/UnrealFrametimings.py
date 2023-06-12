@@ -45,6 +45,34 @@ def frame_callback(frame) :
   #print("Received frame.")
   pass
 
+# construct a cube geometry
+def cube_geometry(size, center) :
+  vertices = np.array([[-size / 2, -size / 2, -size / 2],
+                       [-size / 2, -size / 2, size / 2],
+                       [-size / 2, size / 2, -size / 2],
+                       [-size / 2, size / 2, size / 2],
+                       [size / 2, -size / 2, -size / 2],
+                       [size / 2, -size / 2, size / 2],
+                       [size / 2, size / 2, -size / 2],
+                       [size / 2, size / 2, size / 2]])
+  vertices += center
+  indices = np.array([[0, 1, 3], [0, 3, 2],
+                      [0, 4, 5], [0, 5, 1],
+                      [0, 2, 6], [0, 6, 4],
+                      [7, 5, 4], [7, 4, 6],
+                      [7, 6, 2], [7, 2, 3],
+                      [7, 3, 1], [7, 1, 5]])
+  normals = np.array([[-1, -1, -1],
+                      [-1, -1, 1],
+                      [-1, 1, -1],
+                      [-1, 1, 1],
+                      [1, -1, -1],
+                      [1, -1, 1],
+                      [1, 1, -1],
+                      [1, 1, 1]])
+  return vertices, indices, normals
+
+
 # construct sphere geometry
 def sphere_geometry(radius, center, resolution : int = 10) :
   # construct a sphere geometry
@@ -83,18 +111,17 @@ def sphere_geometry(radius, center, resolution : int = 10) :
       indices.append([2 + (i + 1) % resolution + j * resolution,
                       2 + i + (j + 1) * resolution,
                       2 + (i + 1) % resolution + (j + 1) * resolution])
-  return (np.array(vertices)).flatten(), (np.array(indices).flatten()), (np.array(normals).flatten())
+  return  vertices, indices, normals
 
 m = rtc.MediaReceiver()
-m.IP = "127.0.0.1"
 m.Initialize()
 #Media.SetConfigFile("config.json")
 m.SetConfig({"SignallingIP": "127.0.0.1","SignallingPort":8080})
 m.SetTakeFirstStep(False)
-m.StartSignalling()
 m.SetDataCallback(data_callback)
 m.SetMessageCallback(message_callback)
 m.SetFrameReceptionCallback(frame_callback)
+m.StartSignalling()
 
 while not m.GetState() == rtc.EConnectionState.CONNECTED:
   time.sleep(0.1)
@@ -106,28 +133,34 @@ time.sleep(1)
 reset_message()
 
 # send a message to start the profiling
-tracefile = "/dev/shm/trace_" + str(int(time.time())) + ".utrace"
+tracefile = "trace_" + str(int(time.time())) + ".utrace"
 
-m.SendJSON({"type":"command", "command":"trace File "+ tracefile})
+print("Sending trace command")
+m.SendJSON({"type":"console", "command":"trace.File "+ tracefile})
 
 # set start time
 start_time = time.time()
 # runtime
-runtime = 1
+runtime = 120
 while time.time() < start_time + runtime :
   # sleep for 0.1 seconds
-  time.sleep(0.1)
+  time.sleep(0.05)
   # make a random position above the ground with at least 100m distance to the origin
-  pos = np.random.rand(3) * 100 + np.array([0, 0, 100])
+  pos = np.random.rand(3) * 100 + np.array([0, 0, 0])
   # make a random radius between 0.1 and 1
   radius = np.random.rand() * 0.9 + 0.1
   # start sending geometries
-  v, i, n = sphere_geometry(radius, pos)
-  m.SendGeometry(v, i, "sphere", n, None, None, True)
+  print("Sending geometry")
+  v, i, n = cube_geometry(radius, pos)
+  # flatten the arrays
+  v = v.flatten()
+  i = i.flatten()
+  n = n.flatten()
+  m.SendGeometry(v, i, "cube", n, None, None, True)
 
 # send a message to stop the profiling
-m.SendJSON({"type":"command", "command":"trace stop"})
+m.SendJSON({"type":"console", "command":"trace.stop"})
 # send a message to quit
-m.SendJSON({"type":"command", "command":"quit"})
+m.SendJSON({"type":"console", "command":"quit"})
 
 

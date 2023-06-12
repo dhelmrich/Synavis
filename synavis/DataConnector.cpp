@@ -535,6 +535,7 @@ void Synavis::DataConnector::Initialize()
     {
       //std::cout << Prefix << "DataChannel is available" << std::endl;
       state_ = EConnectionState::CONNECTED;
+      
       //if (OnConnectedCallback.has_value())
       //{
       //  OnConnectedCallback.value()();

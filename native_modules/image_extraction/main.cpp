@@ -100,6 +100,7 @@ int main(int args, char** argv)
   dc->PrintCommunicationData();
   dc->SendJSON(json({{"type","console"}, {"command", "t.maxFPS 10"}}));
   dc->SendJSON(json({{"type","command"},{"name","cam"}, {"camera", "scene"}}));
+  dc->SendJSON(json({ {"type","command"}, {"name" , "RawData"}, {"framecapturetime" , 2.0} }));
   
   //dc->SendString("test");
 
