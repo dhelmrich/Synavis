@@ -154,13 +154,12 @@ def get_infiniband_interface() :
 
 # a method that produces ice candidates for a given network interface
 def get_interface_ip(interface) :
-  ice_candidates = []
   # get the ip address from the interface
   ifconfig = subprocess.check_output(["ifconfig", interface]).decode("utf-8").split("\n")
   ip = ""
   for i in range(len(ifconfig)) :
     if interface in ifconfig[i] and "RUNNING" in ifconfig[i] :
-      ip = ifconfig[i+1].split(" ")[1]
+      ip = ifconfig[i+1].split()[1]
       break
     #endif
   #endfor
