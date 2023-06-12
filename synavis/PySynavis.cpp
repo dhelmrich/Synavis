@@ -195,6 +195,27 @@ namespace Synavis
     py::class_<rtc::PeerConnection> (m, "PeerConnection")
     ;
 
+    py::class_<rtc::Configuration>(m, "PeerConnectionConfig")
+        .def(py::init<>())
+        .def_readwrite("IceServers", &rtc::Configuration::iceServers)
+        .def_readwrite("portRangeBegin", &rtc::Configuration::portRangeBegin)
+        .def_readwrite("portRangeEnd", &rtc::Configuration::portRangeEnd)
+        .def_readwrite("maxMessageSize", &rtc::Configuration::maxMessageSize)
+        .def_readwrite("iceTransportPolicy", &rtc::Configuration::iceTransportPolicy)
+        .def_readwrite("proxyServer", &rtc::Configuration::proxyServer)
+        .def_readwrite("disableAutoNegotiation", &rtc::Configuration::disableAutoNegotiation)
+      ;
+
+    py::class_ < rtc::IceServer >(m, "PeerConnectionIceServer")
+      .def(py::init < std::string > ()) // uri
+      .def(py::init<std::string, uint16_t>()) // uri, port
+       .def(py::init<std::string, std::string>()) // hostname, service
+      .def_readwrite("hostname", &rtc::IceServer::hostname)
+      .def_readwrite("port" , &rtc::IceServer::port)
+       .def_readwrite("username", &rtc::IceServer::username)
+       .def_readwrite("password", &rtc::IceServer::password)
+      ;
+
     py::class_<BridgeSocket, PyBridgeSocket<>, std::shared_ptr<BridgeSocket>> (m, "BridgeSocket")
       .def(py::init<>())
       .def_property("Address", &BridgeSocket::GetAddress,&BridgeSocket::SetAddress)
