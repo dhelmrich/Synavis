@@ -1,5 +1,5 @@
 // -*- mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
-
+#define PYBIND11_DETAILED_ERROR_MESSAGES
 #define _STL_CRT_SECURE_INVALID_PARAMETER(expr) _CRT_SECURE_INVALID_PARAMETER(expr)
 #include <functional>
 #include <numeric>
@@ -194,6 +194,8 @@ namespace Synavis
     
     py::class_<rtc::PeerConnection> (m, "PeerConnection")
     ;
+
+    m.def("VerboseMode", &VerboseMode);
 
     py::class_<rtc::Configuration>(m, "PeerConnectionConfig")
         .def(py::init<>())

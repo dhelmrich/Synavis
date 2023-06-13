@@ -136,6 +136,10 @@ namespace Synavis
 
   int64_t TimeSince(std::chrono::system_clock::time_point t);
 
+  inline void SYNAVIS_EXPORT VerboseMode()
+  {
+    rtcInitLogger(RTC_LOG_VERBOSE, nullptr);
+  }
 
   // a class to represent access to a buffer in reverse byte order
   template < typename T >

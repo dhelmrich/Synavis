@@ -148,7 +148,7 @@ while time.time() < start_time + runtime :
   # make a random position above the ground with at least 100m distance to the origin
   pos = np.random.rand(3) * 100 + np.array([0, 0, 0])
   # make a random radius between 0.1 and 1
-  radius = np.random.rand() * 0.9 + 0.1
+  radius = np.random.rand() * 5 + 5
   # start sending geometries
   print("Sending geometry")
   v, i, n = cube_geometry(radius, pos)
