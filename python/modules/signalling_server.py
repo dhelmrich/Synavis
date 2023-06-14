@@ -14,7 +14,7 @@ ws.debug = True
 
 
 
-target_ip = "0.0.0.0"
+target_ip = None
 server_port = 8888
 client_port = 8080
 sfu_port = 8889 # not used yet, but this is the port that the SFU listens on for signalling
@@ -42,6 +42,12 @@ global_options = {
 #    },
 #    "ConfigOptions": { }
 }
+
+ifconfig = []
+# read in ifconfig globally once
+if sys.platform.startswith("linux") :
+  ifconfig = subprocess.check_output(["ifconfig", "-a"], stderr=subprocess.STDOUT).decode("utf-8").split("\n")
+#endif
 
 class NoLog() :
   def write(self, message) :
@@ -139,14 +145,26 @@ cluster_mode = False
 
 # a method that searches network interfaces and selects an infiniband interface if available
 def get_infiniband_interface() :
+  global ifconfig
   # check operating system first (only linux is supported)
   if not sys.platform.startswith("linux") :
     return None
-  # get the list of network interfaces
-  interfaces = subprocess.check_output(["ifconfig", "-a"]).decode("utf-8").split("\n")
   # search for an infiniband interface
-  for interface in interfaces :
+  for interface in ifconfig :
     if "ib" in interface :
+      return interface.split(":")[0]
+    #endif
+  #endfor
+  return None
+
+def get_loopback_interface() :
+  global ifconfig
+  # check operating system first (only linux is supported)
+  if not sys.platform.startswith("linux") :
+    return None
+  # search for a loopback interface
+  for interface in ifconfig :
+    if "LOOPBACK" in interface and "RUNNING" in interface :
       return interface.split(":")[0]
     #endif
   #endfor
@@ -154,8 +172,7 @@ def get_infiniband_interface() :
 
 # a method that produces ice candidates for a given network interface
 def get_interface_ip(interface) :
-  # get the ip address from the interface
-  ifconfig = subprocess.check_output(["ifconfig", interface]).decode("utf-8").split("\n")
+  global ifconfig
   ip = ""
   for i in range(len(ifconfig)) :
     if interface in ifconfig[i] and "RUNNING" in ifconfig[i] :
@@ -387,6 +404,7 @@ async def main() :
       print("Usage: python3 signalling.py", end = " ")
       print("[--lightmode]", end = " ")
       print("[--cluster]")
+      print("[--loopback]", end = " ")
       print("[--server-port <port>]", end = " ")
       print("[--client-port <port>]", end = " ")
       print("[--target-ip <ip>]")
@@ -395,6 +413,7 @@ async def main() :
       print("\n")
       print("  --lightmode: disables colored output")
       print("  --cluster: enables cluster mode")
+      print("  --loopback: enables loopback interface mode (default is infiniband)")
       print("  --server-port <port>: sets the port for the server")
       print("  --client-port <port>: sets the port for the client")
       print("  --target-ip <ip>: sets the target ip for the client")
@@ -417,6 +436,15 @@ async def main() :
       cluster_mode = True
     elif "--no-log" in sys.argv :
       glog.set_log_file(NoLog())
+    elif "--loopback" in sys.argv :
+      lo = get_loopback_interface()
+      if lo != None :
+        target_ip = get_interface_ip(lo)
+        if target_ip != None :
+          glog.info("Using loopback IP: " + target_ip)
+        else :
+          glog.warn("Detected loopback interface but could not get IP")
+        # endif
   # endif
   # if no custom IP was provided, check for infiniband IP
   if not custom_ip :
@@ -432,6 +460,10 @@ async def main() :
       glog.info("No infiniband interface detected")
     # endif
   #endif
+  if target_ip == None :
+    target_ip = "0.0.0.0"
+    glog.warn("IP address was not provided through interface search or command line arguments")
+    glog.warn("Using wildcard: " + target_ip)
   # start the signalling server
   glog.info("Starting server...")
   async with ws.serve(connection, target_ip, server_port, compression = None) as ServerConnection, \
