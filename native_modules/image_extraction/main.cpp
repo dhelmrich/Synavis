@@ -85,7 +85,7 @@ int main(int args, char** argv)
       }
       catch (...)
       {
-        //std::cout << "Received data: " << dataView << std::endl;
+        std::cout << "Received data: " << dataView << std::endl;
       }
     });
   dc->SetFrameReceptionCallback([](auto frame)
@@ -98,9 +98,11 @@ int main(int args, char** argv)
   }
   std::cout << "Found out that we are connected" << std::endl;
   dc->PrintCommunicationData();
+  dc->SendJSON(json({{"type", "settings"},{"bRespondWithTiming", true}}));
   dc->SendJSON(json({{"type","console"}, {"command", "t.maxFPS 10"}}));
   dc->SendJSON(json({{"type","command"},{"name","cam"}, {"camera", "scene"}}));
   dc->SendJSON(json({ {"type","command"}, {"name" , "RawData"}, {"framecapturetime" , 2.0} }));
+  dc->SendJSON(json({{"type", "query"}}));
   
   //dc->SendString("test");
 

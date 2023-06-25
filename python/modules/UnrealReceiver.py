@@ -72,12 +72,26 @@ print("Starting")
 
 time.sleep(1)
 
+m.SendJSON({"type":"settings", "bRespondWithTiming": True})
+
 reset_message()
 
-m.SendJSON({"type":"command", "name":"RawData", "framecapturetime": 2.0})
+# send a query
+msg = {"type":"query", "spawn":"any"}
+print("Sending: ", msg)
+m.SendJSON(msg)
+answer = get_message()
+msg = {"type":"query", "spawn":"ExponentialHeightFog"}
+print("Sending: ", msg)
+m.SendJSON(msg)
+answer = get_message()
+msg = {"type":"query", "spawn":"BoxComponent"}
+print("Sending: ", msg)
+m.SendJSON(msg)
+answer = get_message()
+print("In main thread: ", answer)
 
-while m.GetState() == rtc.EConnectionState.CONNECTED:
-  time.sleep(0.1)
+
 
 # try parse json
 #answer = json.loads(answer)

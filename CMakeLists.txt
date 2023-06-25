@@ -63,6 +63,15 @@ if(NOT pybind11_FOUND)
   )
 else()
   message(STATUS "Found pybind11 v${pybind11_VERSION}: ${pybind11_INCLUDE_DIRS}")
+  # check in the include dir path if we are on the cluster by searching for "stages" in pybind11_INCLUDE_DIRS
+  string(FIND "${pybind11_INCLUDE_DIRS}" "stages" _is_cluster)
+  if(_is_cluster)
+    # print information message about this
+    message(WARNING "Found pybind11 on the cluster")
+    message(WARNING "Make sure that you have loaded the correct stages. The default stage is not always the correct one.")
+  else()
+    message(STATUS "Found pybind11 on your local machine or user space")
+  endif()
 endif()
 
 if(NOT pybind11_FOUND)
