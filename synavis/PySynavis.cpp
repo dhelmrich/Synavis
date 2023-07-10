@@ -160,12 +160,12 @@ namespace Synavis
     ;
 
     py::enum_<ELogVerbosity>(m, "LogVerbosity")
-      .value("NoLogging", ELogVerbosity::None)
-      .value("Error", ELogVerbosity::Error)
-      .value("Warning", ELogVerbosity::Warning)
-      .value("Info", ELogVerbosity::Info)
-      .value("Debug", ELogVerbosity::Debug)
-      .value("Verbose", ELogVerbosity::Verbose)
+      .value("LogSilent", ELogVerbosity::Silent)
+      .value("LogError", ELogVerbosity::Error)
+      .value("LogWarning", ELogVerbosity::Warning)
+      .value("LogInfo", ELogVerbosity::Info)
+      .value("LogDebug", ELogVerbosity::Debug)
+      .value("LogVerbose", ELogVerbosity::Verbose)
       .export_values()
     ;
 

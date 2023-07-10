@@ -40,7 +40,7 @@ void ProviderMain(const json& Config)
   auto BridgeProvider = std::make_shared<Synavis::Provider>();
   std::cout << _pref  << "Provider Thread started" << std::endl;
   BridgeProvider->UseConfig(Config);
-  BridgeProvider->SetTimeoutPolicy(Synavis::EMessageTimeoutPolicy::None, 10s);
+  BridgeProvider->SetTimeoutPolicy(Synavis::EMessageTimeoutPolicy::Silent, 10s);
   BridgeProvider->InitConnection();
   if(BridgeProvider->EstablishedConnection(false))
   {
@@ -63,7 +63,7 @@ void SeekerMain(const json& Config)
 
   std::cout << _pref  << "Seeker Thread started" << std::endl;
   BridgeSeeker->UseConfig(Config);
-  BridgeSeeker->SetTimeoutPolicy(Synavis::EMessageTimeoutPolicy::None, 10s);
+  BridgeSeeker->SetTimeoutPolicy(Synavis::EMessageTimeoutPolicy::Silent, 10s);
   BridgeSeeker->InitConnection();
   if(BridgeSeeker->EstablishedConnection(false))
   {

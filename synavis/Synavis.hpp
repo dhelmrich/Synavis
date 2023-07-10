@@ -295,14 +295,14 @@ namespace Synavis
 
   enum class SYNAVIS_EXPORT EMessageTimeoutPolicy
   {
-    None = (std::uint8_t)EDataReceptionPolicy::Loss + 1u,
+    Silent = (std::uint8_t)EDataReceptionPolicy::Loss + 1u,
     Critical,
     All
   };
 
   enum class SYNAVIS_EXPORT ELogVerbosity
   {
-    None = (std::uint8_t)EMessageTimeoutPolicy::All + 1u,
+    Silent = (std::uint8_t)EMessageTimeoutPolicy::All + 1u,
     Error,
     Warning,
     Info,

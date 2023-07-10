@@ -13,6 +13,7 @@
 #undef min
 #undef max
 
+#define LVERBOSE if(LogVerbosity >= ELogVerbosity::Verbose) std::cout << Prefix 
 #define LDEBUG if(LogVerbosity >= ELogVerbosity::Debug) std::cout << Prefix 
 #define LINFO if(LogVerbosity >= ELogVerbosity::Info) std::cout << Prefix 
 #define LWARNING if(LogVerbosity >= ELogVerbosity::Warning) std::cout << Prefix 
@@ -515,15 +516,20 @@ void Synavis::DataConnector::Initialize()
         if (first_lbrace < message.length() && last_rbrace < message.length()
           && std::ranges::all_of(message.begin() + first_lbrace, message.begin() + last_rbrace, &isprint))
         {
+          LVERBOSE << "Decoded message reception of size " << last_rbrace - first_lbrace + 1 << " of " << message.length() << std::endl;
           if (MessageReceptionCallback.has_value())
             MessageReceptionCallback.value()(message.substr(first_lbrace, last_rbrace - first_lbrace + 1));
         }
         else if (DataReceptionCallback.has_value())
+        {
+          LVERBOSE << "Received data of size " << data.size() << std::endl;
           DataReceptionCallback.value()(data);
+        }
       }
       else
       {
         auto message = std::get<std::string>(messageordata);
+        LVERBOSE << "Direct message reception of size " << message.size() << std::endl;
         if (MessageReceptionCallback.has_value())
           MessageReceptionCallback.value()(message);
       }

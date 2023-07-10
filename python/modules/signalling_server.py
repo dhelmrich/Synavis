@@ -183,7 +183,6 @@ def get_interface_ip(interface) :
   return ip
 #enddef
 
-
 # a method that returns all connections that do not have any other connections assigned to them
 # parameter role: "server" or "client"
 def get_unassigned_connections(role : str = "client") :
