@@ -33,7 +33,7 @@ bool ParseTimeFromString(std::string Source, std::chrono::time_point<std::chrono
 
 namespace Synavis
 {
-  
+
   template < typename T > std::weak_ptr<T> weaken(std::shared_ptr<T> const& ptr)
   {
     return std::weak_ptr<T>(ptr);
@@ -139,6 +139,11 @@ namespace Synavis
   inline void SYNAVIS_EXPORT VerboseMode()
   {
     rtcInitLogger(RTC_LOG_VERBOSE, nullptr);
+  }
+
+  inline void SYNAVIS_EXPORT SilentMode()
+  {
+    rtcInitLogger(RTC_LOG_NONE, nullptr);
   }
 
   // a class to represent access to a buffer in reverse byte order

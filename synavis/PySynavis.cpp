@@ -196,6 +196,7 @@ namespace Synavis
     ;
 
     m.def("VerboseMode", &VerboseMode);
+    m.def("SilentMode", &SilentMode);
 
     py::class_<rtc::Configuration>(m, "PeerConnectionConfig")
         .def(py::init<>())
@@ -236,6 +237,7 @@ namespace Synavis
       .def("SetOnRemoteDescriptionCallback", &DataConnector::SetOnRemoteDescriptionCallback, py::arg("Callback"))
       .def("SetDataCallback", &DataConnector::SetDataCallback,py::arg("Callback"))
       .def("SetMessageCallback", &DataConnector::SetMessageCallback,py::arg("Callback"))
+      .def("SetOnDataChannelAvailableCallback", &DataConnector::SetOnDataChannelAvailableCallback,py::arg("Callback"))
       .def("SetConfig", &DataConnector::SetConfig,py::arg("Config"))
       .def("SetConfigFile", &DataConnector::SetConfigFile,py::arg("ConfigFile"))
       .def("StartSignalling", &DataConnector::StartSignalling)
@@ -263,6 +265,7 @@ namespace Synavis
       .def("SetFrameReceptionCallback", &MediaReceiver::SetFrameReceptionCallback,py::arg("Callback"))
       .def("SetOnTrackOpenCallback", &MediaReceiver::SetOnTrackOpenCallback,py::arg("Callback"))
       .def("SetOnRemoteDescriptionCallback", &MediaReceiver::SetOnRemoteDescriptionCallback, py::arg("Callback"))
+      .def("SetOnDataChannelAvailableCallback", &MediaReceiver::SetOnDataChannelAvailableCallback,py::arg("Callback"))
       .def("SendData", &MediaReceiver::SendData, py::arg("Data"))
       .def("SendString", &MediaReceiver::SendString, py::arg("Message"))
       .def("SendJSON", &MediaReceiver::SendJSON, py::arg("Message"))

@@ -57,6 +57,7 @@ public:
   void SetOnClosedCallback(std::function<void(void)> Callback) { OnClosedCallback = Callback; }
   void SetOnIceGatheringFinished(std::function<void(void)> Callback) { OnIceGatheringFinished = Callback; }
   void SetOnRemoteDescriptionCallback(std::function<void(std::string)> Callback) { OnRemoteDescriptionCallback = Callback; }
+  void SetOnDataChannelAvailableCallback(std::function<void(void)> Callback) { OnDataChannelAvailableCallback = Callback; }
   void SetRetryOnErrorResponse(bool Retry) { RetryOnErrorResponse = Retry; }
   void CommunicateSDPs();
   void WriteSDPsToFile(std::string Filename);
@@ -72,6 +73,9 @@ protected:
   std::optional<std::function<void(void)>> OnClosedCallback;
   std::optional<std::function<void(void)>> OnIceGatheringFinished;
   std::optional<std::function<void(std::string)>> OnRemoteDescriptionCallback;
+  std::optional<std::function<void(void)>> OnDataChannelAvailableCallback;
+
+  inline void DataChannelMessageHandling(rtc::message_variant Data);
 
   ELogVerbosity LogVerbosity = ELogVerbosity::Warning;
 

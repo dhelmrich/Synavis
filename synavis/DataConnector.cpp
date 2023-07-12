@@ -133,7 +133,7 @@ bool Synavis::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, 
       {
         MessageState = MessageState + 1;
       }
-      else if(content["type"] == "error")
+      else if (content["type"] == "error")
       {
         MessageState = -1;
       }
@@ -168,7 +168,7 @@ bool Synavis::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, 
   }
   if (!Source)
   {
-    if(NeedToDelete)
+    if (NeedToDelete)
     {
       delete[] Source;
     }
@@ -178,7 +178,7 @@ bool Synavis::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, 
   LDEBUG << "Transmitting buffer of size " << Buffer.size() << " in " << chunks << " chunks of size " << chunk_size << std::endl;
   this->SendJSON({ {"type","buffer"}, {"start",Name }, {"size", total_size}, {"format", Format} });
   LDEBUG << "Sent start message" << std::endl;
-  while (MessageState < StateTracker) { std::this_thread::yield(); if(MessageState < 0) break; }
+  while (MessageState < StateTracker) { std::this_thread::yield(); if (MessageState < 0) break; }
   StateTracker++;
   LDEBUG << "Received start message" << std::endl;
   rtc::binary bytes(std::min(chunk_size, total_size) + 4);
@@ -202,12 +202,12 @@ bool Synavis::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, 
     DataChannel->sendBuffer(bytes);
     LDEBUG << "Sent chunk " << i << " of length " << remaining << std::endl;
     // wait for the message to be received
-    while (MessageState < StateTracker) { std::this_thread::yield(); if(MessageState < 0) break; }
+    while (MessageState < StateTracker) { std::this_thread::yield(); if (MessageState < 0) break; }
     LDEBUG << "Received message " << i << std::endl;
     StateTracker++;
   }
   this->SendJSON({ {"type","buffer"},{"stop",Name} });
-  while (MessageState < StateTracker) { std::this_thread::yield(); if(MessageState < 0) break; }
+  while (MessageState < StateTracker) { std::this_thread::yield(); if (MessageState < 0) break; }
   LDEBUG << "Sent stop message" << std::endl;
   // restore the original callback
   MessageReceptionCallback = msg_callback;
@@ -244,7 +244,7 @@ void Synavis::DataConnector::SendGeometry(const std::vector<double>& Vertices, c
   // because a single buffer would mean that we use JSON, we need to add the base64 size of the buffers
   total_size += EncodedSize(Vertices);
   total_size += EncodedSize(Indices);
-  if(Normals.has_value())
+  if (Normals.has_value())
   {
     total_size += EncodedSize(Normals.value());
   }
@@ -281,35 +281,35 @@ void Synavis::DataConnector::SendGeometry(const std::vector<double>& Vertices, c
     bool state = false;
     std::span<const uint8_t> data(reinterpret_cast<const uint8_t*>(Vertices.data()), reinterpret_cast<const uint8_t*>(Vertices.data() + Vertices.size()));
     // send the vertices
-    do { state = this->SendBuffer(data, "points", "base64"); } while(!state && RetryOnErrorResponse);
+    do { state = this->SendBuffer(data, "points", "base64"); } while (!state && RetryOnErrorResponse);
     state = false;
     // send the indices
     data = std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(Indices.data()), Indices.size() * sizeof(float));
-    do { state = this->SendBuffer(data, "triangles", "base64"); } while(!state && RetryOnErrorResponse);
+    do { state = this->SendBuffer(data, "triangles", "base64"); } while (!state && RetryOnErrorResponse);
     state = false;
     // send the normals
     if (UVs.has_value())
     {
       data = std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(Normals.value().data()), Normals.value().size() * sizeof(float));
-      do {state = this->SendBuffer(data, "normals", "base64");} while(!state && RetryOnErrorResponse);
+      do { state = this->SendBuffer(data, "normals", "base64"); } while (!state && RetryOnErrorResponse);
       state = false;
     }
     // send the UVs
     if (UVs.has_value())
     {
       data = std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(UVs.value().data()), UVs.value().size() * sizeof(float));
-      do {state = this->SendBuffer(data, "uvs", "base64");} while(!state && RetryOnErrorResponse);
+      do { state = this->SendBuffer(data, "uvs", "base64"); } while (!state && RetryOnErrorResponse);
       state = false;
     }
     // send the tangents
     if (Tangents.has_value())
     {
       data = std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(Tangents.value().data()), Tangents.value().size() * sizeof(float));
-      do {state = this->SendBuffer(data, "tangents", "base64");} while(!state && RetryOnErrorResponse);
+      do { state = this->SendBuffer(data, "tangents", "base64"); } while (!state && RetryOnErrorResponse);
       state = false;
     }
-    if(AutoMessage)
-      this->SendJSON({{"type","spawn"},{"object","ProceduralMeshComponent"}});
+    if (AutoMessage)
+      this->SendJSON({ {"type","spawn"},{"object","ProceduralMeshComponent"} });
   }
 }
 
@@ -418,15 +418,72 @@ void Synavis::DataConnector::WriteSDPsToFile(std::string Filename)
     std::ofstream file(Filename);
     file << sdp;
     file.close();
-    if(f_.has_value())
+    if (f_.has_value())
       f_.value()(sdp);
   };
 }
 
+inline void Synavis::DataConnector::DataChannelMessageHandling(rtc::message_variant messageordata)
+{
+  if (std::holds_alternative<rtc::binary>(messageordata))
+  {
+    auto data = std::get<rtc::binary>(messageordata);
+    if (data.size() <= 3)
+    {
+      if (DataReceptionCallback.has_value())
+        DataReceptionCallback.value()(data);
+      return;
+    }
+    // try parse string
+    LVERBOSE << "Trying to check if I find an lbrace and also to see if it is properly closed..." << std::endl;
+    std::string_view message(reinterpret_cast<char*>(data.data() + 1), data.size());
+    // find readable json subset
+    auto first_lbrace = message.find_first_of('{');
+    // find the rbrace that closes this lbrace by counting the braces
+    auto last_rbrace = first_lbrace;
+    int brace_count = 1;
+    for (auto i = first_lbrace + 1; i < message.length(); i++)
+    {
+      if (message[i] == '{')
+        brace_count++;
+      else if (message[i] == '}')
+        brace_count--;
+      if (brace_count == 0)
+      {
+        last_rbrace = i;
+        break;
+      }
+    }
+    LVERBOSE << "Found first lbrace at " << first_lbrace << " and last rbrace at " << last_rbrace << std::endl;
+
+
+    if (first_lbrace < message.length() && last_rbrace < message.length())
+      //&& std::ranges::all_of(message.begin() + first_lbrace, message.begin() + last_rbrace, &isprint))
+    {
+
+      LVERBOSE << "Decoded message reception of size " << last_rbrace - first_lbrace + 1 << " of " << message.length() << std::endl;
+      if (MessageReceptionCallback.has_value())
+        MessageReceptionCallback.value()(std::string(message.substr(first_lbrace, last_rbrace - first_lbrace + 1)));
+    }
+    else if (DataReceptionCallback.has_value())
+    {
+      LVERBOSE << "Received data of size " << data.size() << std::endl;
+      DataReceptionCallback.value()(data);
+    }
+  }
+  else
+  {
+    auto message = std::get<std::string>(messageordata);
+    LVERBOSE << "Direct message reception of size " << message.size() << std::endl;
+    if (MessageReceptionCallback.has_value())
+      MessageReceptionCallback.value()(message);
+  }
+}
+
 void Synavis::DataConnector::Initialize()
 {
-  if(IP.has_value()) rtcconfig_.bindAddress = IP.value();
-  if(PortRange.has_value())
+  if (IP.has_value()) rtcconfig_.bindAddress = IP.value();
+  if (PortRange.has_value())
   {
     rtcconfig_.portRangeBegin = PortRange.value().first;
     rtcconfig_.portRangeEnd = PortRange.value().second;
@@ -461,6 +518,10 @@ void Synavis::DataConnector::Initialize()
       datachannel->onOpen([this]()
         {
           std::cout << Prefix << "THEIR DataChannel connection is setup!" << std::endl;
+        });
+      datachannel->onMessage([this](auto messageordata)
+        {
+          DataChannelMessageHandling(messageordata);
         });
     });
   PeerConnection->onTrack([this](auto track)
@@ -502,51 +563,17 @@ void Synavis::DataConnector::Initialize()
       }
       this->MaxMessageSize = std::min(DataChannel->maxMessageSize(), static_cast<std::size_t>(std::numeric_limits<uint16_t>::max() - 3));
     });
-  DataChannel->onMessage([this](auto messageordata)
-    {
-      if (std::holds_alternative<rtc::binary>(messageordata))
-      {
-        auto data = std::get<rtc::binary>(messageordata);
-        // try parse string
-        std::string message(reinterpret_cast<char*>(data.data() + 1), data.size() - 1);
-        // find readable json subset
-        auto first_lbrace = message.find_first_of('{');
-        auto last_rbrace = message.find_last_of('}');
-
-        if (first_lbrace < message.length() && last_rbrace < message.length()
-          && std::ranges::all_of(message.begin() + first_lbrace, message.begin() + last_rbrace, &isprint))
-        {
-          LVERBOSE << "Decoded message reception of size " << last_rbrace - first_lbrace + 1 << " of " << message.length() << std::endl;
-          if (MessageReceptionCallback.has_value())
-            MessageReceptionCallback.value()(message.substr(first_lbrace, last_rbrace - first_lbrace + 1));
-        }
-        else if (DataReceptionCallback.has_value())
-        {
-          LVERBOSE << "Received data of size " << data.size() << std::endl;
-          DataReceptionCallback.value()(data);
-        }
-      }
-      else
-      {
-        auto message = std::get<std::string>(messageordata);
-        LVERBOSE << "Direct message reception of size " << message.size() << std::endl;
-        if (MessageReceptionCallback.has_value())
-          MessageReceptionCallback.value()(message);
-      }
-    });
+  DataChannel->onMessage(std::bind(&DataConnector::DataChannelMessageHandling, this, std::placeholders::_1));
   DataChannel->onError([this](std::string error)
     {
       LERROR << "DataChannel error: " << error << std::endl;
     });
   DataChannel->onAvailable([this]()
     {
-      //std::cout << Prefix << "DataChannel is available" << std::endl;
       state_ = EConnectionState::CONNECTED;
-      
-      //if (OnConnectedCallback.has_value())
-      //{
-      //  OnConnectedCallback.value()();
-      //}
+
+      if (OnDataChannelAvailableCallback.has_value())
+        OnDataChannelAvailableCallback.value()();
     });
   DataChannel->onBufferedAmountLow([this]()
     {
@@ -611,7 +638,7 @@ void Synavis::DataConnector::Initialize()
           std::string sdp = content["sdp"].get<std::string>();
           std::string type = content["type"].get<std::string>();
           rtc::Description remote(sdp, type);
-          if(OnRemoteDescriptionCallback.has_value())
+          if (OnRemoteDescriptionCallback.has_value())
             OnRemoteDescriptionCallback.value()(sdp);
           if (content["type"] == "answer" && TakeFirstStep)
             PeerConnection->setRemoteDescription(remote);
@@ -695,9 +722,9 @@ void Synavis::DataConnector::Initialize()
             LDEBUG << "I still have " << RequiredCandidate.size() << " required candidates: ";
             for (auto i = 0; i < RequiredCandidate.size(); ++i)
             {
-              if(this->LogVerbosity >= ELogVerbosity::Debug) std::cout << RequiredCandidate[i] << " ";
+              if (this->LogVerbosity >= ELogVerbosity::Debug) std::cout << RequiredCandidate[i] << " ";
             }
-            if(this->LogVerbosity >= ELogVerbosity::Debug) std::cout << std::endl;
+            if (this->LogVerbosity >= ELogVerbosity::Debug) std::cout << std::endl;
           }
         }
         else if (content["type"] == "control")
