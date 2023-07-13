@@ -428,15 +428,25 @@ inline void Synavis::DataConnector::DataChannelMessageHandling(rtc::message_vari
   if (std::holds_alternative<rtc::binary>(messageordata))
   {
     auto data = std::get<rtc::binary>(messageordata);
-    if (data.size() <= 3)
+    if (data.size() < 5) // {a:1}
     {
       if (DataReceptionCallback.has_value())
         DataReceptionCallback.value()(data);
       return;
     }
     // try parse string
-    LVERBOSE << "Trying to check if I find an lbrace and also to see if it is properly closed..." << std::endl;
     std::string_view message(reinterpret_cast<char*>(data.data() + 1), data.size());
+    // the first character pair to see if the string is wchar_t or char
+    if(message[1] == '\0' && message[3] == '\0')
+    {
+      // wchar_t
+      LDEBUG << "We assume that the 0x00 characters mean that the string is wchar_t" << std::endl;
+      auto wstringview = std::wstring_view(reinterpret_cast<wchar_t*>(data.data() + 1), data.size() / sizeof(wchar_t));
+      char* cstr = new char[wstringview.size()];
+      std::size_t it = 0;
+      std::generate(cstr, cstr + wstringview.size(), [&wstringview, &it]() { return static_cast<char>(wstringview[it++]); });
+      message = std::string_view(cstr, wstringview.size());
+    }
     // find readable json subset
     auto first_lbrace = message.find_first_of('{');
     // find the rbrace that closes this lbrace by counting the braces
@@ -454,8 +464,6 @@ inline void Synavis::DataConnector::DataChannelMessageHandling(rtc::message_vari
         break;
       }
     }
-    LVERBOSE << "Found first lbrace at " << first_lbrace << " and last rbrace at " << last_rbrace << std::endl;
-
 
     if (first_lbrace < message.length() && last_rbrace < message.length())
       //&& std::ranges::all_of(message.begin() + first_lbrace, message.begin() + last_rbrace, &isprint))
@@ -491,7 +499,7 @@ void Synavis::DataConnector::Initialize()
   PeerConnection = std::make_shared<rtc::PeerConnection>(rtcconfig_);
   PeerConnection->onGatheringStateChange([this](auto state)
     {
-      std::cout << Prefix << "Gathering state changed" << state << std::endl;
+      LINFO << "Gathering state changed" << state << std::endl;
       switch (state)
       {
       case rtc::PeerConnection::GatheringState::Complete:

@@ -158,41 +158,41 @@ int main(int args, char** argv)
   }
   std::cout << "Found out that we are connected" << std::endl;
   dc->PrintCommunicationData();
-  dc->SendJSON(json({ {"type", "settings"},{"bRespondWithTiming", true} }));
+  dc->SendJSON(json({ {"type", "settings"},{"bRespondWithTiming", true}, {"bLogResponses", true} }));
   dc->SendJSON(json({ {"type","console"}, {"command", "t.maxFPS 10"} }));
   dc->SendJSON(json({ {"type","command"},{"name","cam"}, {"camera", "scene"} }));
-  dc->SendJSON(json({ {"type", "receive"}, {"progress", -1} }));
+  //dc->SendJSON(json({ {"type", "receive"}, {"progress", -1} }));
 
   //dc->SendString("test");
+
+  for (int i = 10; i < 11; ++i)
+  {
+    std::vector<double> TestGeometry(3000 * i);
+    // fill with increasing numbers
+    std::generate(TestGeometry.begin(), TestGeometry.end(), [n = 0]() mutable { return n++; });
+    auto encoded = Synavis::Encode64(TestGeometry);
+    std::cout << "Encoded: " << encoded.substr(0,40) << std::endl;
+    dc->SendFloat64Buffer(TestGeometry, "points", "base64");
+    
+    while (Messages.size() == 0)
+    {
+      std::this_thread::sleep_for(10ms);
+    }
+    // remove last message
+    auto message = Messages.back();
+    if(json::parse(message)["type"] == "error")
+    {
+      std::cout << "Error received: " << message << std::endl;
+      return EXIT_FAILURE;
+    }
+    Messages.clear();
+    delete [] encoded.data();
+    std::this_thread::sleep_for(1s);
+  }
 
   while (Synavis::EConnectionState::CONNECTED == dc->GetState())
   {
     std::this_thread::sleep_for(10ms);
   }
-
-  // for (int i = 10; i < 11; ++i)
-  // {
-  //   std::vector<double> TestGeometry(3000 * i);
-  //   // fill with increasing numbers
-  //   std::generate(TestGeometry.begin(), TestGeometry.end(), [n = 0]() mutable { return n++; });
-  //   auto encoded = Synavis::Encode64(TestGeometry);
-  //   std::cout << "Encoded: " << encoded << std::endl;
-  //   dc->SendFloat64Buffer(TestGeometry, "points", "base64");
-  //   
-  //   while (Messages.size() == 0)
-  //   {
-  //     std::this_thread::sleep_for(10ms);
-  //   }
-  //   // remove last message
-  //   auto message = Messages.back();
-  //   if(json::parse(message)["type"] == "error")
-  //   {
-  //     std::cout << "Error received: " << message << std::endl;
-  //     return EXIT_FAILURE;
-  //   }
-  //   Messages.clear();
-  //   delete [] encoded.data();
-  //   std::this_thread::sleep_for(1s);
-  // }
   return EXIT_SUCCESS;
 }
