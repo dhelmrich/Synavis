@@ -123,7 +123,7 @@ bool Synavis::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, 
 {
   // this method briefly exchanges the callback for message reception
   auto msg_callback = MessageReceptionCallback;
-  int MessageState = 0;
+  int MessageState = (this->DontWaitForAnswer) ? 1 : 0;
   int StateTracker = 1;
   this->SetMessageCallback([&msg_callback, &MessageState, this](std::string Message)
     {
@@ -142,6 +142,31 @@ bool Synavis::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, 
         msg_callback.value()(Message);
       }
     });
+  auto WaitTimeout = [&MessageState, &StateTracker, this](bool bFail = true, double failtime = 2.0)
+  {
+    auto start_time = std::chrono::system_clock::now();
+    auto failtime_seconds = std::chrono::duration<double>(failtime);
+    auto waittime = failtime_seconds / 10.0;
+    while (MessageState < StateTracker)
+    {
+      if (this->LogVerbosity >= ELogVerbosity::Verbose)
+      {
+        std::this_thread::sleep_for(waittime);
+        std::cout << "Waiting for message " << StateTracker << " time " << std::chrono::duration<double>(std::chrono::system_clock::now() - start_time) << " of " << failtime_seconds << ": " << (std::chrono::duration<double>(std::chrono::system_clock::now() - start_time) > failtime_seconds) << std::endl;
+      }
+      else
+      {
+        std::this_thread::yield();
+      }
+      if (bFail && (std::chrono::duration<double>(std::chrono::system_clock::now() - start_time) > failtime_seconds))
+      {
+        LDEBUG << "Message reception timed out" << std::endl;
+        MessageState = -1;
+        break;
+      }
+    }
+    StateTracker++;
+  };
   std::size_t chunk_size{}, chunks{}, total_size{};
   const uint8_t* Source = nullptr;
   bool NeedToDelete = false;
@@ -178,14 +203,17 @@ bool Synavis::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, 
   LDEBUG << "Transmitting buffer of size " << Buffer.size() << " in " << chunks << " chunks of size " << chunk_size << std::endl;
   this->SendJSON({ {"type","buffer"}, {"start",Name }, {"size", total_size}, {"format", Format} });
   LDEBUG << "Sent start message" << std::endl;
-  while (MessageState < StateTracker) { std::this_thread::yield(); if (MessageState < 0) break; }
-  StateTracker++;
-  LDEBUG << "Received start message" << std::endl;
+  if (!DontWaitForAnswer)
+  {
+    WaitTimeout(this->FailIfNotComplete, TimeOut);
+    LDEBUG << "Received start message" << std::endl;
+  }
   rtc::binary bytes(std::min(chunk_size, total_size) + 4);
   bytes.at(bytes.size() - 1) = std::byte(0);
   uint8_t* buffer = reinterpret_cast<uint8_t*>(&(bytes.at(3)));
   bytes.at(0) = DataChannelByte;
   // move through the chunks
+  LVERBOSE << "Message state is " << MessageState << " chunk info " << total_size << "->" << chunk_size << "(" << chunks << ")" << std::endl;
   for (int i = 0; i < chunks && MessageState > 0; i++)
   {
     const auto remaining = std::min(chunk_size, total_size - i * chunk_size);
@@ -199,39 +227,41 @@ bool Synavis::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, 
     // set the second and third bytes to the chunk size
     *(reinterpret_cast<uint16_t*>(&(bytes.at(1)))) = static_cast<uint16_t>(remaining);
     // send the buffer
+    LDEBUG << "Sending chunk " << i << " of length " << remaining << std::endl;
     DataChannel->sendBuffer(bytes);
-    LDEBUG << "Sent chunk " << i << " of length " << remaining << std::endl;
     // wait for the message to be received
-    while (MessageState < StateTracker) { std::this_thread::yield(); if (MessageState < 0) break; }
-    LDEBUG << "Received message " << i << std::endl;
-    StateTracker++;
+    if (!DontWaitForAnswer)
+    {
+      WaitTimeout(this->FailIfNotComplete, TimeOut);
+      LDEBUG << "Received message " << i << std::endl;
+    }
   }
   this->SendJSON({ {"type","buffer"},{"stop",Name} });
-  while (MessageState < StateTracker) { std::this_thread::yield(); if (MessageState < 0) break; }
-  LDEBUG << "Sent stop message" << std::endl;
-  // restore the original callback
-  MessageReceptionCallback = msg_callback;
-  if (NeedToDelete)
-  {
-    delete[] Source;
-  }
-  return MessageState > 0;
+    if (!DontWaitForAnswer) WaitTimeout(this->FailIfNotComplete, TimeOut);
+    LDEBUG << "Sent stop message" << std::endl;
+    // restore the original callback
+      MessageReceptionCallback = msg_callback;
+    if (NeedToDelete)
+    {
+      delete[] Source;
+    }
+  return this->DontWaitForAnswer || MessageState > 0;
 }
 
-void Synavis::DataConnector::SendFloat64Buffer(const std::vector<double>& Buffer, std::string Name, std::string Format)
+bool Synavis::DataConnector::SendFloat64Buffer(const std::vector<double>& Buffer, std::string Name, std::string Format)
 {
-  this->SendBuffer(std::span(reinterpret_cast<const uint8_t*>(Buffer.data()), Buffer.size() * sizeof(double)), Name, Format);
+  return this->SendBuffer(std::span(reinterpret_cast<const uint8_t*>(Buffer.data()), Buffer.size() * sizeof(double)), Name, Format);
 }
 
-void Synavis::DataConnector::SendFloat32Buffer(const std::vector<float>& Buffer, std::string Name, std::string Format)
+bool Synavis::DataConnector::SendFloat32Buffer(const std::vector<float>& Buffer, std::string Name, std::string Format)
 {
-  this->SendBuffer(std::span(reinterpret_cast<const uint8_t*>(Buffer.data()), Buffer.size() * sizeof(float)), Name, Format);
+  return this->SendBuffer(std::span(reinterpret_cast<const uint8_t*>(Buffer.data()), Buffer.size() * sizeof(float)), Name, Format);
 }
 
-void Synavis::DataConnector::SendInt32Buffer(const std::vector<int32_t>& Buffer, std::string Name,
+bool Synavis::DataConnector::SendInt32Buffer(const std::vector<int32_t>& Buffer, std::string Name,
   std::string Format)
 {
-  this->SendBuffer(std::span(reinterpret_cast<const uint8_t*>(Buffer.data()), Buffer.size() * sizeof(int32_t)), Name, Format);
+  return this->SendBuffer(std::span(reinterpret_cast<const uint8_t*>(Buffer.data()), Buffer.size() * sizeof(int32_t)), Name, Format);
 }
 
 void Synavis::DataConnector::SendGeometry(const std::vector<double>& Vertices, const std::vector<uint32_t>& Indices,
@@ -437,10 +467,10 @@ inline void Synavis::DataConnector::DataChannelMessageHandling(rtc::message_vari
     // try parse string
     std::string_view message(reinterpret_cast<char*>(data.data() + 1), data.size());
     // the first character pair to see if the string is wchar_t or char
-    if(message[1] == '\0' && message[3] == '\0')
+    if (message[1] == '\0' && message[3] == '\0')
     {
       // wchar_t
-      LDEBUG << "We assume that the 0x00 characters mean that the string is wchar_t" << std::endl;
+      LVERBOSE << "We assume that the 0x00 characters mean that the string is wchar_t" << std::endl;
       auto wstringview = std::wstring_view(reinterpret_cast<wchar_t*>(data.data() + 1), data.size() / sizeof(wchar_t));
       char* cstr = new char[wstringview.size()];
       std::size_t it = 0;

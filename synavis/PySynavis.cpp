@@ -256,6 +256,9 @@ namespace Synavis
       .def("SetLogVerbosity", &DataConnector::SetLogVerbosity, py::arg("Verbosity"))
       .def("SetRetryOnErrorResponse", &DataConnector::SetRetryOnErrorResponse, py::arg("Retry"))
       .def("WriteSDPsToFile", &DataConnector::WriteSDPsToFile, py::arg("Filename"))
+      .def("SetTimeOut", &DataConnector::SetTimeOut, py::arg("TimeOut"))
+      .def("SetFailIfNotComplete", &DataConnector::SetFailIfNotComplete, py::arg("FailIfNotComplete"))
+      .def("SetDontWaitForAnswer", &DataConnector::SetDontWaitForAnswer, py::arg("DontWaitForAnswer"))
       .def_readwrite("IP", &DataConnector::IP)
       .def_readwrite("PortRange", &DataConnector::IP)
     ;
@@ -291,6 +294,9 @@ namespace Synavis
       .def("RequestKeyFrame", &MediaReceiver::RequestKeyFrame)
       .def("WriteSDPsToFile", &MediaReceiver::WriteSDPsToFile, py::arg("Filename"))
       .def("SetCodec", &MediaReceiver::SetCodec, py::arg("Codec"))
+      .def("SetTimeOut", &MediaReceiver::SetTimeOut, py::arg("TimeOut"))
+      .def("SetFailIfNotComplete", &MediaReceiver::SetFailIfNotComplete, py::arg("FailIfNotComplete"))
+      .def("SetDontWaitForAnswer", &MediaReceiver::SetDontWaitForAnswer, py::arg("DontWaitForAnswer"))
       .def_readwrite("IP", &MediaReceiver::IP)
       .def_readwrite("PortRange", &MediaReceiver::IP)
     ;

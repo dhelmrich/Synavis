@@ -135,6 +135,7 @@ namespace Synavis
   class Adapter;
 
   int64_t TimeSince(std::chrono::system_clock::time_point t);
+  double HighRes();
 
   inline void SYNAVIS_EXPORT VerboseMode()
   {
