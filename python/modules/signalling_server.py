@@ -67,12 +67,12 @@ class Logger() :
     # also open a log file
     i = 0
     timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
-    fname = "sig_"+timestamp+"_"+str(i)+".log"
+    self.fname = "sig_"+timestamp+"_"+str(i)+".log"
     # check if the file exists
-    while os.path.exists(fname) :
+    while os.path.exists(self.fname) :
       i += 1
-      fname = "sig_"+timestamp+"_"+str(i)+".log"
-    self.log_file = open(fname, "w")
+      self.fname = "sig_"+timestamp+"_"+str(i)+".log"
+    self.log_file = open(self.fname, "w")
   #enddef
   # desctructor
   def __del__(self) :
@@ -105,6 +105,11 @@ class Logger() :
 
   def set_log_file(self, fname) :
     self.log_file.close()
+    # quick convenience: remove old log file
+    if os.path.exists(self.fname) :
+      os.remove(self.fname)
+    #endif
+    self.fname = fname
     self.log_file = open(fname, "w")
 
   def log_outgoing(self, message, receiver = None) :
