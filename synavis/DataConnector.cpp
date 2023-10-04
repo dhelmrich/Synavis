@@ -152,7 +152,7 @@ bool Synavis::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, 
       if (this->LogVerbosity >= ELogVerbosity::Verbose)
       {
         std::this_thread::sleep_for(waittime);
-        std::cout << "Waiting for message " << StateTracker << " time " << std::chrono::duration<double>(std::chrono::system_clock::now() - start_time) << " of " << failtime_seconds << ": " << (std::chrono::duration<double>(std::chrono::system_clock::now() - start_time) > failtime_seconds) << std::endl;
+        std::cout << "Waiting for message " << StateTracker << " time " << std::chrono::duration<double>(std::chrono::system_clock::now() - start_time).count() << " of " << failtime_seconds.count() << "." << std::endl;
       }
       else
       {
