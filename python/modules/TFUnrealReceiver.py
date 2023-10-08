@@ -20,6 +20,8 @@ import Synavis as rtc
 
 HEIGHT = 512
 WIDTH = 512
+NetworkSize = (HEIGHT,WIDTH)
+NetworkOutputDimension = 3
 
 # a callback function for the data connector
 def message_callback(msg) :
@@ -48,14 +50,14 @@ Batch = [{
   "seg":[]
 }]
 BatchSize = 1
-BatchDone = False
+BucketDone = False
 BatchID = 0
 UseBatch = 0
 Halt = False
 End = False
 
 def BatchAssembly() :
-  global BatchDone,BatchID,socket,BucketSize,End,Halt, datasize,connection_ip, connection_port
+  global BucketDone,BatchID,socket,BucketSize,End,Halt, datasize,connection_ip, connection_port
   print("Initializing from rtp streaming source")
   file = "udpsrc address=" + connection_ip + " port=" + connection_method + \
     " caps=\"application/x-rtp\" ! queue ! rtph264depay " + \
@@ -65,6 +67,9 @@ def BatchAssembly() :
     print("Video capture could not open")
     exit(-1)
   while True :
+    if Halt :
+      time.sleep(0.1)
+      continue
     ret,frame = video.read()
     if not ret :
       print("Empty frame")
@@ -77,6 +82,9 @@ def BatchAssembly() :
       truth = cv2.resize(truth,NetworkSize)
       Batch[BatchID]["img"].append(image)
       Batch[BatchID]["seg"].append(truth)
+      if len(Batch[BatchID]["img"]) >= BucketSize :
+        BucketDone = True
+        BatchID = 1 - BatchID
 #enddef
 
 class UnrealData(tf.keras.utils.Sequence):
@@ -99,15 +107,15 @@ class UnrealData(tf.keras.utils.Sequence):
     return x, y
   
   def __getitem__(self, idx):
-    global BatchDone, BatchID, UseBatch, Batch, Halt
-    if BatchDone :
+    global BucketDone, BatchID, UseBatch, Batch, Halt
+    if BucketDone :
       if not Halt :
         Halt = True
       print("Noticed that batch is done!")
       t = UseBatch
       UseBatch = BatchID
       BatchID = t
-      BatchDone = False
+      BucketDone = False
       Batch[BatchID]["img"].clear()
       Batch[BatchID]["seg"].clear()
       Halt = False

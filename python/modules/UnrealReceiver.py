@@ -10,7 +10,7 @@ import os
 import json
 
 # Synavis: Find build
-path = "../../"
+path = "../"
 # if windows
 if os.name == 'nt' :
   path = path + "build/synavis/Release/"
@@ -56,7 +56,6 @@ def frame_callback(frame) :
   print("Received frame.")
 
 m = rtc.MediaReceiver()
-m.IP = "127.0.0.1"
 m.Initialize()
 #Media.SetConfigFile("config.json")
 m.SetConfig({"SignallingIP": "127.0.0.1","SignallingPort":8080})
@@ -73,7 +72,24 @@ print("Starting")
 
 time.sleep(1)
 
+m.SendJSON({"type":"settings", "bRespondWithTiming": True})
+
 reset_message()
+
+# send a query
+msg = {"type":"query", "spawn":"any"}
+print("Sending: ", msg)
+m.SendJSON(msg)
+answer = get_message()
+msg = {"type":"query", "spawn":"ExponentialHeightFog"}
+print("Sending: ", msg)
+m.SendJSON(msg)
+answer = get_message()
+msg = {"type":"query", "spawn":"BoxComponent"}
+print("Sending: ", msg)
+m.SendJSON(msg)
+answer = get_message()
+print("In main thread: ", answer)
 
 
 

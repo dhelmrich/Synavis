@@ -21,6 +21,9 @@ project (${projectname} VERSION 0.0.1)
 set(ROOTDIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 set(CMAKE_CXX_STANDARD 23)
 
+# add an option to build with decoding support
+option(BUILD_WITH_DECODING "Build with decoding support" OFF)
+
 include(FetchContent)
 include(ExternalProject)
 
@@ -51,6 +54,32 @@ if(UNIX)
   endif()
 endif()
 
+if(BUILD_WITH_DECODING)
+  # search for libvpx
+  find_package(LibVPX)
+  # if not found
+  if(NOT LibVPX_FOUND)
+    FetchContent_Declare(
+      libvpx
+      GIT_REPOSITORY https://chromium.googlesource.com/webm/libvpx
+      GIT_TAG       v1.10.0
+      GIT_SHALLOW True
+    )
+  else()
+    message(STATUS "Found libvpx v${LibVPX_VERSION}: ${LibVPX_INCLUDE_DIRS}")
+    # check in the include dir path if we are on the cluster by searching for "stages" in LibVPX_INCLUDE_DIRS
+    string(FIND "${LibVPX_INCLUDE_DIRS}" "stages" _is_cluster)
+    if(_is_cluster)
+      # print information message about this
+      message(WARNING "Found libvpx on the cluster")
+      message(WARNING "Make sure that you have loaded the correct stages. The default stage is not always the correct one.")
+    else()
+      message(STATUS "Found libvpx on your local machine or user space")
+    endif()
+  endif()
+endif()
+
+
 # find pybind11
 find_package(pybind11 CONFIG)
 # if not found
@@ -63,6 +92,15 @@ if(NOT pybind11_FOUND)
   )
 else()
   message(STATUS "Found pybind11 v${pybind11_VERSION}: ${pybind11_INCLUDE_DIRS}")
+  # check in the include dir path if we are on the cluster by searching for "stages" in pybind11_INCLUDE_DIRS
+  string(FIND "${pybind11_INCLUDE_DIRS}" "stages" _is_cluster)
+  if(_is_cluster)
+    # print information message about this
+    message(WARNING "Found pybind11 on the cluster")
+    message(WARNING "Make sure that you have loaded the correct stages. The default stage is not always the correct one.")
+  else()
+    message(STATUS "Found pybind11 on your local machine or user space")
+  endif()
 endif()
 
 if(NOT pybind11_FOUND)

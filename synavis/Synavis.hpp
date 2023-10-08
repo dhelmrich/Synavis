@@ -33,7 +33,7 @@ bool ParseTimeFromString(std::string Source, std::chrono::time_point<std::chrono
 
 namespace Synavis
 {
-  
+
   template < typename T > std::weak_ptr<T> weaken(std::shared_ptr<T> const& ptr)
   {
     return std::weak_ptr<T>(ptr);
@@ -135,7 +135,17 @@ namespace Synavis
   class Adapter;
 
   int64_t TimeSince(std::chrono::system_clock::time_point t);
+  double HighRes();
 
+  inline void SYNAVIS_EXPORT VerboseMode()
+  {
+    rtcInitLogger(RTC_LOG_VERBOSE, nullptr);
+  }
+
+  inline void SYNAVIS_EXPORT SilentMode()
+  {
+    rtcInitLogger(RTC_LOG_NONE, nullptr);
+  }
 
   // a class to represent access to a buffer in reverse byte order
   template < typename T >
@@ -291,14 +301,14 @@ namespace Synavis
 
   enum class SYNAVIS_EXPORT EMessageTimeoutPolicy
   {
-    None = (std::uint8_t)EDataReceptionPolicy::Loss + 1u,
+    Silent = (std::uint8_t)EDataReceptionPolicy::Loss + 1u,
     Critical,
     All
   };
 
   enum class SYNAVIS_EXPORT ELogVerbosity
   {
-    None = (std::uint8_t)EMessageTimeoutPolicy::All + 1u,
+    Silent = (std::uint8_t)EMessageTimeoutPolicy::All + 1u,
     Error,
     Warning,
     Info,

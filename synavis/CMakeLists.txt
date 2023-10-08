@@ -59,6 +59,8 @@ if(UNIX)
   ${CMAKE_BINARY_DIR}/_deps/date-src/include)
   target_link_libraries(${projectname} PRIVATE date)
   target_link_libraries(${PYPROJECT} PRIVATE date)
+  # also copy signalling_server.py from soure directory/python/modules to build directory
+  file(COPY ${CMAKE_SOURCE_DIR}/python/modules/signalling_server.py DESTINATION ${CMAKE_BINARY_DIR})
 endif()
 
 # add the permissive flag for MSVC

@@ -30,9 +30,9 @@ public:
   void SendString(std::string Message);
   void SendJSON(json Message);
   bool SendBuffer(const std::span<const uint8_t>& Buffer, std::string Name, std::string Format = "raw");
-  void SendFloat64Buffer(const std::vector<double>& Buffer, std::string Name, std::string Format = "raw");
-  void SendFloat32Buffer(const std::vector<float>& Buffer, std::string Name, std::string Format = "raw");
-  void SendInt32Buffer(const std::vector<int32_t>& Buffer, std::string Name, std::string Format = "raw");
+  bool SendFloat64Buffer(const std::vector<double>& Buffer, std::string Name, std::string Format = "raw");
+  bool SendFloat32Buffer(const std::vector<float>& Buffer, std::string Name, std::string Format = "raw");
+  bool SendInt32Buffer(const std::vector<int32_t>& Buffer, std::string Name, std::string Format = "raw");
   void SendGeometry(const std::vector<double>& Vertices, const std::vector<uint32_t>& Indices, std::string Name, std::optional<std::vector<double>> Normals = std::nullopt, 
                     std::optional<std::vector<double>> UVs = std::nullopt, std::optional<std::vector<double>> Tangents = std::nullopt, bool AutoMessage = true);
   EConnectionState GetState();
@@ -57,7 +57,11 @@ public:
   void SetOnClosedCallback(std::function<void(void)> Callback) { OnClosedCallback = Callback; }
   void SetOnIceGatheringFinished(std::function<void(void)> Callback) { OnIceGatheringFinished = Callback; }
   void SetOnRemoteDescriptionCallback(std::function<void(std::string)> Callback) { OnRemoteDescriptionCallback = Callback; }
+  void SetOnDataChannelAvailableCallback(std::function<void(void)> Callback) { OnDataChannelAvailableCallback = Callback; }
   void SetRetryOnErrorResponse(bool Retry) { RetryOnErrorResponse = Retry; }
+  void SetDontWaitForAnswer(bool DontWait) { DontWaitForAnswer = DontWait; }
+  void SetTimeOut(double TimeOut) { this->TimeOut = TimeOut; }
+  void SetFailIfNotComplete(bool Fail) { FailIfNotComplete = Fail; }
   void CommunicateSDPs();
   void WriteSDPsToFile(std::string Filename);
 
@@ -72,6 +76,9 @@ protected:
   std::optional<std::function<void(void)>> OnClosedCallback;
   std::optional<std::function<void(void)>> OnIceGatheringFinished;
   std::optional<std::function<void(std::string)>> OnRemoteDescriptionCallback;
+  std::optional<std::function<void(void)>> OnDataChannelAvailableCallback;
+
+  inline void DataChannelMessageHandling(rtc::message_variant Data);
 
   ELogVerbosity LogVerbosity = ELogVerbosity::Warning;
 
@@ -87,6 +94,8 @@ protected:
   bool Block = false;
   bool FailIfNotComplete = false;
   bool RetryOnErrorResponse = false;
+  bool DontWaitForAnswer = false;
+  double TimeOut = 10.0;
   unsigned int MessagesReceived{ 0 };
   std::size_t MaxMessageSize{ static_cast<std::size_t>(-1) };
   std::vector<std::string> RequiredCandidate;

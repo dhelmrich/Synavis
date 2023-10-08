@@ -54,6 +54,7 @@ import PySynavis as rtc
 
 #make the data connector
 dataconnector = rtc.DataConnector()
+dataconnector.Initialize()
 dataconnector.SetConfig({"SignallingIP": "172.29.192.1","SignallingPort":8080})
 dataconnector.SetTakeFirstStep(True)
 dataconnector.StartSignalling()
@@ -67,13 +68,28 @@ while not dataconnector.GetState() == rtc.EConnectionState.CONNECTED:
 reset_message()
 
 # send a message
-dataconnector.SendJSON({"type":"parameter", "object":"BP_SynavisDrone_C_1", "property":"MaxVelocity", "value": 100.0})
-dataconnector.SendJSON({"type":"parameter", "object":"BP_SynavisDrone_C_1", "property":"DistanceToLandscape", "value": 100.0})
-dataconnector.SendJSON({"type":"settings", "settings": {
-  "DistanceScale": 2000,
-  "BlackDistance": 500
-}})
 dataconnector.SendJSON({"type":"command", "name":"cam", "camera": "scene"})
+
+def SendOrganType(plant, organ_type, name) :
+  vis = pb.PlantVisualiser(plant)
+  vis.SetGeometryResolution(8)
+  vis.SetLeafResolution(30)
+  vis.ComputeGeometryForOrganType(organ_type, True)
+  points = vis.GetGeometry()
+  points = np.array(points)
+  triangles = vis.GetGeometryIndices()
+  triangles = np.array(triangles)
+  triangles = triangles.reshape((int(len(triangles) / 3), 3))
+  triangles = np.flip(triangles, 1)
+  triangles = triangles.flatten()
+  normals = vis.GetGeometryNormals()
+  normals = np.array(normals).astype("float32")
+  normals = normals.reshape((int(len(normals) / 3), 3))
+  normals = normals.flatten()
+  texcoords = vis.GetGeometryTextureCoordinates()
+  node_ids = vis.GetGeometryNodeIds()
+  scalars = vis.GetGeometryNodeIds()
+  dataconnector.SendGeometry(points, triangles, normals, name, texcoords, None)
 
 # run forever
 while True :
@@ -107,54 +123,8 @@ while True :
   vis.SetLeafResolution(leaf_res)
   # Simulate
   plant.simulate(stime, True)
-  vis.ComputeGeometryForOrganType(pb.stem, True)
-  vis.ComputeGeometryForOrganType(pb.leaf, False)
-
-  # fetch point data
-  points = vis.GetGeometry()
-  points = np.array(points)
-  points = points.reshape((int(len(points) / 3), 3))
-  # convert to cm
-  points *= 10 # convert to cm
-  # increase the z coordinate by 10cm
-  points[:, 2] += 10
-  # add a spread in the xy plane of 100cm
-  x_spread = np.random.uniform(-500, 500)
-  y_spread = np.random.uniform(-500, 500)
-  points[:, 0] += x_spread
-  points[:, 1] += y_spread
-  #points[:, 2] += 200
-  # get the flat array again for base64 encoding
-  points = points.flatten()
-
-  print("Number of points: ", len(points))
-
-  # fetch triangle data
-  triangles = vis.GetGeometryIndices()
-  triangles = np.array(triangles)
-  triangles = triangles.reshape((int(len(triangles) / 3), 3))
-  # change the order of the triangles
-  triangles = np.flip(triangles, 1)
-  # get the flat array again for base64 encoding
-  triangles = triangles.flatten()
-  print("Number of triangles: ", len(triangles))
-  # fetch normals
-  normals = vis.GetGeometryNormals()
-  normals = np.array(normals).astype("float32")
-  normals = normals.reshape((int(len(normals) / 3), 3))
-  # get the flat array again for base64 encoding
-  normals = normals.flatten()
-  print("Number of normals: ", len(normals))
-  
-
-  texcoords = vis.GetGeometryTextureCoordinates()
-  node_ids = vis.GetGeometryNodeIds()
-  scalars = vis.GetGeometryNodeIds()
-  
-  print("Number of normals: ", len(normals))
-  print("Number of texcoords: ", len(texcoords))
-  print("Number of node_ids: ", len(node_ids))
-  print("Sending data to Unreal")
-  dataconnector.SendGeometry(points, triangles, normals, "name", texcoords, None)
+  SendOrganType(plant, pb.leaf, "leaf")
+  SendOrganType(plant, pb.stem, "stem")
+  SendOrganType(plant, pb.root, "root")
 
 

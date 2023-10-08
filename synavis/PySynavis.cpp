@@ -1,5 +1,5 @@
 // -*- mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
-
+#define PYBIND11_DETAILED_ERROR_MESSAGES
 #define _STL_CRT_SECURE_INVALID_PARAMETER(expr) _CRT_SECURE_INVALID_PARAMETER(expr)
 #include <functional>
 #include <numeric>
@@ -11,6 +11,7 @@
 #include "pybind11/stl.h"
 #include <pybind11/numpy.h>
 #include <pybind11/functional.h>
+#include <pybind11/numpy.h>
 #include <pybind11/cast.h>
 #include <pybind11/iostream.h>
 #include <pybind11/stl_bind.h>
@@ -160,12 +161,12 @@ namespace Synavis
     ;
 
     py::enum_<ELogVerbosity>(m, "LogVerbosity")
-      .value("NoLogging", ELogVerbosity::None)
-      .value("Error", ELogVerbosity::Error)
-      .value("Warning", ELogVerbosity::Warning)
-      .value("Info", ELogVerbosity::Info)
-      .value("Debug", ELogVerbosity::Debug)
-      .value("Verbose", ELogVerbosity::Verbose)
+      .value("LogSilent", ELogVerbosity::Silent)
+      .value("LogError", ELogVerbosity::Error)
+      .value("LogWarning", ELogVerbosity::Warning)
+      .value("LogInfo", ELogVerbosity::Info)
+      .value("LogDebug", ELogVerbosity::Debug)
+      .value("LogVerbose", ELogVerbosity::Verbose)
       .export_values()
     ;
 
@@ -194,6 +195,9 @@ namespace Synavis
     
     py::class_<rtc::PeerConnection> (m, "PeerConnection")
     ;
+
+    m.def("VerboseMode", &VerboseMode);
+    m.def("SilentMode", &SilentMode);
 
     py::class_<rtc::Configuration>(m, "PeerConnectionConfig")
         .def(py::init<>())
@@ -234,6 +238,7 @@ namespace Synavis
       .def("SetOnRemoteDescriptionCallback", &DataConnector::SetOnRemoteDescriptionCallback, py::arg("Callback"))
       .def("SetDataCallback", &DataConnector::SetDataCallback,py::arg("Callback"))
       .def("SetMessageCallback", &DataConnector::SetMessageCallback,py::arg("Callback"))
+      .def("SetOnDataChannelAvailableCallback", &DataConnector::SetOnDataChannelAvailableCallback,py::arg("Callback"))
       .def("SetConfig", &DataConnector::SetConfig,py::arg("Config"))
       .def("SetConfigFile", &DataConnector::SetConfigFile,py::arg("ConfigFile"))
       .def("StartSignalling", &DataConnector::StartSignalling)
@@ -251,6 +256,9 @@ namespace Synavis
       .def("SetLogVerbosity", &DataConnector::SetLogVerbosity, py::arg("Verbosity"))
       .def("SetRetryOnErrorResponse", &DataConnector::SetRetryOnErrorResponse, py::arg("Retry"))
       .def("WriteSDPsToFile", &DataConnector::WriteSDPsToFile, py::arg("Filename"))
+      .def("SetTimeOut", &DataConnector::SetTimeOut, py::arg("TimeOut"))
+      .def("SetFailIfNotComplete", &DataConnector::SetFailIfNotComplete, py::arg("FailIfNotComplete"))
+      .def("SetDontWaitForAnswer", &DataConnector::SetDontWaitForAnswer, py::arg("DontWaitForAnswer"))
       .def_readwrite("IP", &DataConnector::IP)
       .def_readwrite("PortRange", &DataConnector::IP)
     ;
@@ -261,6 +269,7 @@ namespace Synavis
       .def("SetFrameReceptionCallback", &MediaReceiver::SetFrameReceptionCallback,py::arg("Callback"))
       .def("SetOnTrackOpenCallback", &MediaReceiver::SetOnTrackOpenCallback,py::arg("Callback"))
       .def("SetOnRemoteDescriptionCallback", &MediaReceiver::SetOnRemoteDescriptionCallback, py::arg("Callback"))
+      .def("SetOnDataChannelAvailableCallback", &MediaReceiver::SetOnDataChannelAvailableCallback,py::arg("Callback"))
       .def("SendData", &MediaReceiver::SendData, py::arg("Data"))
       .def("SendString", &MediaReceiver::SendString, py::arg("Message"))
       .def("SendJSON", &MediaReceiver::SendJSON, py::arg("Message"))
@@ -285,6 +294,9 @@ namespace Synavis
       .def("RequestKeyFrame", &MediaReceiver::RequestKeyFrame)
       .def("WriteSDPsToFile", &MediaReceiver::WriteSDPsToFile, py::arg("Filename"))
       .def("SetCodec", &MediaReceiver::SetCodec, py::arg("Codec"))
+      .def("SetTimeOut", &MediaReceiver::SetTimeOut, py::arg("TimeOut"))
+      .def("SetFailIfNotComplete", &MediaReceiver::SetFailIfNotComplete, py::arg("FailIfNotComplete"))
+      .def("SetDontWaitForAnswer", &MediaReceiver::SetDontWaitForAnswer, py::arg("DontWaitForAnswer"))
       .def_readwrite("IP", &MediaReceiver::IP)
       .def_readwrite("PortRange", &MediaReceiver::IP)
     ;

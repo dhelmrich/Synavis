@@ -45,3 +45,5 @@ node*/*
 __pycache__/*
 *.pyc
 *.log
+*.csv
+CMakeFiles/*

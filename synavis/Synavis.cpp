@@ -38,7 +38,14 @@ int64_t Synavis::TimeSince(std::chrono::system_clock::time_point t)
 {
   std::chrono::system_clock::time_point sysnow = std::chrono::system_clock::now();
   auto orig_diff = sysnow - t;
-  auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(orig_diff);
+  auto diff = std::chrono::duration_cast<std::chrono::seconds>(orig_diff);
+  return diff.count();
+}
+
+double Synavis::HighRes()
+{
+  std::chrono::high_resolution_clock::time_point sysnow = std::chrono::high_resolution_clock::now();
+  auto diff = std::chrono::duration<double>(sysnow.time_since_epoch());
   return diff.count();
 }
 
