@@ -8,6 +8,8 @@
 #include <json.hpp>
 
 #include "rtc/description.hpp"
+#include "rtc/rtcpreceivingsession.hpp"
+#include "rtc/track.hpp"
 
 namespace Synavis
 {

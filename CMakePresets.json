@@ -6,9 +6,9 @@
       "displayName": "Linux Debug",
       "description": "Target the Windows Subsystem for Linux (WSL) or a remote Linux system.",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/out/build/${presetName}",
-      "installDir": "${sourceDir}/out/install/${presetName}",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" },
+      "binaryDir": "${sourceDir}/build_unix",
+      "installDir": "${sourceDir}/build_unix",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "BUILD_WITH_DECODING": "ON" },
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",
@@ -21,9 +21,8 @@
       "displayName": "Linux Release",
       "description": "Target the Windows Subsystem for Linux (WSL) or a remote Linux system.",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/out/build/${presetName}",
-      "installDir": "${sourceDir}/out/install/${presetName}",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" },
+      "binaryDir": "${sourceDir}/build_unix",
+      "installDir": "${sourceDir}/build_unix",
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",
@@ -36,8 +35,8 @@
       "displayName": "macOS Debug",
       "description": "Target a remote macOS system.",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/out/build/${presetName}",
-      "installDir": "${sourceDir}/out/install/${presetName}",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "installDir": "${sourceDir}/install/${presetName}",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" },
       "condition": {
         "type": "equals",
@@ -50,18 +49,15 @@
       "name": "windows-base",
       "description": "Target Windows with the Visual Studio development environment.",
       "hidden": true,
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/out/build/${presetName}",
-      "installDir": "${sourceDir}/out/install/${presetName}",
-      "cacheVariables": {
-        "CMAKE_C_COMPILER": "cl.exe",
-        "CMAKE_CXX_COMPILER": "cl.exe"
-      },
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/build_win",
+      "installDir": "${sourceDir}/build_win",
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",
         "rhs": "Windows"
-      }
+      },
+      "cacheVariables": {"VCPKG_CMAKE_PATH":"D:/Programs/vcpkg/scripts/buildsystems/vcpkg.cmake"}
     },
     {
       "name": "x64-debug",
@@ -72,14 +68,14 @@
         "value": "x64",
         "strategy": "external"
       },
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "BUILD_WITH_DECODING": "ON" }
     },
     {
       "name": "x64-release",
       "displayName": "x64 Release",
       "description": "Target Windows (64-bit) with the Visual Studio development environment. (RelWithDebInfo)",
       "inherits": "x64-debug",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "BUILD_WITH_DECODING": "ON" }
     },
     {
       "name": "x86-debug",
@@ -90,14 +86,14 @@
         "value": "x86",
         "strategy": "external"
       },
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "BUILD_WITH_DECODING": "ON" }
     },
     {
       "name": "x86-release",
       "displayName": "x86 Release",
       "description": "Target Windows (32-bit) with the Visual Studio development environment. (RelWithDebInfo)",
       "inherits": "x86-debug",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "BUILD_WITH_DECODING": "ON" }
     }
   ]
 }

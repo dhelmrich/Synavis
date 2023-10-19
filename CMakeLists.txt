@@ -24,6 +24,12 @@ set(CMAKE_CXX_STANDARD 23)
 # add an option to build with decoding support
 option(BUILD_WITH_DECODING "Build with decoding support" OFF)
 
+# an variable for the vcpkg.cmake path
+set(VCPKG_CMAKE_PATH "" CACHE PATH "Path to the vcpkg.cmake file")
+if(VCPKG_CMAKE_PATH)
+  include(${VCPKG_CMAKE_PATH})
+endif()
+
 include(FetchContent)
 include(ExternalProject)
 
@@ -55,20 +61,51 @@ if(UNIX)
 endif()
 
 if(BUILD_WITH_DECODING)
-  # search for libvpx
-  find_package(LibVPX)
-  # if not found
-  if(NOT LibVPX_FOUND)
-    FetchContent_Declare(
-      libvpx
-      GIT_REPOSITORY https://chromium.googlesource.com/webm/libvpx
-      GIT_TAG       v1.10.0
-      GIT_SHALLOW True
-    )
+  # VPX_INCLUDE_DIRS is either Cache or Environment variable
+  # VPX_LIBRARIES is either Cache or Environment variable
+  
+  set(VPX_SEARCH_DIR "" CACHE PATH "Path to the libvpx installation")
+  set(VPX_INCLUDE_DIRS "" CACHE PATH "Path to the libvpx include directory")
+  set(VPX_LIBRARIES "" CACHE PATH "Path to the libvpx library")
+
+
+  # search for vpx
+  FIND_PATH(VPX_INCLUDE_DIRS NAMES vpx/vpx_decoder.h)
+  FIND_LIBRARY(VPX_LIBRARIES NAMES vpx
+  PATHS ${VPX_SEARCH_DIR}/lib/
+    /usr/lib/
+    /usr/local/lib/
+    /opt/local/lib/
+    /sw/lib/
+    /usr/lib64/
+    /usr/local/lib64/
+    /opt/local/lib64/
+    /sw/lib64/
+    /usr/lib/x86_64-linux-gnu/
+  )
+  message(STATUS "VPX_INCLUDE_DIRS: ${VPX_INCLUDE_DIRS}")
+  message(STATUS "VPX_LIBRARIES: ${VPX_LIBRARIES}")
+  # check if VPX_INCLUDE_DIRS and VPX_LIBRARIES are set
+  if(VPX_INCLUDE_DIRS AND VPX_LIBRARIES)
+    set(VPX_FOUND True)
+  endif()
+
+  if(NOT VPX_FOUND)
+    # try the unofficial package
+    find_package(unofficial-libvpx CONFIG QUIET)
+    if(NOT unofficial-libvpx_FOUND)
+      message(FATAL_ERROR "libvpx not found. Please install libvpx or use the unofficial package.")
+      return()
+    else()
+      # exchange the include and build information
+      set(VPX_INCLUDE_DIRS ${unofficial-libvpx_INCLUDE_DIRS})
+      set(VPX_LIBRARIES ${unofficial-libvpx_LIBRARIES})
+      set(VPX_VERSION ${unofficial-libvpx_VERSION})
+    endif()
   else()
-    message(STATUS "Found libvpx v${LibVPX_VERSION}: ${LibVPX_INCLUDE_DIRS}")
-    # check in the include dir path if we are on the cluster by searching for "stages" in LibVPX_INCLUDE_DIRS
-    string(FIND "${LibVPX_INCLUDE_DIRS}" "stages" _is_cluster)
+    message(STATUS "Found libvpx v${VPX_VERSION}: ${VPX_INCLUDE_DIRS}")
+    # check in the include dir path if we are on the cluster by searching for "stages" in VPX_INCLUDE_DIRS
+    string(FIND "${VPX_INCLUDE_DIRS}" "stages" _is_cluster)
     if(_is_cluster)
       # print information message about this
       message(WARNING "Found libvpx on the cluster")
@@ -77,6 +114,10 @@ if(BUILD_WITH_DECODING)
       message(STATUS "Found libvpx on your local machine or user space")
     endif()
   endif()
+else()
+  # remove "FrameDecode.hpp"+"FrameDecode.cpp" from the list of sources
+  list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/FrameDecode.cpp")
+  list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/FrameDecode.hpp")
 endif()
 
 

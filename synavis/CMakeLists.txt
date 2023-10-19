@@ -42,10 +42,12 @@ target_include_directories(${PYPROJECT}
   ${CMAKE_BINARY_DIR}/_deps/pybind11-src/include
   ${CMAKE_SOURCE_DIR}/unrealbridge
   ${PYTHON_INCLUDE_DIRS}
+  # libvpx
 )
 
 target_link_libraries(${projectname} PRIVATE datachannel-static nlohmann_json::nlohmann_json )
 target_link_libraries(${PYPROJECT} PRIVATE ${projectname} datachannel-static nlohmann_json::nlohmann_json ${PYTHON_LIBRARIES})
+
 set_target_properties(${PYPROJECT} PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/)
 
 # install the library to the root of the build directory
@@ -61,6 +63,19 @@ if(UNIX)
   target_link_libraries(${PYPROJECT} PRIVATE date)
   # also copy signalling_server.py from soure directory/python/modules to build directory
   file(COPY ${CMAKE_SOURCE_DIR}/python/modules/signalling_server.py DESTINATION ${CMAKE_BINARY_DIR})
+endif()
+
+if(BUILD_WITH_DECODING)
+  add_library(vpx UNKNOWN IMPORTED)
+  set_property(TARGET vpx PROPERTY IMPORTED_LOCATION ${VPX_LIBRARY})
+  target_include_directories(vpx INTERFACE ${VPX_INCLUDE_DIRS})
+
+  target_include_directories(${projectname} PUBLIC AFTER
+    ${VPX_INCLUDE_DIRS})
+  target_include_directories(${PYPROJECT} PUBLIC AFTER
+    ${VPX_INCLUDE_DIRS})
+  target_link_libraries(${projectname} PRIVATE ${VPX_LIBRARIES})
+  target_link_libraries(${PYPROJECT} PRIVATE ${VPX_LIBRARIES})
 endif()
 
 # add the permissive flag for MSVC

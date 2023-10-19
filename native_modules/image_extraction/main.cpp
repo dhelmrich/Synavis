@@ -71,7 +71,6 @@ int main(int args, char** argv)
   dc->SetLogVerbosity(Synavis::ELogVerbosity::Debug);
 
 
-
   bool bWantData = false;
   json Data;
   std::vector<std::string> Messages;

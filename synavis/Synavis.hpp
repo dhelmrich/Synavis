@@ -7,6 +7,7 @@
 #include <span>
 #include <variant>
 #include <chrono>
+#include <queue>
 #include <rtc/rtc.hpp>
 #include "Synavis/export.hpp"
 
