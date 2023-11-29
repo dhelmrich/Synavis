@@ -74,6 +74,9 @@ if(BUILD_WITH_DECODING)
     ${VPX_INCLUDE_DIRS})
   target_include_directories(${PYPROJECT} PUBLIC AFTER
     ${VPX_INCLUDE_DIRS})
+
+  message(STATUS "VPX_INCLUDE_DIRS: ${VPX_INCLUDE_DIRS}")
+  message(STATUS "VPX_LIBRARIES: ${VPX_LIBRARIES}")
   target_link_libraries(${projectname} PRIVATE ${VPX_LIBRARIES})
   target_link_libraries(${PYPROJECT} PRIVATE ${VPX_LIBRARIES})
 endif()

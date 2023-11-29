@@ -20,8 +20,15 @@ namespace Synavis
   {
     return [this, Callback = std::move(Callback)](rtc::binary Data)
     {
-      if (vpx_codec_decode(&CodecContext, reinterpret_cast<const uint8_t*>(Data.data()), Data.size(), nullptr, 0) != VPX_CODEC_OK)
+      //precheck because a vpx frame has a minimum size
+      if (Data.size() < 10)
       {
+        Callback(Data);
+      }
+      else if (vpx_codec_decode(&CodecContext, reinterpret_cast<const uint8_t*>(Data.data()), Data.size(), nullptr, 0) != VPX_CODEC_OK)
+      {
+        std::cout << "Failed to decode frame of size " << Data.size() << std::endl;
+        std::cout << "Error: " << vpx_codec_error(&CodecContext) << std::endl;
         Callback(Data);
       }
       else
