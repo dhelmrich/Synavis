@@ -1,12 +1,12 @@
 #---------------------------------------------------------------
-# Project UnrealReceiver
+# Project Synavis
 # 
-# Copyright (c) 2021 Juelich Supercomputing Centre
-# Forschungszentrum Juelich GmbH
+# Copyright (c) 2023 Dirk Helmrich
+# All rights reserved.
 # --------------------------------------------------------------
 # License terms MIT License
 # --------------------------------------------------------------
-# Programmed for the inHPC Project
+# Programmed for my PhD Thesis
 # --------------------------------------------------------------
 
 cmake_minimum_required(VERSION 3.12.0)
@@ -93,14 +93,13 @@ if(BUILD_WITH_DECODING)
   if(NOT VPX_FOUND)
     # try the unofficial package
     find_package(unofficial-libvpx CONFIG QUIET)
+    # use config
     if(NOT unofficial-libvpx_FOUND)
       message(FATAL_ERROR "libvpx not found. Please install libvpx or use the unofficial package.")
       return()
     else()
-      # exchange the include and build information
-      set(VPX_INCLUDE_DIRS ${unofficial-libvpx_INCLUDE_DIRS})
-      set(VPX_LIBRARIES ${unofficial-libvpx_LIBRARIES})
-      set(VPX_VERSION ${unofficial-libvpx_VERSION})
+      set(VPX_INCLUDE_DIRS ${unofficial-libvpx_DIR} / .. / include)
+      set(VPX_LIBRARIES unofficial::libvpx::libvpx)
     endif()
   else()
     message(STATUS "Found libvpx v${VPX_VERSION}: ${VPX_INCLUDE_DIRS}")

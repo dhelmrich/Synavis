@@ -19,6 +19,7 @@
 
 #include "DataConnector.hpp"
 #include "MediaReceiver.hpp"
+#include "FrameDecode.hpp"
 namespace py = pybind11;
 
 #include "UnrealReceiver.hpp"
@@ -332,6 +333,11 @@ namespace Synavis
       .def("OnSignallingMessage", (void(Provider::*)(std::string)) & PyProvider<>::OnSignallingMessage, py::arg("Message"))
     ;
 
+    py::class_<FrameDecode, std::shared_ptr<FrameDecode>>(m, "FrameDecode")
+      .def(py::init<>())
+      .def("CreateAcceptor", &FrameDecode::CreateAcceptor)
+      .def("SetFrameCallback", &FrameDecode::SetFrameCallback)
+    ;
   }
 
 }
