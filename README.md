@@ -17,7 +17,7 @@ This Project includes a bridging ability, coupling ability and some means of ste
 
 ## Open Issues
 
-- The framework does not base of libwebrtc and thus does not offer decoding capabilities itself. This is intentional for our cluster setup as we provide functionality there.
+- We are working on providing software decoding in-place.
 - There are test cases missing that still need to be added, those will also introduce robustness and remove ambiguity.
 
 ## Tutorial and Wiki information
