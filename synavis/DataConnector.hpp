@@ -64,8 +64,11 @@ public:
   void SetFailIfNotComplete(bool Fail) { FailIfNotComplete = Fail; }
   void CommunicateSDPs();
   void WriteSDPsToFile(std::string Filename);
-
   void SetLogVerbosity(ELogVerbosity Verbosity) { LogVerbosity = Verbosity; }
+
+  // webrtc settings
+  void SetIPForICE(std::string IP) { rtcconfig_.bindAddress = IP; }
+  void SetPortRangeForICE(uint16_t Min, uint16_t Max) { rtcconfig_.portRangeBegin = Min; rtcconfig_.portRangeBegin = Max; }
 
 protected:
   /**

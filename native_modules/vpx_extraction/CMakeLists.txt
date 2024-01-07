@@ -29,7 +29,11 @@ target_include_directories(${Folder}
 target_link_libraries(${Folder} PRIVATE Synavis datachannel-static nlohmann_json::nlohmann_json datachannel-static)
 
 if(BUILD_WITH_DECODING)
-  find_package(unofficial-libvpx CONFIG REQUIRED)
-  target_link_libraries(${Folder} PRIVATE unofficial::libvpx::libvpx)
+  if(WIN32)
+    find_package(unofficial-libvpx CONFIG REQUIRED)
+    target_link_libraries(${Folder} PRIVATE unofficial::libvpx::libvpx)
+  else()
+    target_link_libraries(${Folder} PRIVATE ${LibVPX_LIBRARIES})
+  endif()
 endif()
 

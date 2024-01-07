@@ -464,49 +464,59 @@ inline void Synavis::DataConnector::DataChannelMessageHandling(rtc::message_vari
         DataReceptionCallback.value()(data);
       return;
     }
-    // try parse string
-    std::string_view message(reinterpret_cast<char*>(data.data() + 1), data.size());
-    // the first character pair to see if the string is wchar_t or char
-    if (message[1] == '\0' && message[3] == '\0')
+    try
     {
-      // wchar_t
-      LVERBOSE << "We assume that the 0x00 characters mean that the string is wchar_t" << std::endl;
-      auto wstringview = std::wstring_view(reinterpret_cast<wchar_t*>(data.data() + 1), data.size() / sizeof(wchar_t));
-      char* cstr = new char[wstringview.size()];
-      std::size_t it = 0;
-      std::generate(cstr, cstr + wstringview.size(), [&wstringview, &it]() { return static_cast<char>(wstringview[it++]); });
-      message = std::string_view(cstr, wstringview.size());
-    }
-    // find readable json subset
-    auto first_lbrace = message.find_first_of('{');
-    // find the rbrace that closes this lbrace by counting the braces
-    auto last_rbrace = first_lbrace;
-    int brace_count = 1;
-    for (auto i = first_lbrace + 1; i < message.length(); i++)
-    {
-      if (message[i] == '{')
-        brace_count++;
-      else if (message[i] == '}')
-        brace_count--;
-      if (brace_count == 0)
+      // try parse string
+      std::string_view message(reinterpret_cast<char*>(data.data() + 1), data.size());
+      // the first character pair to see if the string is wchar_t or char
+      if (message[1] == '\0' && message[3] == '\0')
       {
-        last_rbrace = i;
-        break;
+        // wchar_t
+        LVERBOSE << "We assume that the 0x00 characters mean that the string is wchar_t" << std::endl;
+        auto wstringview = std::wstring_view(reinterpret_cast<wchar_t*>(data.data() + 1), data.size() / sizeof(wchar_t));
+        char* cstr = new char[wstringview.size()];
+        std::size_t it = 0;
+        std::generate(cstr, cstr + wstringview.size(), [&wstringview, &it]() { return static_cast<char>(wstringview[it++]); });
+        message = std::string_view(cstr, wstringview.size());
+      }
+      // find readable json subset
+      auto first_lbrace = message.find_first_of('{');
+      // find the rbrace that closes this lbrace by counting the braces
+      auto last_rbrace = first_lbrace;
+      int brace_count = 1;
+      for (auto i = first_lbrace + 1; i < message.length(); i++)
+      {
+        if (message[i] == '{')
+          brace_count++;
+        else if (message[i] == '}')
+          brace_count--;
+        if (brace_count == 0)
+        {
+          last_rbrace = i;
+          break;
+        }
+      }
+
+      if (first_lbrace < message.length() && last_rbrace < message.length())
+        //&& std::ranges::all_of(message.begin() + first_lbrace, message.begin() + last_rbrace, &isprint))
+      {
+
+        LVERBOSE << "Decoded message reception of size " << last_rbrace - first_lbrace + 1 << " of " << message.length() << std::endl;
+        if (MessageReceptionCallback.has_value())
+          MessageReceptionCallback.value()(std::string(message.substr(first_lbrace, last_rbrace - first_lbrace + 1)));
+      }
+      else if (DataReceptionCallback.has_value())
+      {
+        LVERBOSE << "Received data of size " << data.size() << std::endl;
+        DataReceptionCallback.value()(data);
       }
     }
-
-    if (first_lbrace < message.length() && last_rbrace < message.length())
-      //&& std::ranges::all_of(message.begin() + first_lbrace, message.begin() + last_rbrace, &isprint))
+    catch (const std::exception&)
     {
-
-      LVERBOSE << "Decoded message reception of size " << last_rbrace - first_lbrace + 1 << " of " << message.length() << std::endl;
-      if (MessageReceptionCallback.has_value())
-        MessageReceptionCallback.value()(std::string(message.substr(first_lbrace, last_rbrace - first_lbrace + 1)));
-    }
-    else if (DataReceptionCallback.has_value())
-    {
-      LVERBOSE << "Received data of size " << data.size() << std::endl;
-      DataReceptionCallback.value()(data);
+      LWARNING << "Encountered an error while trying to parse a string from the package." << std::endl;
+      LVERBOSE << "Error was: " << std::current_exception << std::endl;
+      LVERBOSE << "From data of size " << data.size() << std::endl;
+      LVERBOSE << "And first 10 characters: " << std::string(reinterpret_cast<char*>(data.data()), std::min(data.size(), static_cast<std::size_t>(10))) << std::endl;
     }
   }
   else
@@ -526,6 +536,7 @@ void Synavis::DataConnector::Initialize()
     rtcconfig_.portRangeBegin = PortRange.value().first;
     rtcconfig_.portRangeEnd = PortRange.value().second;
   }
+  rtcconfig_.enableIceTcp = false;
   PeerConnection = std::make_shared<rtc::PeerConnection>(rtcconfig_);
   PeerConnection->onGatheringStateChange([this](auto state)
     {
@@ -568,7 +579,7 @@ void Synavis::DataConnector::Initialize()
       track->onOpen([this, track]()
         {
           LINFO << "Track connection is setup!" << std::endl;
-          track->send(rtc::binary({ (std::byte)(EClientMessageType::QualityControlOwnership) }));
+          //track->send(rtc::binary({ (std::byte)(EClientMessageType::QualityControlOwnership) }));
           track->send(rtc::binary({ std::byte{72},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0} }));
         });
     });
@@ -715,7 +726,7 @@ void Synavis::DataConnector::Initialize()
         else if (content["type"] == "iceCandidate")
         {
           // {"type": "iceCandidate", "candidate": {"candidate": "candidate:1 1 UDP 2122317823 172.26.15.227 42835 typ host", "sdpMLineIndex": "0", "sdpMid": "0"}}
-          LDEBUG << "Parsing" << std::endl;
+          LDEBUG << "Parsing ice candidate" << std::endl;
           std::string sdpMid, candidate_string;
           int sdpMLineIndex;
           try

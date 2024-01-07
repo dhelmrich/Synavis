@@ -269,7 +269,8 @@ namespace Synavis
     UnfreezeFrame,
     VideoEncoderAvgQP,
     LatencyTest,
-    InitialSettings
+    InitialSettings,
+    TestEcho
   };
 
   enum class SYNAVIS_EXPORT EConnectionState

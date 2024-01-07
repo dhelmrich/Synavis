@@ -102,6 +102,10 @@ class Logger() :
   def success(self, message) :
     self.log(message, Fore.GREEN)
   #enddef
+  def set_log_(self, log) :
+    self.log_file.close()
+    self.log_file = log
+  #enddef
 
   def set_log_file(self, fname) :
     self.log_file.close()
@@ -432,14 +436,14 @@ async def main() :
     elif any(p in a for a in sys.argv for p in ["--target-ip", "-t"]) :
       custom_ip = True
       target_ip = sys.argv[sys.argv.index("--target-ip") + 1]
-    elif any(p in a for a in sys.argv for p in ["--log-file", "-l"]) :
+    elif any(p in a for a in sys.argv for p in ["--log-file", "-f"]) :
       glog.set_log_file(sys.argv[sys.argv.index("--log-file") + 1])
     elif any(p in a for a in sys.argv for p in ["--cluster", "-j"]) :
       # cluster mode, communicate that certain ICE candidates are preffered to UE
       glog.info("Cluster mode enabled")
       cluster_mode = True
     elif "--no-log" in sys.argv :
-      glog.set_log_file(NoLog())
+      glog.set_log_(NoLog())
     elif "--loopback" in sys.argv :
       lo = get_loopback_interface()
       if lo != None :
