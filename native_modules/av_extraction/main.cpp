@@ -70,6 +70,10 @@ int main(int args, char** argv)
         {
           LogVerbosity = Synavis::ELogVerbosity::Info;
         }
+        else if (loglevel == "debug")
+        {
+          LogVerbosity = Synavis::ELogVerbosity::Debug;
+        }
         else if (loglevel == "warning")
         {
           LogVerbosity = Synavis::ELogVerbosity::Warning;
@@ -95,7 +99,7 @@ int main(int args, char** argv)
   dc->SetLogVerbosity(Synavis::ELogVerbosity::Verbose);
   auto vpx = std::make_shared<Synavis::FrameDecode>();
   std::vector<int> FrameSizes;
-  dc->SetDataCallback(vpx->CreateAcceptor([&FrameSizes](rtc::binary frame_or_data)
+  dc->SetFrameReceptionCallback(vpx->CreateAcceptor([&FrameSizes](rtc::binary frame_or_data)
     {
       if (frame_or_data.size() < 10)
       {
@@ -129,14 +133,16 @@ int main(int args, char** argv)
   {
     std::this_thread::yield();
   }
+  std::cout << "----------------------------------------- Connected ------------------------------------------------------" << std::endl;
   dc->PrintCommunicationData();
   dc->SendJSON(json({ {"type","command"},{"name","cam"}, {"camera", "scene"} }));
-  dc->SendMouseClick();
+  dc->StartStreaming();
 
   while (Synavis::EConnectionState::CONNECTED == dc->GetState())
   {
-    std::this_thread::sleep_for(10ms);
-    dc->RequestKeyFrame();
+    std::this_thread::sleep_for(100ms);
+    //dc->SendMouseClick();
+    //dc->RequestKeyFrame();
   }
   return EXIT_SUCCESS;
 }

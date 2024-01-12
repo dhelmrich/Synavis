@@ -62,31 +62,31 @@ void Synavis::MediaReceiver::Initialize()
         // check if track is a video track
         auto description = Track->description();
         // if track is a video track, set it as theirTrack
-        if (description.description().contains("video"))
+        if (description.type() == "video")
         {
           LDEBUG << "Track is a video track" << std::endl;
           this->theirTrack = Track;
+          Track->setMediaHandler(std::make_shared<rtc::RtcpReceivingSession>());
+          this->theirTrack->onOpen([this, NewTrack = Track]()
+            {
+              LDEBUG << "THEIR Track opened" << std::endl;
+
+              //StartStreaming();
+              //NewTrack->send(rtc::binary({ (std::byte)(EClientMessageType::QualityControlOwnership) }));
+              FrameRelay->Connect();
+            });
+          this->theirTrack->onMessage(std::bind(&MediaReceiver::MediaHandler, this, std::placeholders::_1));
+          this->theirTrack->onClosed([this]()
+            {
+              LDEBUG << "THEIR Track ended" << std::endl;
+            });
         }
         else
         {
-          LDEBUG << "Track is not a video track but instead " << std::endl;
+          LDEBUG << "Track is not a video track but instead " << description.type() << std::endl;
           return;
         }
       }
-      Track->setMediaHandler(std::make_shared<rtc::RtcpReceivingSession>());
-      this->theirTrack->onOpen([this, NewTrack = Track]()
-        {
-          LDEBUG << "THEIR Track opened" << std::endl;
-
-          NewTrack->requestKeyframe();
-          //NewTrack->send(rtc::binary({ (std::byte)(EClientMessageType::QualityControlOwnership) }));
-          FrameRelay->Connect();
-        });
-      this->theirTrack->onMessage(std::bind(&MediaReceiver::MediaHandler, this, std::placeholders::_1));
-      this->theirTrack->onClosed([this]()
-        {
-          LDEBUG << "THEIR Track ended" << std::endl;
-        });
     });
   Track = PeerConnection->addTrack(MediaDescription);
   Track->onAvailable([]() {});
@@ -96,8 +96,7 @@ void Synavis::MediaReceiver::Initialize()
       FrameRelay->Connect();
       if (this->DataChannel->isOpen())
       {
-        DataChannel->send(rtc::binary({ (std::byte)1, (std::byte)(EClientMessageType::InitialSettings) }));
-        DataChannel->send(rtc::binary({ (std::byte)1, (std::byte)(EClientMessageType::QualityControlOwnership) }));
+        //StartStreaming();
       }
     });
   Track->onMessage(std::bind(&MediaReceiver::MediaHandler, this, std::placeholders::_1));
@@ -142,6 +141,16 @@ void Synavis::MediaReceiver::SendMouseClick()
   DataChannel->send(m_down);
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
   DataChannel->send(m_up);
+}
+
+void Synavis::MediaReceiver::StartStreaming()
+{
+  DataChannel->send(rtc::binary({4_b,0_b}));
+}
+
+void Synavis::MediaReceiver::StopStreaming()
+{
+  DataChannel->send(rtc::binary({ 5_b,0_b }));
 }
 
 void Synavis::MediaReceiver::MediaHandler(rtc::message_variant DataOrMessage)

@@ -72,24 +72,8 @@ print("Starting")
 
 time.sleep(1)
 
-m.SendJSON({"type":"settings", "bRespondWithTiming": True})
-
 reset_message()
 
-# send a query
-msg = {"type":"query", "spawn":"any"}
-print("Sending: ", msg)
-m.SendJSON(msg)
-answer = get_message()
-msg = {"type":"query", "spawn":"ExponentialHeightFog"}
-print("Sending: ", msg)
-m.SendJSON(msg)
-answer = get_message()
-msg = {"type":"query", "spawn":"BoxComponent"}
-print("Sending: ", msg)
-m.SendJSON(msg)
-answer = get_message()
-print("In main thread: ", answer)
 
 
 

@@ -458,6 +458,74 @@ inline void Synavis::DataConnector::DataChannelMessageHandling(rtc::message_vari
   if (std::holds_alternative<rtc::binary>(messageordata))
   {
     auto data = std::get<rtc::binary>(messageordata);
+    std::byte message_byte = data[0];
+    if(message_byte == 0_b)
+    {
+      // Quality control ownership
+      LVERBOSE << "Received quality control ownership" << std::endl;
+    }
+    else if (message_byte == 1_b)
+    {
+      LVERBOSE << "Received response" << std::endl;
+    }
+    else if(message_byte == 2_b)
+    {
+      LVERBOSE << "Received command" << std::endl;
+    }
+    else if (message_byte == 3_b)
+    {
+      LVERBOSE << "Received freeze frame" << std::endl;
+    }
+    else if (message_byte == 3_b)
+    {
+      LVERBOSE << "Received freeze frame" << std::endl;
+    }
+    else if (message_byte == 4_b)
+    {
+      LVERBOSE << "Received unfreeze frame" << std::endl;
+    }
+    else if(message_byte == 5_b)
+    {
+      LVERBOSE << "Received video encoder AVgQP" << std::endl;
+    }
+    else if (message_byte == 6_b)
+    {
+      LVERBOSE << "Latency Test" << std::endl;
+    }
+    else if (message_byte == 7_b)
+    {
+      LVERBOSE << "Initial Settings" << std::endl;
+    }
+    else if (message_byte == 8_b)
+    {
+      LVERBOSE << "File Extension" << std::endl;
+    }
+    else if (message_byte == 9_b)
+    {
+      LVERBOSE << "File MIME Type" << std::endl;
+    }
+    else if (message_byte == 10_b)
+    {
+      LVERBOSE << "File Content" << std::endl;
+    }
+    else if (message_byte == 11_b)
+    {
+      LVERBOSE << "Test Echo" << std::endl;
+    }
+    else if (message_byte == 12_b)
+    {
+      LVERBOSE << "Input Control Ownership" << std::endl;
+    }
+    else if (message_byte == 13_b)
+    {
+      LVERBOSE << "Gamepad response" << std::endl;
+    }
+    else if (message_byte == 255_b)
+    {
+      LVERBOSE << "Protocoll" << std::endl;
+    }
+    if (message_byte != 1_b && message_byte != 255_b && message_byte != 7_b)
+      return;
     if (data.size() < 5) // {a:1}
     {
       if (DataReceptionCallback.has_value())

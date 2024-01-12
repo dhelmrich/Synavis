@@ -39,6 +39,8 @@ public:
 
   void RequestKeyFrame();
   void SendMouseClick();
+  void StartStreaming();
+  void StopStreaming();
   void SetCodec(ECodec Codec) {this->Codec = Codec;}
 
 
