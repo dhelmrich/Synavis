@@ -61,62 +61,35 @@ if(UNIX)
 endif()
 
 if(BUILD_WITH_DECODING)
-  # VPX_INCLUDE_DIRS is either Cache or Environment variable
-  # VPX_LIBRARIES is either Cache or Environment variable
-  
-  set(VPX_SEARCH_DIR "" CACHE PATH "Path to the libvpx installation")
-  set(VPX_INCLUDE_DIRS "" CACHE PATH "Path to the libvpx include directory")
-  set(VPX_LIBRARIES "" CACHE PATH "Path to the libvpx library")
+  # we build using FFMPEG
+  # options for ffmpeg: cluster, local(unix), local(windows)
+  # we will try to find first
+  find_package(FFMPEG REQUIRED)
 
+  # if not found
+  if(NOT FFMPEG_LIBRARIES)
+    # if not found
+    if(NOT FFMPEG_FOUND)
+      # always prefer externally built versions
+      message(STATUS "ffmpeg not found")
+      # show install instructions
+      # check if we are on the cluster by checking if this path contains "/p/"
+      string(FIND "${CMAKE_CURRENT_SOURCE_DIR}" "/p/" _is_cluster)
+      if(_is_cluster)
+        # print information message about this
+        message(WARNING "You are on the cluster")
+        message(WARNING "Please load ffmpeg first: module load ffmpeg")
+      endif()
 
-  # search for vpx
-  FIND_PATH(VPX_INCLUDE_DIRS NAMES vpx/vpx_decoder.h)
-  FIND_LIBRARY(VPX_LIBRARIES NAMES vpx
-  PATHS ${VPX_SEARCH_DIR}/lib/
-    /usr/lib/
-    /usr/local/lib/
-    /opt/local/lib/
-    /sw/lib/
-    /usr/lib64/
-    /usr/local/lib64/
-    /opt/local/lib64/
-    /sw/lib64/
-    /usr/lib/x86_64-linux-gnu/
-  )
-  message(STATUS "VPX_INCLUDE_DIRS: ${VPX_INCLUDE_DIRS}")
-  message(STATUS "VPX_LIBRARIES: ${VPX_LIBRARIES}")
-  # check if VPX_INCLUDE_DIRS and VPX_LIBRARIES are set
-  if(VPX_INCLUDE_DIRS AND VPX_LIBRARIES)
-    set(VPX_FOUND True)
-  endif()
-
-  if(NOT VPX_FOUND)
-    # try the unofficial package
-    find_package(unofficial-libvpx CONFIG QUIET)
-    # use config
-    if(NOT unofficial-libvpx_FOUND)
-      message(FATAL_ERROR "libvpx not found. Please install libvpx or use the unofficial package.")
-      return()
-    else()
-      set(VPX_INCLUDE_DIRS ${unofficial-libvpx_DIR} / .. / include)
-      set(VPX_LIBRARIES unofficial::libvpx::libvpx)
-    endif()
-  else()
-    message(STATUS "Found libvpx v${VPX_VERSION}: ${VPX_INCLUDE_DIRS}")
-    # check in the include dir path if we are on the cluster by searching for "stages" in VPX_INCLUDE_DIRS
-    string(FIND "${VPX_INCLUDE_DIRS}" "stages" _is_cluster)
-    if(_is_cluster)
-      # print information message about this
-      message(WARNING "Found libvpx on the cluster")
-      message(WARNING "Make sure that you have loaded the correct stages. The default stage is not always the correct one.")
-    else()
-      message(STATUS "Found libvpx on your local machine or user space")
+      if (UNIX)
+        message(ERROR "Please install libavcodec-dev")
+        message(Status "sudo apt-get install libavcodec-dev")
+      else()
+        message(STATUS "Please install libavcodec")
+        message(STATUS "...using vcpkg: vcpkg install ffmpeg[avcodec,avformat,core,swresample,swscale]")
+      endif()
     endif()
   endif()
-else()
-  # remove "FrameDecode.hpp"+"FrameDecode.cpp" from the list of sources
-  list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/FrameDecode.cpp")
-  list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/FrameDecode.hpp")
 endif()
 
 
@@ -151,19 +124,26 @@ if(NOT pybind11_FOUND)
   endif()
 endif()
 
-find_package(pybind11_json CONFIG)
-#if not found
-if(NOT pybind11_json)
-  FetchContent_Declare(
-      pybind11_json
-      GIT_REPOSITORY https://github.com/pybind/pybind11_json.git
-      GIT_TAG        0.2.13
-      GIT_SHALLOW True
-  )
-  FetchContent_GetProperties(pybind11_json)
-  if(NOT pybind11_json_POPULATED)
-      FetchContent_Populate(pybind11_json)
-      add_subdirectory(${pybind11_json_SOURCE_DIR} ${pybind11_json_BINARY_DIR})
+if(NOT TARGET pybind11_json)
+  find_package(pybind11_json CONFIG)
+  #if not found
+  if(NOT pybind11_json)
+    message(STATUS "pybind11_json not found")
+    FetchContent_Declare(
+        pybind11_json
+        GIT_REPOSITORY https://github.com/pybind/pybind11_json.git
+        GIT_TAG        0.2.13
+        GIT_SHALLOW True
+    )
+    FetchContent_GetProperties(pybind11_json)
+    if(NOT pybind11_json_POPULATED)
+        FetchContent_Populate(pybind11_json)
+        #add_subdirectory(${pybind11_json_SOURCE_DIR} ${pybind11_json_BINARY_DIR})
+        #add_subdirectory(${pybind11_json_SOURCE_DIR})
+    endif()
+    FetchContent_MakeAvailable(pybind11_json)
+  else()
+    message(STATUS "Found pybind11_json v${pybind11_json_VERSION}: ${pybind11_json_INCLUDE_DIRS}")
   endif()
 endif()
 

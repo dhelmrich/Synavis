@@ -42,7 +42,6 @@ target_include_directories(${PYPROJECT}
   ${CMAKE_BINARY_DIR}/_deps/pybind11-src/include
   ${CMAKE_SOURCE_DIR}/unrealbridge
   ${PYTHON_INCLUDE_DIRS}
-  # libvpx
 )
 
 target_link_libraries(${projectname} PRIVATE datachannel-static nlohmann_json::nlohmann_json )
@@ -66,19 +65,13 @@ if(UNIX)
 endif()
 
 if(BUILD_WITH_DECODING)
-  add_library(vpx UNKNOWN IMPORTED)
-  set_property(TARGET vpx PROPERTY IMPORTED_LOCATION ${VPX_LIBRARY})
-  target_include_directories(vpx INTERFACE ${VPX_INCLUDE_DIRS})
-
-  target_include_directories(${projectname} PUBLIC AFTER
-    ${VPX_INCLUDE_DIRS})
-  target_include_directories(${PYPROJECT} PUBLIC AFTER
-    ${VPX_INCLUDE_DIRS})
-
-  message(STATUS "VPX_INCLUDE_DIRS: ${VPX_INCLUDE_DIRS}")
-  message(STATUS "VPX_LIBRARIES: ${VPX_LIBRARIES}")
-  target_link_libraries(${projectname} PRIVATE ${VPX_LIBRARIES})
-  target_link_libraries(${PYPROJECT} PRIVATE ${VPX_LIBRARIES})
+  target_link_directories(${projectname} PRIVATE ${FFMPEG_LIBRARY_DIRS})
+  target_link_directories(${PYPROJECT} PRIVATE ${FFMPEG_LIBRARY_DIRS})
+  target_link_libraries(${projectname} PRIVATE ${FFMPEG_LIBRARIES})
+  target_link_libraries(${PYPROJECT} PRIVATE ${FFMPEG_LIBRARIES})
+  # add to the include directories
+  target_include_directories(${projectname} PRIVATE ${FFMPEG_INCLUDE_DIRS})
+  target_include_directories(${PYPROJECT} PRIVATE ${FFMPEG_INCLUDE_DIRS})
 endif()
 
 # add the permissive flag for MSVC

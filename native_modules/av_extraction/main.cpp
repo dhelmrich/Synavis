@@ -7,7 +7,7 @@
 #include <iostream>
 
 #include "MediaReceiver.hpp"
-#include "FrameDecode.hpp"
+#include "FrameDecodeAV.hpp"
 
 using json = nlohmann::json;
 inline constexpr std::byte operator "" _b(unsigned long long i) noexcept
@@ -112,7 +112,7 @@ int main(int args, char** argv)
         FrameSizes.clear();
       }
     }));
-  vpx->SetFrameCallback([](Synavis::Frame frame)
+  vpx->SetFrameCallback([](Synavis::FrameContent frame)
     {
       std::cout << "Got frame (" << frame.Width << "/" << frame.Height << ")" << std::endl;
     });
