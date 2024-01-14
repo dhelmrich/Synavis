@@ -679,6 +679,8 @@ void Synavis::DataConnector::Initialize()
         LWARNING << "****************************************************************************" << std::endl;
       }
       this->MaxMessageSize = std::min(DataChannel->maxMessageSize(), static_cast<std::size_t>(std::numeric_limits<uint16_t>::max() - 3));
+    
+      state_ = EConnectionState::CONNECTED;
     });
   DataChannel->onMessage(std::bind(&DataConnector::DataChannelMessageHandling, this, std::placeholders::_1));
   DataChannel->onError([this](std::string error)
@@ -687,7 +689,6 @@ void Synavis::DataConnector::Initialize()
     });
   DataChannel->onAvailable([this]()
     {
-      state_ = EConnectionState::CONNECTED;
 
       if (OnDataChannelAvailableCallback.has_value())
         OnDataChannelAvailableCallback.value()();
