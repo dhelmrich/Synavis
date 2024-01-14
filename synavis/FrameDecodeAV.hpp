@@ -24,6 +24,11 @@ struct AVCodec;
 struct AVFrame;
 struct AVPacket;
 
+namespace rtc
+{
+  class Track;
+}
+
 
 namespace Synavis
 {
@@ -39,17 +44,28 @@ namespace Synavis
   class SYNAVIS_EXPORT FrameDecode : public std::enable_shared_from_this<FrameDecode>
   {
   public:
-    FrameDecode();
+    FrameDecode(rtc::Track* VideoInfo = nullptr);
     virtual ~FrameDecode();
 
     std::function<void(rtc::binary)> CreateAcceptor(std::function<void(rtc::binary)>&& Callback);
 
     void SetFrameCallback(std::function<void(FrameContent)> Callback);
 
+    void SetMaxFrameBuffer(uint32_t MaxFrames);
 
   private:
 
     std::optional<std::function<void(FrameContent)>> FrameCallback;
+
+    inline AVPacket* InitializePacketFromData(uint32_t index);
+
+    std::shared_ptr<WorkerThread> DecoderThread;
+    uint32_t MaxFrames;
+     
+    std::map<uint32_t, std::vector<rtc::binary>> frameBuffer;
+    std::deque<uint32_t> currentlyCapturing;
+
+    void AddPacket(rtc::binary Data);
 
     // ffmpeg decoding context
     AVCodecContext* CodecContext;
@@ -57,6 +73,7 @@ namespace Synavis
     AVFrame* Frame;
     AVPacket* Packet;
 
+    uint64_t MaxMessageSize;
   };
 }
 
