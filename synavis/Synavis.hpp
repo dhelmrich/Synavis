@@ -7,7 +7,9 @@
 #include <span>
 #include <variant>
 #include <chrono>
+#include <fstream>
 #include <queue>
+#include <ostream>
 #include <rtc/rtc.hpp>
 #include "Synavis/export.hpp"
 
@@ -131,6 +133,7 @@ namespace Synavis
     std::size_t encoded_length = 4 * ((((Data.size() * sizeof(decltype(*Data.data())))) + 2) / 3);
     return encoded_length;
   }
+
 
   // forward definitions
   class Adapter;
@@ -324,6 +327,64 @@ namespace Synavis
     VP9,
     H264,
     H265
+  };
+
+
+  // a simple logger for the library
+  class SYNAVIS_EXPORT Logger
+  {
+  public:
+    // singleton
+    Logger(const Logger&) = delete;
+    Logger& operator=(const Logger&) = delete;
+    Logger(Logger&&) = delete;
+    Logger& operator=(Logger&&) = delete;
+
+    static Logger& Get()
+    {
+      static Logger instance;
+      return instance;
+    }
+
+    void SetVerbosity(ELogVerbosity Verbosity)
+    {
+      this->Verbosity = Verbosity;
+    }
+
+    // nullstream
+    static std::ostream& GetNullStream()
+    {
+      static std::ostream nullstream(nullptr);
+      return nullstream;
+    }
+
+    // an std::ostream that will output to console and log file
+    std::ostream& GetStream(std::string Instigator)
+    {
+      static std::ofstream logfile("Synavis.log", std::ios::app);
+      static std::ofstream* logstream(&logfile);
+      static std::ostream consolestream(std::cout.rdbuf());
+      static std::ostream combinedstream(consolestream.rdbuf());
+      combinedstream << "[" << Instigator << "] ";
+      combinedstream << "[" << std::chrono::system_clock::now() << "] ";
+      return combinedstream;
+    }
+
+    std::ostream& operator()(std::string Instigator, ELogVerbosity V)
+    {
+      if (V <= Verbosity)
+      {
+        return GetStream(Instigator);
+      }
+      else
+      {
+        return GetNullStream();
+      }
+    }
+
+  private:
+    Logger() = default;
+    ELogVerbosity Verbosity = ELogVerbosity::Error;
   };
 
   using StreamVariant = std::variant<std::shared_ptr<rtc::DataChannel>,
