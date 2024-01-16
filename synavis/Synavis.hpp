@@ -33,7 +33,6 @@ bool ParseTimeFromString(std::string Source, std::chrono::time_point<std::chrono
 
 #endif
 
-
 namespace Synavis
 {
 
@@ -149,6 +148,19 @@ namespace Synavis
   inline void SYNAVIS_EXPORT SilentMode()
   {
     rtcInitLogger(RTC_LOG_NONE, nullptr);
+  }
+
+  inline std::ofstream SYNAVIS_EXPORT OpenUniqueFile(std::string Base)
+  {
+    // remove ending
+    std::string Filename = Base;
+    // remove file extension
+    Filename.erase(Filename.find_last_of("."), std::string::npos);
+    // add timestamp
+    Filename += "_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
+    // add file extension
+    Filename += ".log";
+    return std::ofstream(Filename, std::ios::app);
   }
 
   // a class to represent access to a buffer in reverse byte order
@@ -334,57 +346,100 @@ namespace Synavis
   class SYNAVIS_EXPORT Logger
   {
   public:
+    class LoggerInstance
+    {
+      friend class Logger;
+      LoggerInstance(const LoggerInstance&) = delete;
+      LoggerInstance& operator=(const LoggerInstance&) = delete;
+      LoggerInstance(LoggerInstance&&) = delete;
+      LoggerInstance& operator=(LoggerInstance&&) = delete;
+    private:
+      LoggerInstance(std::string Instigator);
+      std::string Instigator;
+      Logger* Parent;
+    public:
+      ~LoggerInstance();
+      template < typename T >
+      Logger& operator<<(T&& Message) const
+      {
+        *Parent << "[" << Instigator << "]"
+          << "[" << std::chrono::system_clock::now() << "]: "
+          << Message;
+        return *Parent;
+      }
+      const LoggerInstance& operator()(ELogVerbosity V) const
+      {
+        Parent->SetState(V);
+        return *this;
+      }
+    };
     // singleton
-    Logger(const Logger&) = delete;
-    Logger& operator=(const Logger&) = delete;
+    Logger(const Logger&) = default;
+    Logger& operator=(const Logger&) = default;
     Logger(Logger&&) = delete;
     Logger& operator=(Logger&&) = delete;
 
-    static Logger& Get()
+    static Logger* Get()
     {
       static Logger instance;
-      return instance;
+      return &instance;
     }
 
-    void SetVerbosity(ELogVerbosity Verbosity)
+    LoggerInstance LogStarter(std::string Instigator) const
     {
-      this->Verbosity = Verbosity;
+      return LoggerInstance(Instigator);
     }
 
-    // nullstream
-    static std::ostream& GetNullStream()
+    void SetupLogfile(std::string Filename)
     {
-      static std::ostream nullstream(nullptr);
-      return nullstream;
+      LogFile = new std::ofstream(OpenUniqueFile(Filename));
+      // combine file and cout streams
+      LogFile->rdbuf()->pubsetbuf(0, 0);
     }
 
-    // an std::ostream that will output to console and log file
-    std::ostream& GetStream(std::string Instigator)
+    // two stream operators for logging
+    // first use of << will be the verbosity
+    // second use of << will be the message
+    template < typename T >
+    Logger& operator<<(T&& Message)
     {
-      static std::ofstream logfile("Synavis.log", std::ios::app);
-      static std::ofstream* logstream(&logfile);
-      static std::ostream consolestream(std::cout.rdbuf());
-      static std::ostream combinedstream(consolestream.rdbuf());
-      combinedstream << "[" << Instigator << "] ";
-      combinedstream << "[" << std::chrono::system_clock::now() << "] ";
-      return combinedstream;
-    }
-
-    std::ostream& operator()(std::string Instigator, ELogVerbosity V)
-    {
-      if (V <= Verbosity)
+      if (this->StatusVerbosity >= Verbosity)
       {
-        return GetStream(Instigator);
+        if (LogFile)
+        {
+          *LogFile << Message;
+        }
+        if (this->StatusVerbosity > ELogVerbosity::Error)
+          std::cerr << Message;
+        else
+          std::cout << Message;
       }
-      else
-      {
-        return GetNullStream();
-      }
+      return *this;
+    }
+
+    void SetState(ELogVerbosity V) const
+    {
+      this->StatusVerbosity = V;
+    }
+
+    // reset state when std::endl or std::flush is detected
+    Logger& operator<<(std::ostream& (*pf)(std::ostream&))
+    {
+      // check if pf is std::endl or std::flush
+      if (pf == std::endl || pf == std::flush)
+        this->StatusVerbosity = ELogVerbosity::Silent;
+      return *this;
     }
 
   private:
-    Logger() = default;
-    ELogVerbosity Verbosity = ELogVerbosity::Error;
+    Logger()
+    {
+
+    }
+
+    std::ostream* LogFile = nullptr;
+    ELogVerbosity Verbosity = ELogVerbosity::Info;
+    mutable ELogVerbosity StatusVerbosity = ELogVerbosity::Silent;
   };
 
   using StreamVariant = std::variant<std::shared_ptr<rtc::DataChannel>,

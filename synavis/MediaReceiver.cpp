@@ -3,12 +3,17 @@
 #include <iostream>
 #include <rtc/rtc.hpp>
 
-
 #define LVERBOSE if(LogVerbosity >= ELogVerbosity::Verbose) std::cout << Prefix 
 #define LDEBUG if(LogVerbosity >= ELogVerbosity::Debug) std::cout << Prefix 
 #define LINFO if(LogVerbosity >= ELogVerbosity::Info) std::cout << Prefix 
 #define LWARNING if(LogVerbosity >= ELogVerbosity::Warning) std::cout << Prefix 
 #define LERROR if(LogVerbosity >= ELogVerbosity::Error) std::cerr << Prefix
+
+// global private logger initialization
+static std::string Prefix = "MediaReceiver: ";
+static const Synavis::Logger::LoggerInstance lmedia = Synavis::Logger::Get()->LogStarter("MediaReceiver");
+
+
 
 // literal for converting to byte
 constexpr std::byte operator"" _b(unsigned long long int Value)
@@ -28,7 +33,7 @@ Synavis::MediaReceiver::~MediaReceiver()
 void Synavis::MediaReceiver::Initialize()
 {
   DataConnector::Initialize();
-  LINFO << "MediaReceiver created" << std::endl;
+  lmedia(ELogVerbosity::Warning) << "Initializing MediaReceiver" << std::endl;
   const unsigned int bitrate = 90000;
   FrameRelay = std::make_shared<BridgeSocket>();
   FrameRelay->Outgoing = true;
@@ -56,7 +61,7 @@ void Synavis::MediaReceiver::Initialize()
   // source: https://docs.aws.amazon.com/kinesisvideostreams/latest/dg/producer-reference-nal.html
   PeerConnection->onTrack([this](std::shared_ptr<rtc::Track> Track)
     {
-      LDEBUG << "PeerConnection onTrack" << std::endl;
+      lmedia(ELogVerbosity::Debug) << "PeerConnection onTrack" << std::endl;
       if (Track != this->Track)
       {
         // check if track is a video track
@@ -64,12 +69,12 @@ void Synavis::MediaReceiver::Initialize()
         // if track is a video track, set it as theirTrack
         if (description.type() == "video")
         {
-          LDEBUG << "Track is a video track" << std::endl;
+          lmedia(ELogVerbosity::Debug) << "Track is a video track" << std::endl;
           this->theirTrack = Track;
           Track->setMediaHandler(std::make_shared<rtc::RtcpReceivingSession>());
           this->theirTrack->onOpen([this, NewTrack = Track]()
             {
-              LDEBUG << "THEIR Track opened" << std::endl;
+              lmedia(ELogVerbosity::Debug) << "THEIR Track opened" << std::endl;
 
               //StartStreaming();
               //NewTrack->send(rtc::binary({ (std::byte)(EClientMessageType::QualityControlOwnership) }));
@@ -78,12 +83,12 @@ void Synavis::MediaReceiver::Initialize()
           this->theirTrack->onMessage(std::bind(&MediaReceiver::MediaHandler, this, std::placeholders::_1));
           this->theirTrack->onClosed([this]()
             {
-              LDEBUG << "THEIR Track ended" << std::endl;
+              lmedia(ELogVerbosity::Debug) << "THEIR Track ended" << std::endl;
             });
         }
         else
         {
-          LDEBUG << "Track is not a video track but instead " << description.type() << std::endl;
+          lmedia(ELogVerbosity::Debug) << "Track is not a video track but instead " << description.type() << std::endl;
           return;
         }
       }
@@ -92,7 +97,7 @@ void Synavis::MediaReceiver::Initialize()
   Track->onAvailable([]() {});
   Track->onOpen([this]()
     {
-      LDEBUG << "OUR Track opened" << std::endl;
+      lmedia(ELogVerbosity::Debug) << "OUR Track opened" << std::endl;
       FrameRelay->Connect();
       if (this->DataChannel->isOpen())
       {
@@ -122,8 +127,8 @@ void Synavis::MediaReceiver::ConfigureRelay(std::string IP, int Port)
 void Synavis::MediaReceiver::PrintCommunicationData()
 {
   DataConnector::PrintCommunicationData();
-  std::cout << "FrameRelay: " << FrameRelay->GetAddress() << ":" << FrameRelay->GetSocketPort() << std::endl;
-  std::cout << "Track (" << Track->mid() << ") has a maximum Message size of " << Track->maxMessageSize() << std::endl;
+  lmedia(ELogVerbosity::Info) << "FrameRelay: " << FrameRelay->GetAddress() << ":" << FrameRelay->GetSocketPort() << std::endl;
+  lmedia(ELogVerbosity::Info) << "Track (" << Track->mid() << ") has a maximum Message size of " << Track->maxMessageSize() << std::endl;
 }
 
 void Synavis::MediaReceiver::RequestKeyFrame()

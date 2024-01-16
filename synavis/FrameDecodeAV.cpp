@@ -9,6 +9,10 @@ extern "C"
 #include <libavutil/imgutils.h>
 }
 
+// global private logger initialization
+static std::string Prefix = "FrameDecoder: ";
+static const Synavis::Logger::LoggerInstance ldecoder = Synavis::Logger::Get()->LogStarter("FrameDecoder");
+
 namespace Synavis
 {
 
@@ -87,11 +91,11 @@ namespace Synavis
         rtc::RtpHeader* Header = reinterpret_cast<rtc::RtpHeader*>(DataPtr);
         auto* body = reinterpret_cast<uint8_t*>(Header->getBody());
 
-        std::cout << "Packet ssrc: " << Header->ssrc() << " - time: " << Header->timestamp()
+        auto& l = ldecoder(ELogVerbosity::Verbose) << "Packet ssrc: " << Header->ssrc() << " - time: " << Header->timestamp()
           << " - seq: " << Header->seqNumber() << " - payload: " << Header->payloadType()
           << " - Extension: " << Header->extension() << " - Marker: " << Header->marker();
-        if (Header->getExtensionHeader()) std::cout << " - Extension header: " << Header->getExtensionHeaderSize();
-        std::cout << std::endl;
+        if (Header->getExtensionHeader()) l << " - Extension header: " << Header->getExtensionHeaderSize();
+        l << std::endl;
         return;
         Packet->data = DataPtr;
         Packet->size = Data.size(); //- sizeof(rtc::RtpHeader);
@@ -163,7 +167,9 @@ namespace Synavis
     std::vector<uint8_t> data;
     for (auto& packet : frame)
     {
-      data.insert(data.end(), packet.begin(), packet.end());
+      // insert with pointer cast
+      data.insert(data.end(), reinterpret_cast<const uint8_t*>(packet.data()), reinterpret_cast<const uint8_t*>(packet.data()) + packet.size());
+
     }
   }
 
@@ -183,7 +189,7 @@ namespace Synavis
         currentlyCapturing.pop_front();
         frameBuffer.erase(oldest);
         // log to verbose
-        Logger::Get()("FrameDecode", ELogVerbosity::Verbose) << "Removed frame " << oldest << " from buffer" << std::endl;
+        ldecoder(ELogVerbosity::Verbose) << "Removed frame " << oldest << " from buffer" << std::endl;
       }
     }
   }

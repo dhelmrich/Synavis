@@ -17,7 +17,7 @@
 #define LDEBUG if(LogVerbosity >= ELogVerbosity::Debug) std::cout << Prefix 
 #define LINFO if(LogVerbosity >= ELogVerbosity::Info) std::cout << Prefix 
 #define LWARNING if(LogVerbosity >= ELogVerbosity::Warning) std::cout << Prefix 
-#define LERROR if(LogVerbosity >= ELogVerbosity::Error) std::cerr << Prefix 
+#define LERROR if(LogVerbosity >= ELogVerbosity::Error) std::cerr << Prefix
 
 inline constexpr std::byte operator "" _b(unsigned long long i) noexcept
 {

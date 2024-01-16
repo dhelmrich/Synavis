@@ -7,6 +7,8 @@
 
 // std::cout << "" << std::endl;
 
+
+
 int Synavis::BridgeSocket::Receive(bool invalidIsFailure)
 {
 #ifdef _WIN32
@@ -444,6 +446,7 @@ void Synavis::WorkerThread::AddTask(std::function<void()>&& Task)
 {
   std::unique_lock<std::mutex> lock(TaskMutex);
   Tasks.push(Task);
+  // Tasks.push([Task=std::move(Task), this]() { Task(); this->TaskCondition.notify_all(); }); // todo uncomment if there is a need for a notification
   this->TaskCondition.notify_all();
 }
 
