@@ -10,10 +10,16 @@
 #include <fstream>
 #include <queue>
 #include <ostream>
+#include <syncstream>
 #include <rtc/rtc.hpp>
 #include "Synavis/export.hpp"
 
 #define MAX_RTP_SIZE 208 * 1024
+
+#define AS_UINT8(x) reinterpret_cast<uint8_t*>(x)
+#define AS_CUINT8(x) reinterpret_cast<const uint8_t*>(x)
+#define AS_BYTE(x) reinterpret_cast<std::byte*>(x)
+#define AS_CBYTE(x) reinterpret_cast<const std::byte*>(x)
 
 #if defined _WIN32
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
@@ -348,17 +354,21 @@ namespace Synavis
   public:
     class LoggerInstance
     {
-      friend class Logger;
       LoggerInstance(const LoggerInstance&) = delete;
       LoggerInstance& operator=(const LoggerInstance&) = delete;
       LoggerInstance(LoggerInstance&&) = delete;
       LoggerInstance& operator=(LoggerInstance&&) = delete;
     private:
-      LoggerInstance(std::string Instigator);
+      friend class Logger;
+      LoggerInstance(std::string Instigator)
+      {
+        this->Instigator = Instigator;
+        this->Parent = Logger::Get();
+      }
       std::string Instigator;
       Logger* Parent;
     public:
-      ~LoggerInstance();
+      ~LoggerInstance() = default;
       template < typename T >
       Logger& operator<<(T&& Message) const
       {
@@ -372,12 +382,21 @@ namespace Synavis
         Parent->SetState(V);
         return *this;
       }
+
     };
     // singleton
     Logger(const Logger&) = default;
     Logger& operator=(const Logger&) = default;
     Logger(Logger&&) = delete;
     Logger& operator=(Logger&&) = delete;
+    ~Logger()
+    {
+      if (LogFile)
+      {
+        LogFile->flush();
+        delete LogFile;
+      }
+    }
 
     static Logger* Get()
     {
@@ -397,19 +416,26 @@ namespace Synavis
       LogFile->rdbuf()->pubsetbuf(0, 0);
     }
 
+    void SetupLogfile(std::ofstream&& File)
+    {
+      LogFile = new std::ofstream(std::move(File));
+      // combine file and cout streams
+      LogFile->rdbuf()->pubsetbuf(0, 0);
+    }
+
     // two stream operators for logging
     // first use of << will be the verbosity
     // second use of << will be the message
     template < typename T >
     Logger& operator<<(T&& Message)
     {
-      if (this->StatusVerbosity >= Verbosity)
+      if (this->StatusVerbosity <= Verbosity)
       {
         if (LogFile)
         {
           *LogFile << Message;
         }
-        if (this->StatusVerbosity > ELogVerbosity::Error)
+        if (this->StatusVerbosity <= ELogVerbosity::Error)
           std::cerr << Message;
         else
           std::cout << Message;
@@ -422,20 +448,32 @@ namespace Synavis
       this->StatusVerbosity = V;
     }
 
+    void SetVerbosity(ELogVerbosity V)
+    {
+      this->Verbosity = V;
+    }
+
     // reset state when std::endl or std::flush is detected
     Logger& operator<<(std::ostream& (*pf)(std::ostream&))
     {
       // check if pf is std::endl or std::flush
       if (pf == std::endl || pf == std::flush)
+      {
+        if (LogFile)
+        {
+          *LogFile << std::endl;
+        }
+        if (this->StatusVerbosity <= ELogVerbosity::Error)
+          std::cerr << std::endl;
+        else
+          std::cout << std::endl;
         this->StatusVerbosity = ELogVerbosity::Silent;
+      }
       return *this;
     }
 
   private:
-    Logger()
-    {
-
-    }
+    Logger() = default;
 
     std::ostream* LogFile = nullptr;
     ELogVerbosity Verbosity = ELogVerbosity::Info;
@@ -468,6 +506,8 @@ namespace Synavis
     ~WorkerThread();
     void Run();
     void AddTask(std::function<void(void)>&& Task);
+    void Stop();
+    uint64_t GetTaskCount();
   private:
     std::future<void> Thread;
     std::mutex TaskMutex;

@@ -19,6 +19,9 @@
 #define LWARNING if(LogVerbosity >= ELogVerbosity::Warning) std::cout << Prefix 
 #define LERROR if(LogVerbosity >= ELogVerbosity::Error) std::cerr << Prefix
 
+static std::string Prefix = "DataConnector: ";
+static const Synavis::Logger::LoggerInstance lconnector = Synavis::Logger::Get()->LogStarter("DataConnector");
+
 inline constexpr std::byte operator "" _b(unsigned long long i) noexcept
 {
   return static_cast<std::byte>(i);
@@ -41,7 +44,7 @@ void Synavis::DataConnector::StartSignalling()
 {
   std::string address = "ws://" + config_["SignallingIP"].get<std::string>()
     + ":" + std::to_string(config_["SignallingPort"].get<unsigned>());
-  LINFO << "Starting Signalling to " << address << std::endl;
+  lconnector(ELogVerbosity::Info) << "Starting Signalling to " << address << std::endl;
   state_ = EConnectionState::STARTUP;
   SignallingServer->open(address);
   while (Block && state_ < EConnectionState::SIGNUP)
@@ -115,7 +118,7 @@ void Synavis::DataConnector::SendJSON(json Message)
   memcpy(bytes.data() + 3, json_message.data(), json_message.size());
 
   std::string temp = std::string((char*)bytes.data(), bytes.size());
-  LINFO << "Sending JSON: " << temp << std::endl;
+  lconnector(ELogVerbosity::Info) << "Sending JSON: " << temp << std::endl;
   DataChannel->sendBuffer(bytes);
 }
 
@@ -152,7 +155,7 @@ bool Synavis::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, 
       if (this->LogVerbosity >= ELogVerbosity::Verbose)
       {
         std::this_thread::sleep_for(waittime);
-        std::cout << "Waiting for message " << StateTracker << " time " << std::chrono::duration<double>(std::chrono::system_clock::now() - start_time).count() << " of " << failtime_seconds.count() << "." << std::endl;
+        lconnector(ELogVerbosity::Verbose) << "Waiting for message " << StateTracker << " time " << std::chrono::duration<double>(std::chrono::system_clock::now() - start_time).count() << " of " << failtime_seconds.count() << "." << std::endl;
       }
       else
       {
@@ -160,7 +163,7 @@ bool Synavis::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, 
       }
       if (bFail && (std::chrono::duration<double>(std::chrono::system_clock::now() - start_time) > failtime_seconds))
       {
-        LDEBUG << "Message reception timed out" << std::endl;
+        lconnector(ELogVerbosity::Debug) << "Message reception timed out" << std::endl;
         MessageState = -1;
         break;
       }
@@ -200,20 +203,20 @@ bool Synavis::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, 
     throw std::runtime_error(Prefix + "Invalid format for buffer transmission");
   }
   // transmit
-  LDEBUG << "Transmitting buffer of size " << Buffer.size() << " in " << chunks << " chunks of size " << chunk_size << std::endl;
+  lconnector(ELogVerbosity::Debug) << "Transmitting buffer of size " << Buffer.size() << " in " << chunks << " chunks of size " << chunk_size << std::endl;
   this->SendJSON({ {"type","buffer"}, {"start",Name }, {"size", total_size}, {"format", Format} });
-  LDEBUG << "Sent start message" << std::endl;
+  lconnector(ELogVerbosity::Debug) << "Sent start message" << std::endl;
   if (!DontWaitForAnswer)
   {
     WaitTimeout(this->FailIfNotComplete, TimeOut);
-    LDEBUG << "Received start message" << std::endl;
+    lconnector(ELogVerbosity::Debug) << "Received start message" << std::endl;
   }
   rtc::binary bytes(std::min(chunk_size, total_size) + 4);
   bytes.at(bytes.size() - 1) = std::byte(0);
   uint8_t* buffer = reinterpret_cast<uint8_t*>(&(bytes.at(3)));
   bytes.at(0) = DataChannelByte;
   // move through the chunks
-  LVERBOSE << "Message state is " << MessageState << " chunk info " << total_size << "->" << chunk_size << "(" << chunks << ")" << std::endl;
+  lconnector(ELogVerbosity::Verbose) << "Message state is " << MessageState << " chunk info " << total_size << "->" << chunk_size << "(" << chunks << ")" << std::endl;
   for (int i = 0; i < chunks && MessageState > 0; i++)
   {
     const auto remaining = std::min(chunk_size, total_size - i * chunk_size);
@@ -227,18 +230,18 @@ bool Synavis::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, 
     // set the second and third bytes to the chunk size
     *(reinterpret_cast<uint16_t*>(&(bytes.at(1)))) = static_cast<uint16_t>(remaining);
     // send the buffer
-    LDEBUG << "Sending chunk " << i << " of length " << remaining << std::endl;
+    lconnector(ELogVerbosity::Debug) << "Sending chunk " << i << " of length " << remaining << std::endl;
     DataChannel->sendBuffer(bytes);
     // wait for the message to be received
     if (!DontWaitForAnswer)
     {
       WaitTimeout(this->FailIfNotComplete, TimeOut);
-      LDEBUG << "Received message " << i << std::endl;
+      lconnector(ELogVerbosity::Debug) << "Received message " << i << std::endl;
     }
   }
   this->SendJSON({ {"type","buffer"},{"stop",Name} });
     if (!DontWaitForAnswer) WaitTimeout(this->FailIfNotComplete, TimeOut);
-    LDEBUG << "Sent stop message" << std::endl;
+    lconnector(ELogVerbosity::Info) << "Sent stop message" << std::endl;
     // restore the original callback
       MessageReceptionCallback = msg_callback;
     if (NeedToDelete)
@@ -384,8 +387,8 @@ void Synavis::DataConnector::SetConfig(json Config)
   }
   if (!all_found)
   {
-    LERROR << "Config is missing required values" << std::endl;
-    LERROR << "Required values are: " << std::endl;
+    lconnector(ELogVerbosity::Error) << "Config is missing required values" << std::endl;
+    lconnector(ELogVerbosity::Error) << "Required values are: " << std::endl;
     for (auto& [key, value] : config_.items())
     {
       std::cerr << key << " ";
@@ -419,7 +422,7 @@ void Synavis::DataConnector::PrintCommunicationData()
   auto max_message = this->MaxMessageSize;
   auto protocol = DataChannel->protocol();
   auto label = DataChannel->label();
-  LINFO << "Data Channel " << label << " has protocol " << protocol << " and max message size " << max_message << std::endl;
+  lconnector(ELogVerbosity::Info) << "Data Channel " << label << " has protocol " << protocol << " and max message size " << max_message << std::endl;
 }
 
 void Synavis::DataConnector::CommunicateSDPs()
@@ -462,67 +465,67 @@ inline void Synavis::DataConnector::DataChannelMessageHandling(rtc::message_vari
     if(message_byte == 0_b)
     {
       // Quality control ownership
-      LVERBOSE << "Received quality control ownership" << std::endl;
+      lconnector(ELogVerbosity::Verbose) << "Received quality control ownership" << std::endl;
     }
     else if (message_byte == 1_b)
     {
-      LVERBOSE << "Received response" << std::endl;
+      lconnector(ELogVerbosity::Verbose) << "Received response" << std::endl;
     }
     else if(message_byte == 2_b)
     {
-      LVERBOSE << "Received command" << std::endl;
+      lconnector(ELogVerbosity::Verbose) << "Received command" << std::endl;
     }
     else if (message_byte == 3_b)
     {
-      LVERBOSE << "Received freeze frame" << std::endl;
+      lconnector(ELogVerbosity::Verbose) << "Received freeze frame" << std::endl;
     }
     else if (message_byte == 3_b)
     {
-      LVERBOSE << "Received freeze frame" << std::endl;
+      lconnector(ELogVerbosity::Verbose) << "Received freeze frame" << std::endl;
     }
     else if (message_byte == 4_b)
     {
-      LVERBOSE << "Received unfreeze frame" << std::endl;
+      lconnector(ELogVerbosity::Verbose) << "Received unfreeze frame" << std::endl;
     }
     else if(message_byte == 5_b)
     {
-      LVERBOSE << "Received video encoder AVgQP" << std::endl;
+      lconnector(ELogVerbosity::Verbose) << "Received video encoder AVgQP" << std::endl;
     }
     else if (message_byte == 6_b)
     {
-      LVERBOSE << "Latency Test" << std::endl;
+      lconnector(ELogVerbosity::Verbose) << "Latency Test" << std::endl;
     }
     else if (message_byte == 7_b)
     {
-      LVERBOSE << "Initial Settings" << std::endl;
+      lconnector(ELogVerbosity::Verbose) << "Initial Settings" << std::endl;
     }
     else if (message_byte == 8_b)
     {
-      LVERBOSE << "File Extension" << std::endl;
+      lconnector(ELogVerbosity::Verbose) << "File Extension" << std::endl;
     }
     else if (message_byte == 9_b)
     {
-      LVERBOSE << "File MIME Type" << std::endl;
+      lconnector(ELogVerbosity::Verbose) << "File MIME Type" << std::endl;
     }
     else if (message_byte == 10_b)
     {
-      LVERBOSE << "File Content" << std::endl;
+      lconnector(ELogVerbosity::Verbose) << "File Content" << std::endl;
     }
     else if (message_byte == 11_b)
     {
-      LVERBOSE << "Test Echo" << std::endl;
+      lconnector(ELogVerbosity::Verbose) << "Test Echo" << std::endl;
     }
     else if (message_byte == 12_b)
     {
-      LVERBOSE << "Input Control Ownership" << std::endl;
+      lconnector(ELogVerbosity::Verbose) << "Input Control Ownership" << std::endl;
     }
     else if (message_byte == 13_b)
     {
-      LVERBOSE << "Gamepad response" << std::endl;
+      lconnector(ELogVerbosity::Verbose) << "Gamepad response" << std::endl;
     }
     else if (message_byte == 255_b)
     {
-      LVERBOSE << "Protocoll" << std::endl;
+      lconnector(ELogVerbosity::Verbose) << "Protocoll" << std::endl;
     }
     if (message_byte != 1_b && message_byte != 255_b && message_byte != 7_b)
       return;
@@ -540,7 +543,7 @@ inline void Synavis::DataConnector::DataChannelMessageHandling(rtc::message_vari
       if (message[1] == '\0' && message[3] == '\0')
       {
         // wchar_t
-        LVERBOSE << "We assume that the 0x00 characters mean that the string is wchar_t" << std::endl;
+        lconnector(ELogVerbosity::Verbose) << "We assume that the 0x00 characters mean that the string is wchar_t" << std::endl;
         auto wstringview = std::wstring_view(reinterpret_cast<wchar_t*>(data.data() + 1), data.size() / sizeof(wchar_t));
         char* cstr = new char[wstringview.size()];
         std::size_t it = 0;
@@ -569,28 +572,28 @@ inline void Synavis::DataConnector::DataChannelMessageHandling(rtc::message_vari
         //&& std::ranges::all_of(message.begin() + first_lbrace, message.begin() + last_rbrace, &isprint))
       {
 
-        LVERBOSE << "Decoded message reception of size " << last_rbrace - first_lbrace + 1 << " of " << message.length() << std::endl;
+        lconnector(ELogVerbosity::Verbose) << "Decoded message reception of size " << last_rbrace - first_lbrace + 1 << " of " << message.length() << std::endl;
         if (MessageReceptionCallback.has_value())
           MessageReceptionCallback.value()(std::string(message.substr(first_lbrace, last_rbrace - first_lbrace + 1)));
       }
       else if (DataReceptionCallback.has_value())
       {
-        LVERBOSE << "Received data of size " << data.size() << std::endl;
+        lconnector(ELogVerbosity::Verbose) << "Received data of size " << data.size() << std::endl;
         DataReceptionCallback.value()(data);
       }
     }
     catch (const std::exception&)
     {
-      LWARNING << "Encountered an error while trying to parse a string from the package." << std::endl;
-      LVERBOSE << "Error was: " << std::current_exception << std::endl;
-      LVERBOSE << "From data of size " << data.size() << std::endl;
-      LVERBOSE << "And first 10 characters: " << std::string(reinterpret_cast<char*>(data.data()), std::min(data.size(), static_cast<std::size_t>(10))) << std::endl;
+      lconnector(ELogVerbosity::Warning) << "Encountered an error while trying to parse a string from the package." << std::endl;
+      lconnector(ELogVerbosity::Verbose) << "Error was: " << std::current_exception << std::endl;
+      lconnector(ELogVerbosity::Verbose) << "From data of size " << data.size() << std::endl;
+      lconnector(ELogVerbosity::Verbose) << "And first 10 characters: " << std::string(reinterpret_cast<char*>(data.data()), std::min(data.size(), static_cast<std::size_t>(10))) << std::endl;
     }
   }
   else
   {
     auto message = std::get<std::string>(messageordata);
-    LVERBOSE << "Direct message reception of size " << message.size() << std::endl;
+    lconnector(ELogVerbosity::Verbose) << "Direct message reception of size " << message.size() << std::endl;
     if (MessageReceptionCallback.has_value())
       MessageReceptionCallback.value()(message);
   }
@@ -608,7 +611,7 @@ void Synavis::DataConnector::Initialize()
   PeerConnection = std::make_shared<rtc::PeerConnection>(rtcconfig_);
   PeerConnection->onGatheringStateChange([this](auto state)
     {
-      LINFO << "Gathering state changed" << state << std::endl;
+      lconnector(ELogVerbosity::Info) << "Gathering state changed" << state << std::endl;
       switch (state)
       {
       case rtc::PeerConnection::GatheringState::Complete:
@@ -631,7 +634,7 @@ void Synavis::DataConnector::Initialize()
     });
   PeerConnection->onDataChannel([this](auto datachannel)
     {
-      LWARNING << "I received a channel I did not ask for" << std::endl;
+      lconnector(ELogVerbosity::Warning) << "I received a channel I did not ask for" << std::endl;
       datachannel->onOpen([this]()
         {
           std::cout << Prefix << "THEIR DataChannel connection is setup!" << std::endl;
@@ -643,21 +646,21 @@ void Synavis::DataConnector::Initialize()
     });
   PeerConnection->onTrack([this](auto track)
     {
-      LWARNING << "I received a track I did not ask for" << std::endl;
+      lconnector(ELogVerbosity::Warning) << "I received a track I did not ask for" << std::endl;
       track->onOpen([this, track]()
         {
-          LINFO << "Track connection is setup!" << std::endl;
+          lconnector(ELogVerbosity::Info) << "Track connection is setup!" << std::endl;
           //track->send(rtc::binary({ (std::byte)(EClientMessageType::QualityControlOwnership) }));
           track->send(rtc::binary({ std::byte{72},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0} }));
         });
     });
   PeerConnection->onSignalingStateChange([this](auto state)
     {
-      LINFO << "SS State changed: " << state << std::endl;
+      lconnector(ELogVerbosity::Info) << "SS State changed: " << state << std::endl;
     });
   PeerConnection->onStateChange([this](rtc::PeerConnection::State state)
     {
-      LINFO << "State changed: " << state << std::endl;
+      lconnector(ELogVerbosity::Info) << "State changed: " << state << std::endl;
       if (state == rtc::PeerConnection::State::Failed && OnFailedCallback.has_value())
       {
         OnFailedCallback.value()();
@@ -667,16 +670,16 @@ void Synavis::DataConnector::Initialize()
   DataChannel = PeerConnection->createDataChannel("DataConnectionChannel");
   DataChannel->onOpen([this]()
     {
-      LINFO << "OUR DataChannel connection is setup!" << std::endl;
+      lconnector(ELogVerbosity::Info) << "OUR DataChannel connection is setup!" << std::endl;
       // display a warning if the data channel message size is larger than the UE size byte uint16
       if (DataChannel->maxMessageSize() > std::numeric_limits<uint16_t>::max() - 3)
       {
         // make a framed warning
-        LWARNING << "****************************************************************************" << std::endl;
-        LWARNING << "*                                                                          *" << std::endl;
-        LWARNING << "* WARNING: DataChannel message size is larger than the UE size byte uint16 *" << std::endl;
-        LWARNING << "*                                                                          *" << std::endl;
-        LWARNING << "****************************************************************************" << std::endl;
+        lconnector(ELogVerbosity::Warning) << "****************************************************************************" << std::endl;
+        lconnector(ELogVerbosity::Warning) << "*                                                                          *" << std::endl;
+        lconnector(ELogVerbosity::Warning) << "* WARNING: DataChannel message size is larger than the UE size byte uint16 *" << std::endl;
+        lconnector(ELogVerbosity::Warning) << "*                                                                          *" << std::endl;
+        lconnector(ELogVerbosity::Warning) << "****************************************************************************" << std::endl;
       }
       this->MaxMessageSize = std::min(DataChannel->maxMessageSize(), static_cast<std::size_t>(std::numeric_limits<uint16_t>::max() - 3));
     
@@ -685,7 +688,7 @@ void Synavis::DataConnector::Initialize()
   DataChannel->onMessage(std::bind(&DataConnector::DataChannelMessageHandling, this, std::placeholders::_1));
   DataChannel->onError([this](std::string error)
     {
-      LERROR << "DataChannel error: " << error << std::endl;
+      lconnector(ELogVerbosity::Error) << "DataChannel error: " << error << std::endl;
     });
   DataChannel->onAvailable([this]()
     {
@@ -695,11 +698,11 @@ void Synavis::DataConnector::Initialize()
     });
   DataChannel->onBufferedAmountLow([this]()
     {
-      LINFO << "DataChannel buffered amount low" << std::endl;
+      lconnector(ELogVerbosity::Info) << "DataChannel buffered amount low" << std::endl;
     });
   DataChannel->onClosed([this]()
     {
-      LINFO << "DataChannel is CLOSED again" << std::endl;
+      lconnector(ELogVerbosity::Info) << "DataChannel is CLOSED again" << std::endl;
       this->state_ = EConnectionState::CLOSED;
       if (OnClosedCallback.has_value())
       {
@@ -709,11 +712,11 @@ void Synavis::DataConnector::Initialize()
   SignallingServer->onOpen([this]()
     {
       state_ = EConnectionState::SIGNUP;
-      LINFO << "Signalling server connected" << std::endl;
+      lconnector(ELogVerbosity::Info) << "Signalling server connected" << std::endl;
       if (TakeFirstStep)
       {
         json role_request = { {"type","request"},{"request","role"} };
-        LINFO << "Attempting to prompt for role, this will fail if the server is not configured to do so" << std::endl;
+        lconnector(ELogVerbosity::Info) << "Attempting to prompt for role, this will fail if the server is not configured to do so" << std::endl;
         //SignallingServer->send(role_request.dump());
       }
       if (TakeFirstStep && PeerConnection->localDescription().has_value())
@@ -721,11 +724,11 @@ void Synavis::DataConnector::Initialize()
         json offer = { {"type","offer"}, {"endpoint", "data"},{"sdp",PeerConnection->localDescription().value()} };
         if (PeerConnection->hasMedia())
         {
-          LINFO << "PeerConnection has Media!" << std::endl;
+          lconnector(ELogVerbosity::Info) << "PeerConnection has Media!" << std::endl;
         }
         else
         {
-          LINFO << "PeerConnection has no Media!" << std::endl;
+          lconnector(ELogVerbosity::Info) << "PeerConnection has no Media!" << std::endl;
         }
         SignallingServer->send(offer.dump());
         state_ = EConnectionState::OFFERED;
@@ -747,7 +750,7 @@ void Synavis::DataConnector::Initialize()
         }
         catch (json::exception e)
         {
-          LERROR << "Could not read package:" << e.what() << std::endl;
+          lconnector(ELogVerbosity::Error) << "Could not read package:" << e.what() << std::endl;
         }
         LDEBUG << "I received a message of type: " << content["type"] << std::endl;
         if (content["type"] == "answer" || content["type"] == "offer")
@@ -806,7 +809,7 @@ void Synavis::DataConnector::Initialize()
           }
           catch (std::exception e)
           {
-            LWARNING << "Could not parse candidate: " << e.what() << std::endl;
+            lconnector(ELogVerbosity::Warning) << "Could not parse candidate: " << e.what() << std::endl;
             return;
           }
           LDEBUG << "I received a candidate for " << sdpMid << " with index " << sdpMLineIndex << " and candidate " << candidate_string << std::endl;
@@ -819,12 +822,12 @@ void Synavis::DataConnector::Initialize()
           }
           catch (std::exception e)
           {
-            LERROR << "Could not add remote candidate: " << e.what() << std::endl;
+            lconnector(ELogVerbosity::Error) << "Could not add remote candidate: " << e.what() << std::endl;
           }
           // if we have no more required candidates, we can send an answer
           if (RequiredCandidate.size() == 0)
           {
-            LINFO << "I have received all required candidates" << std::endl;
+            lconnector(ELogVerbosity::Info) << "I have received all required candidates" << std::endl;
             if (!TakeFirstStep && PeerConnection->localDescription().has_value() && state_ < EConnectionState::OFFERED)
             {
               this->state_ = EConnectionState::OFFERED;
@@ -852,12 +855,12 @@ void Synavis::DataConnector::Initialize()
         else if (content["type"] == "id")
         {
           this->config_["id"] = content["id"];
-          LINFO << "Received an id: " << content["id"] << std::endl;
+          lconnector(ELogVerbosity::Info) << "Received an id: " << content["id"] << std::endl;
         }
         else if (content["type"] == "serverDisconnected")
         {
           PeerConnection.reset();
-          LWARNING << "Reset peer connection because we received a disconnect" << std::endl;
+          lconnector(ELogVerbosity::Warning) << "Reset peer connection because we received a disconnect" << std::endl;
         }
         else if (content["type"] == "config")
         {
@@ -866,11 +869,11 @@ void Synavis::DataConnector::Initialize()
         }
         else if (content["type"] == "playerCount")
         {
-          LINFO << "There are " << content["count"] << " players connected" << std::endl;
+          lconnector(ELogVerbosity::Info) << "There are " << content["count"] << " players connected" << std::endl;
         }
         else if (content["type"] == "role")
         {
-          LINFO << "Received a role: " << content["role"] << std::endl;
+          lconnector(ELogVerbosity::Info) << "Received a role: " << content["role"] << std::endl;
           if (content["role"] == "server")
           {
             this->IsServer = true;
@@ -886,11 +889,11 @@ void Synavis::DataConnector::Initialize()
         else if (content["type"] == "playerDisconnected")
         {
           PeerConnection.reset();
-          LWARNING << "Resetting connection because we must be in server role and the player disconnected" << std::endl;
+          lconnector(ELogVerbosity::Warning) << "Resetting connection because we must be in server role and the player disconnected" << std::endl;
         }
         else
         {
-          LWARNING << "unknown message?" << std::endl << content.dump() << std::endl;
+          lconnector(ELogVerbosity::Warning) << "unknown message?" << std::endl << content.dump() << std::endl;
         }
       }
     });
@@ -899,13 +902,13 @@ void Synavis::DataConnector::Initialize()
       state_ = EConnectionState::CLOSED;
       auto unix_time = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 
-      LINFO << "Signalling server was closed at timestamp " << unix_time << std::endl;
+      lconnector(ELogVerbosity::Info) << "Signalling server was closed at timestamp " << unix_time << std::endl;
 
     });
   SignallingServer->onError([this](std::string error)
     {
       state_ = EConnectionState::STARTUP;
       SignallingServer->close();
-      LERROR << "Signalling server error: " << error << std::endl;
+      lconnector(ELogVerbosity::Error) << "Signalling server error: " << error << std::endl;
     });
 }

@@ -429,12 +429,14 @@ void Synavis::WorkerThread::Run()
   while (Running)
   {
     TaskCondition.wait(lock, [this] {
+      //std::cout << "Task condition " << ((Tasks.size() > 0) || !Running) << std::endl;
     return (Tasks.size() > 0) || !Running;
       });
     if (!Running) return;
     if (Tasks.size() > 0)
     {
       auto Task = std::move(Tasks.front());
+      Tasks.pop();
       lock.unlock();
       Task();
       lock.lock();
@@ -442,11 +444,21 @@ void Synavis::WorkerThread::Run()
   }
 }
 
+void Synavis::WorkerThread::Stop()
+{
+  Running = false;
+}
+
+uint64_t Synavis::WorkerThread::GetTaskCount()
+{
+  return Tasks.size();
+}
+
 void Synavis::WorkerThread::AddTask(std::function<void()>&& Task)
 {
   std::unique_lock<std::mutex> lock(TaskMutex);
   Tasks.push(Task);
-  // Tasks.push([Task=std::move(Task), this]() { Task(); this->TaskCondition.notify_all(); }); // todo uncomment if there is a need for a notification
+  //Tasks.push([Task=std::move(Task), this]() { Task(); this->TaskCondition.notify_all(); }); // todo uncomment if there is a need for a notification
   this->TaskCondition.notify_all();
 }
 
