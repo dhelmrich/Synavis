@@ -465,7 +465,7 @@ namespace Synavis
         }
         if (this->StatusVerbosity <= ELogVerbosity::Error)
           std::cerr << std::endl;
-        else
+        else if (this->StatusVerbosity <= Verbosity)
           std::cout << std::endl;
         this->StatusVerbosity = ELogVerbosity::Silent;
       }

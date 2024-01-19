@@ -562,7 +562,7 @@ void Synavis::Bridge::BridgeSubmit(Adapter* Instigator, StreamVariant origin, st
   {
     json Transmission = { {"id",Instigator->ID} };
     Transmission["data"] = std::get<std::string>(Message);
-    BridgeConnection.Out->Send(Transmission);
+    BridgeConnection.Out->Send(Transmission.dump());
   }
   else
   {
