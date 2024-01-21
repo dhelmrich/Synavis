@@ -1,8 +1,7 @@
 #include "FrameDecodeAV.hpp"
 
 // libAV includes
-extern "C"
-{
+extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/frame.h>
@@ -24,15 +23,16 @@ static const Synavis::Logger::LoggerInstance lffmpeg = Synavis::Logger::Get()->L
 
 namespace Synavis
 {
-
   // byte literal
   std::byte operator"" _b(unsigned long long Value)
   {
     return static_cast<std::byte>(Value);
   }
 
-  VP9Depacketizer::VP9Depacketizer()
+  void PacketDepacketizer::ResetPacket()
   {
+    frame.clear();
+    timestamp = static_cast<uint32_t>(-1);
   }
 
   VP9Depacketizer::~VP9Depacketizer()
@@ -42,10 +42,10 @@ namespace Synavis
   void VP9Depacketizer::AddPacket(rtc::binary Data)
   {
     const rtc::RtpHeader* Header = reinterpret_cast<const rtc::RtpHeader*>(Data.data());
-    
+
     const uint8_t* body = reinterpret_cast<const uint8_t*>(Header->getBody());
-    
-    if(frame.empty())
+
+    if (frame.empty())
     {
       // check if the packet is a keyframe
       if (Header->marker() > 0 && body[0] == 0x9d && body[1] == 0x01 && body[2] == 0x2a)
@@ -83,10 +83,87 @@ namespace Synavis
     return false;
   }
 
-  FrameDecode::FrameDecode(rtc::Track* VideoInfo)
+  AVPacket* VP9Depacketizer::GetAVFrame()
   {
-    // initialize the decoder libav with vp9
-    Codec = avcodec_find_decoder(AV_CODEC_ID_VP8);
+    return nullptr;
+  }
+
+  H264Depacketizer::~H264Depacketizer()
+  {
+  }
+
+  void H264Depacketizer::AddPacket(rtc::binary Packet)
+  {
+    auto header = reinterpret_cast<const rtc::RtpHeader*>(Packet.data());
+    auto sq = header->seqNumber();
+    auto ts = header->timestamp();
+    /*       Wang et al. (2016), RTP Payload format for High Efficiency Video Coding (HEVC)
+     *       and Wang, et al. (2011), RTP Payload Format for H.264 Video
+     *       Informative note: The first byte of a NAL unit co-serves as the
+     *        RTP payload header.
+     *
+     *       0                   1                   2                   3
+     *       0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+     *      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+     *      |F|NRI|  Type   |                                               |
+     *      +-+-+-+-+-+-+-+-+                                               |
+     *      |                                                               |
+     *      |               Bytes 2..n of a single NAL unit                 |
+     *      |                                                               |
+     *      |                               +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+     *      |                               :...OPTIONAL RTP padding        |
+     *      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+     */
+    // remove the rtp header
+    auto* data = header->getBody();
+    auto size = Packet.size() - header->getSize();
+
+    auto * nal = reinterpret_cast<const rtc::NalUnit*> (data);
+
+    // add the data to the frame
+    frame.insert(frame.end(), nal->payload().begin(), nal->payload().end());
+  }
+
+  bool H264Depacketizer::IsFrameComplete()
+  {
+    return false;
+  }
+
+  AVPacket* H264Depacketizer::GetAVFrame()
+  {
+    AVPacket* packet = av_packet_alloc();
+
+    packet->data = AS_UINT8(frame.data());
+    packet->size = static_cast<int>(frame.size());
+
+    return packet;
+  }
+
+  FrameDecode::FrameDecode(rtc::Track* VideoInfo, ECodec StreamCodec)
+  {
+    switch (StreamCodec)
+    {
+    case ECodec::VP8:
+      Codec = avcodec_find_decoder(AV_CODEC_ID_VP8);
+      Depacketizer = std::make_unique<VP9Depacketizer>();
+      break;
+    case ECodec::VP9:
+      Codec = avcodec_find_decoder(AV_CODEC_ID_VP9);
+      Depacketizer = std::make_unique<VP9Depacketizer>();
+      break;
+    case ECodec::H264:
+      Codec = avcodec_find_decoder(AV_CODEC_ID_H264);
+      Depacketizer = std::make_unique<H264Depacketizer>();
+      break;
+    case ECodec::H265:
+      Codec = avcodec_find_decoder(AV_CODEC_ID_HEVC);
+      Depacketizer = std::make_unique<H264Depacketizer>();
+      break;
+    default:
+      throw std::runtime_error("Codec not supported");
+    }
+
+
     if (!Codec)
     {
       throw std::runtime_error("Codec not found");
@@ -115,8 +192,10 @@ namespace Synavis
       throw std::runtime_error("Could not allocate packet");
     }
 
+    // TODO bitrate is also in the session description protocoll
+    // framerate and resolution should be transmitted either through data channel or as video track package
     CodecContext->bit_rate = 400000;
-    CodecContext->framerate = { 10, 1 };
+    CodecContext->framerate = {10, 1};
     CodecContext->width = 1280;
     CodecContext->height = 720;
 
@@ -145,26 +224,24 @@ namespace Synavis
         Callback(Data);
       }
 
-
-
-      // flush the decoder
-
       rtc::RtpHeader* Header = reinterpret_cast<rtc::RtpHeader*>(DataPtr);
-      // depayload the VP9 RTP packet and extract the B and E bit
-      
-      auto* vp9Payload = reinterpret_cast<VP9Payload*>(Header->getBody());
-      auto payload = Header->payloadType();
-      bool start = vp9Payload->start();
-      bool end = vp9Payload->end();
+
       // print payload type in verbose
-      
+
       auto* body = reinterpret_cast<uint8_t*>(Header->getBody());
-      auto& l = ldecoder(ELogVerbosity::Verbose) << "Packet ssrc: " << Header->ssrc() << " - time: " << Header->timestamp()
+      auto& l = ldecoder(ELogVerbosity::Verbose) << "Packet ssrc: " << Header->ssrc() << " - time: " << Header->
+        timestamp()
         << " - seq: " << Header->seqNumber() << " - payload: " << static_cast<uint16_t>(Header->payloadType())
         << " - Extension: " << Header->extension() << " - Marker: " << static_cast<uint16_t>(Header->marker());
       if (Header->getExtensionHeader()) l << " - Extension header: " << Header->getExtensionHeaderSize();
       l << std::endl;
-
+        
+      // if the remaining size is zero, skip
+      if (static_cast<int64_t>(Data.size()) - static_cast<int64_t>(Header->getSize()) <= 0)
+      {
+        ldecoder(ELogVerbosity::Verbose) << "No payload packet" << std::endl;
+        return;
+      }
       // add the packet to the buffer
       AddPacket(Data);
 
@@ -174,7 +251,6 @@ namespace Synavis
         ldecoder(ELogVerbosity::Info) << "Frame complete, creating decoding task" << std::endl;
         DecoderThread->AddTask([this, ts = Header->timestamp(), Data]()
         {
-
           //while (avcodec_receive_frame(CodecContext, Frame) != AVERROR(EAGAIN));
 
           // create a packet from the buffer
@@ -191,16 +267,18 @@ namespace Synavis
           int Result = avcodec_decode_video2(CodecContext, Frame, &GotFrame, Packet);
 #else
           int Result = avcodec_send_packet(CodecContext, Packet);
-          lffmpeg(ELogVerbosity::Verbose) << "Result: " << Result << std::endl;
+          lffmpeg(ELogVerbosity::Debug) << "Result: " << Result << std::endl;
           int GotFrame = avcodec_receive_frame(CodecContext, Frame);
-          lffmpeg(ELogVerbosity::Verbose) << "GotFrame: " << GotFrame << std::endl;
+          lffmpeg(ELogVerbosity::Debug) << "GotFrame: " << GotFrame << std::endl;
 #endif
           // check if the frame is decoded
           if (Result < 0)
           {
-            // not a frame
-            lffmpeg(ELogVerbosity::Verbose) << "Not a frame (didn't accept frame)" << std::endl;
             //Callback(Data);
+            // get the error from the decoder
+            char Error[AV_ERROR_MAX_STRING_SIZE];
+            av_strerror(Result, Error, AV_ERROR_MAX_STRING_SIZE);
+            lffmpeg(ELogVerbosity::Error) << "Error transmitting frame: " << Error << std::endl;
           }
           else
           {
@@ -212,8 +290,10 @@ namespace Synavis
               Content.Width = Frame->width;
               Content.Height = Frame->height;
               Content.Data = std::vector<uint8_t>(Frame->data[0], Frame->data[0] + Frame->linesize[0] * Frame->height);
-              Content.Data.insert(Content.Data.end(), Frame->data[1], Frame->data[1] + Frame->linesize[1] * Frame->height / 2);
-              Content.Data.insert(Content.Data.end(), Frame->data[2], Frame->data[2] + Frame->linesize[2] * Frame->height / 2);
+              Content.Data.insert(Content.Data.end(), Frame->data[1],
+                                  Frame->data[1] + Frame->linesize[1] * Frame->height / 2);
+              Content.Data.insert(Content.Data.end(), Frame->data[2],
+                                  Frame->data[2] + Frame->linesize[2] * Frame->height / 2);
               // call the callback
               if (FrameCallback.has_value())
               {
@@ -222,8 +302,6 @@ namespace Synavis
             }
             else
             {
-              //Callback(Data);
-              lffmpeg(ELogVerbosity::Verbose) << "Not a frame (didn't get frame)" << std::endl;
               // get the error from the decoder
               char Error[AV_ERROR_MAX_STRING_SIZE];
               av_strerror(Result, Error, AV_ERROR_MAX_STRING_SIZE);
@@ -247,8 +325,8 @@ namespace Synavis
 
   inline AVPacket* FrameDecode::InitializePacketFromData(uint32_t index)
   {
+    Depacketizer->ResetPacket();
     // to extract the VP9 package from multiple RTP packages, we need to sort them by sequence number
-
     // return nullptr if the frameBuffer does not contain the index
     if (frameBuffer.find(index) == frameBuffer.end())
     {
@@ -256,17 +334,18 @@ namespace Synavis
     }
     auto& frame = frameBuffer[index];
     std::ranges::sort(frame, [](const rtc::binary& a, const rtc::binary& b)
-      {
-        return reinterpret_cast<const rtc::RtpHeader*>(a.data())->seqNumber()
-          < reinterpret_cast<const rtc::RtpHeader*>(b.data())->seqNumber();
-      });
+    {
+      return reinterpret_cast<const rtc::RtpHeader*>(a.data())->seqNumber()
+        < reinterpret_cast<const rtc::RtpHeader*>(b.data())->seqNumber();
+    });
     // ensure that the sequence numbers are correct
     int sq = -1;
     int size = 0;
     for (auto& packet : frame)
     {
-      size += packet.size() - sizeof(rtc::RtpHeader);
+      size += static_cast<int>(packet.size() - sizeof(rtc::RtpHeader));
       const rtc::RtpHeader* header = reinterpret_cast<const rtc::RtpHeader*>(packet.data());
+      
       if (sq == -1)
       {
         sq = header->seqNumber();
@@ -282,24 +361,18 @@ namespace Synavis
           sq = header->seqNumber();
       }
     }
-    std::byte* data = new std::byte[size];
-    for (auto& packet : frame)
+    for(auto& packet : frame)
     {
-      // insert with pointer cast
-      std::ranges::copy(packet.begin() + sizeof(rtc::RtpHeader), packet.end(), data);
+       Depacketizer->AddPacket(packet);
     }
-    // create the packet
-    AVPacket* packet = av_packet_alloc();
-    packet->data = AS_UINT8(data);
-    packet->size = size;
-    packet->flags = AV_PKT_FLAG_KEY;
-    return packet;
+    return Depacketizer->GetAVFrame(); // implicit copy
   }
 
   void FrameDecode::AddPacket(rtc::binary Data)
   {
     const rtc::RtpHeader* Header = reinterpret_cast<const rtc::RtpHeader*>(Data.data());
     const uint8_t* body = reinterpret_cast<const uint8_t*>(Header->getBody());
+
 
     // check if timestamp is already in the buffer
     if (frameBuffer.find(Header->timestamp()) == frameBuffer.end())
@@ -312,19 +385,19 @@ namespace Synavis
         currentlyCapturing.pop_front();
         frameBuffer.erase(oldest);
         // log to verbose
-        ldecoder(ELogVerbosity::Verbose) << "Removed frame " << oldest << " from buffer" << std::endl;
+        ldecoder(ELogVerbosity::Debug) << "Removed frame " << oldest << " from buffer" << std::endl;
       }
       else
       {
         frameBuffer[Header->timestamp()] = std::vector<rtc::binary>();
         // insert the frame into the buffer
-        frameBuffer[Header->timestamp()].push_back(Data);
+        frameBuffer[Header->timestamp()].push_back(Data); // copy!
       }
     }
     else
     {
       // insert the packet into the buffer
-      frameBuffer[Header->timestamp()].push_back(Data);
+      frameBuffer[Header->timestamp()].push_back(Data); // copy!
     }
   }
 }

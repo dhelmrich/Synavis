@@ -51,27 +51,57 @@ namespace Synavis
     bool scalability() { return payload & 0b00000010; }
     bool reserved() { return payload & 0b00000001; }
     uint8_t ext_payload;
-    bool extended_pid() {return ext_payload & 0b10000000; }
+    bool extended_pid() { return ext_payload & 0b10000000; }
   };
 #pragma pack(pop)
 
-  class SYNAVIS_EXPORT VP9Depacketizer
+  class SYNAVIS_EXPORT PacketDepacketizer
   {
-    public:
-    VP9Depacketizer();
-    ~VP9Depacketizer();
+  public:
+    PacketDepacketizer() = default;
+    virtual ~PacketDepacketizer() = default;
+
+    // this function should be called in sequence order
+    // package reception handling is NOT handled here
+    // this is purely for depacketizing the data
+    virtual void AddPacket(rtc::binary Data) = NULL;
+    virtual bool IsFrameComplete() = NULL;
+    virtual AVPacket* GetAVFrame() = NULL;
+    virtual void ResetPacket();
+
+  protected:
+    uint32_t timestamp { static_cast<uint32_t>(-1) };
+    std::vector<std::byte> frame;
+  };
+
+  class SYNAVIS_EXPORT VP9Depacketizer : public PacketDepacketizer
+  {
+  public:
+    VP9Depacketizer() = default;
+    virtual ~VP9Depacketizer() override;
+
+    virtual void AddPacket(rtc::binary Packet) override;
+    virtual bool IsFrameComplete() override;
+    virtual AVPacket* GetAVFrame() override;
+  };
+
+  class SYNAVIS_EXPORT H264Depacketizer : public PacketDepacketizer
+  {
+  public:
+    H264Depacketizer() = default;
+    virtual ~H264Depacketizer() override;
 
     std::vector<std::byte> frame;
-    void AddPacket(rtc::binary Data);
-    bool IsFrameComplete();
-  private:
-    uint32_t timestamp;
+    virtual void AddPacket(rtc::binary Packet) override;
+    virtual bool IsFrameComplete() override;
+    virtual AVPacket* GetAVFrame() override;
+
   };
 
   class SYNAVIS_EXPORT FrameDecode : public std::enable_shared_from_this<FrameDecode>
   {
   public:
-    FrameDecode(rtc::Track* VideoInfo = nullptr);
+    FrameDecode(rtc::Track* VideoInfo = nullptr, ECodec StreamCodec = ECodec::H264);
     virtual ~FrameDecode();
 
     std::function<void(rtc::binary)> CreateAcceptor(std::function<void(rtc::binary)>&& Callback);
@@ -88,7 +118,7 @@ namespace Synavis
 
     std::shared_ptr<WorkerThread> DecoderThread;
     uint32_t MaxFrames;
-     
+
     std::map<uint32_t, std::vector<rtc::binary>> frameBuffer;
     std::deque<uint32_t> currentlyCapturing;
 
@@ -99,6 +129,7 @@ namespace Synavis
     const AVCodec* Codec;
     AVFrame* Frame;
     AVPacket* Packet;
+    std::unique_ptr<PacketDepacketizer> Depacketizer;
 
     uint64_t MaxMessageSize;
   };
