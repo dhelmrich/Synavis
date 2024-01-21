@@ -638,6 +638,7 @@ void Synavis::Bridge::BridgeRun()
     if (CommInstructQueue.size() > 0)
     {
       auto Task = std::move(CommInstructQueue.front());
+      CommInstructQueue.pop();
       lock.unlock();
       Task();
       // locking at the end of the loop is necessary because next
