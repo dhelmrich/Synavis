@@ -344,7 +344,8 @@ namespace Synavis
     VP8 = (std::uint8_t)ELogVerbosity::Verbose + 1u,
     VP9,
     H264,
-    H265
+    H265,
+    None
   };
 
 
