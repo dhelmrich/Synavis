@@ -13,12 +13,6 @@
 #undef min
 #undef max
 
-#define LVERBOSE if(LogVerbosity >= ELogVerbosity::Verbose) std::cout << Prefix 
-#define LDEBUG if(LogVerbosity >= ELogVerbosity::Debug) std::cout << Prefix 
-#define LINFO if(LogVerbosity >= ELogVerbosity::Info) std::cout << Prefix 
-#define LWARNING if(LogVerbosity >= ELogVerbosity::Warning) std::cout << Prefix 
-#define LERROR if(LogVerbosity >= ELogVerbosity::Error) std::cerr << Prefix
-
 static std::string Prefix = "DataConnector: ";
 static const Synavis::Logger::LoggerInstance lconnector = Synavis::Logger::Get()->LogStarter("DataConnector");
 
@@ -445,7 +439,7 @@ void Synavis::DataConnector::CommunicateSDPs()
 
 void Synavis::DataConnector::WriteSDPsToFile(std::string Filename)
 {
-  LDEBUG << "Set Writing SDPs to file; Note that you need to call this function AFTER setting the RemoteInformation Callback." << std::endl;
+  lconnector(ELogVerbosity::Debug) << "Set Writing SDPs to file; Note that you need to call this function AFTER setting the RemoteInformation Callback." << std::endl;
   this->OnRemoteDescriptionCallback = [f_ = this->OnRemoteDescriptionCallback, Filename](std::string sdp)
   {
     std::ofstream file(Filename);
@@ -752,10 +746,10 @@ void Synavis::DataConnector::Initialize()
         {
           lconnector(ELogVerbosity::Error) << "Could not read package:" << e.what() << std::endl;
         }
-        LDEBUG << "I received a message of type: " << content["type"] << std::endl;
+        lconnector(ELogVerbosity::Debug) << "I received a message of type: " << content["type"] << std::endl;
         if (content["type"] == "answer" || content["type"] == "offer")
         {
-          LDEBUG << "Received an " << content["type"] << " from the server" << std::endl;
+          lconnector(ELogVerbosity::Debug) << "Received an " << content["type"] << " from the server" << std::endl;
           std::string sdp = content["sdp"].get<std::string>();
           std::string type = content["type"].get<std::string>();
           rtc::Description remote(sdp, type);
@@ -798,7 +792,7 @@ void Synavis::DataConnector::Initialize()
         else if (content["type"] == "iceCandidate")
         {
           // {"type": "iceCandidate", "candidate": {"candidate": "candidate:1 1 UDP 2122317823 172.26.15.227 42835 typ host", "sdpMLineIndex": "0", "sdpMid": "0"}}
-          LDEBUG << "Parsing ice candidate" << std::endl;
+          lconnector(ELogVerbosity::Debug) << "Parsing ice candidate" << std::endl;
           std::string sdpMid, candidate_string;
           int sdpMLineIndex;
           try
@@ -812,7 +806,7 @@ void Synavis::DataConnector::Initialize()
             lconnector(ELogVerbosity::Warning) << "Could not parse candidate: " << e.what() << std::endl;
             return;
           }
-          LDEBUG << "I received a candidate for " << sdpMid << " with index " << sdpMLineIndex << " and candidate " << candidate_string << std::endl;
+          lconnector(ELogVerbosity::Debug) << "I received a candidate for " << sdpMid << " with index " << sdpMLineIndex << " and candidate " << candidate_string << std::endl;
           rtc::Candidate ice(candidate_string, sdpMid);
           try
           {
@@ -840,7 +834,7 @@ void Synavis::DataConnector::Initialize()
           }
           else
           {
-            LDEBUG << "I still have " << RequiredCandidate.size() << " required candidates: ";
+            lconnector(ELogVerbosity::Debug) << "I still have " << RequiredCandidate.size() << " required candidates: ";
             for (auto i = 0; i < RequiredCandidate.size(); ++i)
             {
               if (this->LogVerbosity >= ELogVerbosity::Debug) std::cout << RequiredCandidate[i] << " ";
@@ -850,7 +844,7 @@ void Synavis::DataConnector::Initialize()
         }
         else if (content["type"] == "control")
         {
-          LDEBUG << "Received a control message: " << content["message"] << std::endl;
+          lconnector(ELogVerbosity::Debug) << "Received a control message: " << content["message"] << std::endl;
         }
         else if (content["type"] == "id")
         {
