@@ -473,7 +473,12 @@ async def main() :
     glog.warn("IP address was not provided through interface search or command line arguments")
     glog.warn("Using wildcard: " + target_ip)
   # start the signalling server
-  glog.info("Starting server...")
+  # print where we expect the client/server connections
+  glog.info("Starting signalling server..."
+    + "\n  Server: " + target_ip + ":" + str(server_port)
+    + "\n  Client: " + target_ip + ":" + str(client_port))
+  
+
   async with ws.serve(connection, target_ip, server_port, compression = None) as ServerConnection, \
    ws.serve(connection, target_ip, client_port, compression = None) as ClientConnection:
     ServerConnection.ping_interval = None
