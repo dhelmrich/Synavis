@@ -3,13 +3,19 @@
 BUILDDIR="build"
 BUILDTYPE="Release"
 DELBUILD=false
-while getopts d:t:e: option
+# check number of cores
+nproc=$(nproc)
+# subtract one
+nproc=$((nproc-1))
+
+while getopts d:t:e:j: option
 do
 case "${option}"
 in
 d) BUILDDIR=${OPTARG};;
 t) BUILDTYPE=${OPTARG};;
 e) DELBUILD=true;;
+j) nproc=${OPTARG};;
 esac
 done
 
@@ -50,10 +56,5 @@ CMAKE_VERBOSE="-DCMAKE_VERBOSE_MAKEFILE=On"
 # configure
 cmake -H$DIR -B$DIR/$BUILDDIR -DCMAKE_BUILD_TYPE=$BUILDTYPE -G "$GENERATOR" $LIBDATACHANNEL_VERBOSELOGGING $LIBDATACHANNEL_BUILD_TESTS $LIBDATACHANNEL_BUILD_EXAMPLES $LIBDATACHANNEL_SETTINGS $DECODING -DPYTHON_INCLUDE_DIR=$PYTHON_INCLUDE_DIRS -DPYTHON_LIBRARY=$PYTHON_LIBRARY
 
-# build
-# check number of cores
-nproc=$(nproc)
-# subtract one
-nproc=$((nproc-1))
 # build
 cmake --build $DIR/$BUILDDIR --target install -- -j $nproc
