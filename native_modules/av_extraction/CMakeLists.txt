@@ -29,7 +29,6 @@ target_include_directories(${Folder}
 target_link_libraries(${Folder} PRIVATE Synavis datachannel-static nlohmann_json::nlohmann_json datachannel-static)
 
 if(BUILD_WITH_DECODING)
-  find_package(ffmpeg REQUIRED)
   target_link_libraries(${Folder} PRIVATE ${FFMPEG_LIBRARIES})
   target_include_directories(${Folder} PRIVATE ${FFMPEG_INCLUDE_DIRS})
   target_link_directories(${Folder} PRIVATE ${FFMPEG_LIBRARY_DIRS})

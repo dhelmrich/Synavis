@@ -64,9 +64,9 @@ namespace Synavis
     // this function should be called in sequence order
     // package reception handling is NOT handled here
     // this is purely for depacketizing the data
-    virtual void AddPacket(rtc::binary Data) = NULL;
-    virtual bool IsFrameComplete() = NULL;
-    virtual AVPacket* GetAVFrame() = NULL;
+    virtual void AddPacket(rtc::binary Data) = 0;
+    virtual bool IsFrameComplete() = 0;
+    virtual AVPacket* GetAVFrame() = 0;
     virtual void ResetPacket();
 
   protected:

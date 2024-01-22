@@ -268,7 +268,7 @@ namespace Synavis
   };
 
 #pragma pack(push, 1)
-  struct BridgeRTPHeader
+  struct SYNAVIS_EXPORT BridgeRTPHeader
   {
     // Extension Header
     uint16_t profile_id{ 1667 };
@@ -366,6 +366,10 @@ namespace Synavis
         this->Instigator = Instigator;
         this->Parent = Logger::Get();
       }
+      inline std::string TimeStamp() const
+      {
+        return std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
+      }
       std::string Instigator;
       Logger* Parent;
     public:
@@ -374,7 +378,7 @@ namespace Synavis
       Logger& operator<<(T&& Message) const
       {
         *Parent << "[" << Instigator << "]"
-          << "[" << std::chrono::system_clock::now() << "]: "
+          << "[" << TimeStamp() << "]: "
           << Message;
         return *Parent;
       }
@@ -457,19 +461,15 @@ namespace Synavis
     // reset state when std::endl or std::flush is detected
     Logger& operator<<(std::ostream& (*pf)(std::ostream&))
     {
-      // check if pf is std::endl or std::flush
-      if (pf == std::endl || pf == std::flush)
+      if (LogFile)
       {
-        if (LogFile)
-        {
-          *LogFile << std::endl;
-        }
-        if (this->StatusVerbosity <= ELogVerbosity::Error)
-          std::cerr << std::endl;
-        else if (this->StatusVerbosity <= Verbosity)
-          std::cout << std::endl;
-        this->StatusVerbosity = ELogVerbosity::Silent;
+        *LogFile << std::endl;
       }
+      if (this->StatusVerbosity <= ELogVerbosity::Error)
+        std::cerr << std::endl;
+      else if (this->StatusVerbosity <= Verbosity)
+        std::cout << std::endl;
+      this->StatusVerbosity = ELogVerbosity::Silent;
       return *this;
     }
 

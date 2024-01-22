@@ -47,6 +47,17 @@ if(NOT libdatachannel)
 endif()
 
 if(UNIX)
+  # search for libpcap with pkg-config
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(PCAP REQUIRED IMPORTED_TARGET libpcap)
+else()
+  # print warning and instruction to build pcap with vcpkg
+  message(WARNING "Please install libpcap, as libdatachannel requires it")
+  message(STATUS "...using vcpkg: vcpkg install pcap")
+endif()
+
+
+if(UNIX)
   FetchContent_Declare(
     date
     GIT_REPOSITORY https://github.com/HowardHinnant/date.git
@@ -64,7 +75,21 @@ if(BUILD_WITH_DECODING)
   # we build using FFMPEG
   # options for ffmpeg: cluster, local(unix), local(windows)
   # we will try to find first
-  find_package(FFMPEG REQUIRED)
+  if(UNIX)
+    # try to find ffmpeg
+    pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
+      libavcodec
+      libavformat
+      libavutil
+      libswresample
+      libswscale
+    )
+    # provide FFMPEG_LIBRARIES variable through pkg-config
+    set(FFMPEG_LIBRARIES PkgConfig::FFMPEG)
+  else()
+    # try to find ffmpeg
+    find_package(FFMPEG REQUIRED)
+  endif()
 
   # if not found
   if(NOT FFMPEG_LIBRARIES)

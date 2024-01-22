@@ -14,6 +14,7 @@ list(FILTER PLAINSOURCES EXCLUDE REGEX ".*PySynavis.cpp$")
 
 #set(PYBIND11_PYTHON_VERSION 3.9)
 find_package( PythonInterp 3.9 REQUIRED )
+
 find_package( PythonLibs 3.9 REQUIRED )
 
 pybind11_add_module(${PYPROJECT} SHARED 
