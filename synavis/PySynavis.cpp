@@ -230,6 +230,13 @@ namespace Synavis
       .def("ReinterpretInt",&BridgeSocket::Reinterpret<int>)
     ;
 
+    py::class_<WorkerThread, std::shared_ptr<WorkerThread>>(m, "WorkerThread")
+      .def(py::init<>())
+      .def("AddTask", &WorkerThread::AddTask)
+      .def("Stop", &WorkerThread::Stop)
+      .def("GetTaskCount", &WorkerThread::GetTaskCount)
+    ;
+
     py::class_<DataConnector, PyDataConnector<>, std::shared_ptr<DataConnector>>(m, "DataConnector")
       .def(py::init<>())
       .def("Initialize", &DataConnector::Initialize)

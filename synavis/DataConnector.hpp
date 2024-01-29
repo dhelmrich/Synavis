@@ -40,6 +40,8 @@ public:
   std::optional<std::function<void(std::string)>> MessageReceptionCallback;
   std::optional<std::string> IP {std::nullopt};
   std::optional<std::pair<int, int>> PortRange {std::nullopt};
+
+
   void SetDataCallback(std::function<void(rtc::binary)> Callback);
   void SetMessageCallback(std::function<void(std::string)> Callback);
   std::shared_ptr<rtc::DataChannel> DataChannel;
@@ -59,8 +61,23 @@ public:
   void SetOnRemoteDescriptionCallback(std::function<void(std::string)> Callback) { OnRemoteDescriptionCallback = Callback; }
   void SetOnDataChannelAvailableCallback(std::function<void(void)> Callback) { OnDataChannelAvailableCallback = Callback; }
   void SetRetryOnErrorResponse(bool Retry) { RetryOnErrorResponse = Retry; }
+
+  void LockUntilConnected(unsigned additional_wait = 0);
+
+  /**
+   * \brief Set the DontWaitForAnswer flag. If set to true, the DataConnector
+   * will not wait for an answer from the other side.
+   * \param DontWait 
+   */
   void SetDontWaitForAnswer(bool DontWait) { DontWaitForAnswer = DontWait; }
   void SetTimeOut(double TimeOut) { this->TimeOut = TimeOut; }
+
+  /**
+   * \brief Sets the geometry transmission behavior to fail if the transmission
+   * could not be completed. This will raise an error, otherwise the transmission
+   * is just discarded.
+   * \param Fail 
+   */
   void SetFailIfNotComplete(bool Fail) { FailIfNotComplete = Fail; }
   void CommunicateSDPs();
   void WriteSDPsToFile(std::string Filename);

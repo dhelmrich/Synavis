@@ -355,6 +355,48 @@ bool Synavis::BridgeSocket::Send(std::variant<rtc::binary, std::string> message)
   }
 }
 
+Synavis::CommandLineParser::CommandLineParser(int argc, char** argv)
+{
+  for(int i = 1; i < argc; i++) // skip program name
+  {
+    std::string arg = argv[i];
+    if(arg[0] == '-')
+    {
+      // remove all leading dashes
+      while(arg[0] == '-')
+      {
+        arg.erase(0,1);
+      }
+      if(i + 1 < argc && argv[i+1][0] != '-')
+      {
+        std::string value = argv[i+1];
+        Arguments[arg] = value;
+      }
+      else
+      {
+        Arguments[arg] = "";
+      }
+    }
+  }
+}
+
+std::string Synavis::CommandLineParser::GetArgument(std::string Name)
+{
+  if(Arguments.find(Name) != Arguments.end())
+  {
+    return Arguments[Name];
+  }
+  else
+  {
+    return "";
+  }
+}
+
+bool Synavis::CommandLineParser::HasArgument(std::string Name)
+{
+  return Arguments.find(Name) != Arguments.end();
+}
+
 Synavis::NoBufferThread::NoBufferThread(std::shared_ptr<BridgeSocket> inDataSource)
     : SocketConnection(inDataSource)
 {

@@ -21,7 +21,6 @@ inline constexpr std::byte operator "" _b(unsigned long long i) noexcept
   return static_cast<std::byte>(i);
 }
 
-
 Synavis::DataConnector::DataConnector()
 {
 }
@@ -417,6 +416,16 @@ void Synavis::DataConnector::PrintCommunicationData()
   auto protocol = DataChannel->protocol();
   auto label = DataChannel->label();
   lconnector(ELogVerbosity::Info) << "Data Channel " << label << " has protocol " << protocol << " and max message size " << max_message << std::endl;
+}
+
+void Synavis::DataConnector::LockUntilConnected(unsigned additional_wait)
+{
+  while (state_ < EConnectionState::CONNECTED)
+  {
+    std::this_thread::yield();
+  }
+  if(additional_wait > 0)
+    std::this_thread::sleep_for(std::chrono::milliseconds(additional_wait));
 }
 
 void Synavis::DataConnector::CommunicateSDPs()
