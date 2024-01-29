@@ -127,7 +127,12 @@ public:
     // our buffer areas are 10% of our field size
     V2 buffer_area = field_size * 0.1;
     field_seed = std::vector<std::vector<int>>(rows, std::vector<int>(columns, 0));
-
+    // compute local field bounds
+    // we assume comm_size to be a square number
+    local_field_bounds[0] = field_origin[0] + buffer_area[0];
+    local_field_bounds[1] = field_origin[0] + field_size[0] - buffer_area[0];
+    local_field_bounds[2] = field_origin[1] + buffer_area[1];
+    local_field_bounds[3] = field_origin[1] + field_size[1] - buffer_area[1];
   }
 
   int get_seed_by_id(int id)
@@ -171,9 +176,9 @@ public:
   void populate(auto lower_x, auto upper_x, auto lower_y, auto upper_y)
   {
     std::vector<std::shared_ptr<CPlantBox::MappedPlant>> plants;
-    for(auto x = lower_x; x < upper_x; ++x)
+    for (auto x = lower_x; x < upper_x; ++x)
     {
-      for(auto y = lower_y; y < upper_y; ++y)
+      for (auto y = lower_y; y < upper_y; ++y)
       {
         // create a new plant
         auto plant = std::make_shared<CPlantBox::MappedPlant>();
@@ -205,6 +210,7 @@ private:
   int comm_rank;
   int comm_size;
   int plant_age = 30;
+  std::array<double, 4> local_field_bounds;
 };
 
 int main(int argc, char** argv)
@@ -234,6 +240,38 @@ int main(int argc, char** argv)
     }
   }
 
+  if (!parser.HasArgument("p"))
+  {
+    std::cerr << "No parameter file provided" << std::endl;
+    std::cout << "Usage: srun [slurm job info] " << argv[0] << " <ip address> -p <parameter file>" << std::endl;
+    return 1;
+  }
+  V::V2 field_size;
+  double seeding_distance = 0.05;
+  double inter_row_distance = 0.1;
+  if (!parser.HasArgument("f"))
+  {
+    std::cerr << "No field information [wxhxsxi] provided" << std::endl;
+    std::cout << "Usage: srun [slurm job info] " << argv[0] << " <ip address> -p <parameter file> -f <field information>" << std::endl;
+    return 1;
+  }
+  else
+  {
+    // syntax: width x height x seeding distance x inter row distance
+    auto field_info = parser.GetArgument("f");
+    // split the string by x
+    auto x1 = field_info.find('x');
+    auto x2 = field_info.find('x', x1 + 1);
+    auto x3 = field_info.find('x', x2 + 1);
+    // get the field size
+    field_size[0] = std::stod(field_info.substr(0, x1));
+    field_size[1] = std::stod(field_info.substr(x1 + 1, x2));
+    // get the seeding distance
+    seeding_distance = std::stod(field_info.substr(x2 + 1, x3));
+    // get the inter row distance
+    inter_row_distance = std::stod(field_info.substr(x3 + 1));
+  }
+
   // threads per rank
   int threads_per_rank = 1;
 
@@ -253,7 +291,7 @@ int main(int argc, char** argv)
     }
   }
 
-  if(!parser.HasArgument("no-mpi"))
+  if (!parser.HasArgument("no-mpi"))
   {
     try
     {
@@ -274,8 +312,19 @@ int main(int argc, char** argv)
     size = 1;
   }
 
-  std::string parameter_file = parser.GetArgument("-p");
+  std::string parameter_file = parser.GetArgument("p");
 
+  // amount of plants per thread per rank
+  int num_rows = static_cast<int>(field_size[1] / inter_row_distance);
+  int num_columns = static_cast<int>(field_size[0] / seeding_distance);
+int plants_per_thread = static_cast<int>(std::ceil((num_rows * num_columns) / (size * threads_per_rank)));
+
+
+
+  auto field_manager = std::make_shared<FieldManager>(field_size,
+    rank, size,
+    parameter_file,
+    seeding_distance, inter_row_distance);
 
   std::vector<std::shared_ptr<Synavis::WorkerThread>> worker_threads;
   for (auto i : std::views::iota(0, threads_per_rank))
@@ -290,13 +339,21 @@ int main(int argc, char** argv)
   m->Initialize();
   m->StartSignalling();
   m->LockUntilConnected(2000);
-  
+
   m->SendJSON({ {"type","command"},{"name","cam"}, {"camera", "scene"} });
-  m->SendJSON({{"type","console"},{"command",""}});
+
+  // make tasks for each thread to populate the field
+  for (auto i : std::views::iota(0, threads_per_rank))
+  {
+    worker_threads[i]->AddTask([field_manager, plants_per_thread]() {
+      // populate the field
+      field_manager->populate_n(plants_per_thread);
+      });
+  }
 
   bool stop = false;
 
-  while(!stop)
+  while (!stop)
   {
     std::unique_lock<std::mutex> lock(submissionQueueLock);
     submissionQueueCondition.wait(lock, [&] { return !submissionQueue.empty(); });
