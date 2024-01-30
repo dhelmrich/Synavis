@@ -36,6 +36,7 @@ int main(int args, char** argv)
   // if we have arguments, we check if verbose logging is requested
   Synavis::ELogVerbosity LogVerbosity = Synavis::ELogVerbosity::Error;
   Synavis::ECodec codec = Synavis::ECodec::H264;
+  json Config = { {"SignallingIP","127.0.0.1"}, {"SignallingPort", 8080} };
   if (args > 1)
   {
     for (int a = 1; a < args; ++a)
@@ -46,27 +47,13 @@ int main(int args, char** argv)
         std::cout << "Usage: " << argv[0] << " [options]" << std::endl;
         std::cout << "Options:" << std::endl;
         std::cout << "  -v, --verbose\t\t\tEnable verbose logging on the WebRTC backend" << std::endl;
-        std::cout << "  -i, --ip <ip address>\t\tSet the IP address to connect to" << std::endl;
+        std::cout << "  -i, --ip <ip address>\t\tSet the IP address to connect to for webrtc" << std::endl;
         std::cout << "  -l, --loglevel <log level>\t\tSet the log level (verbose, info, debug, warning, error, silent)" << std::endl;
         std::cout << "  -c, --codec <codec>\t\t\tSet the codec to use (h264, vp8, vp9, h265)" << std::endl;
         std::cout << "  -r, --relay <ip>:<port>\t\t\tSet the relay server to use" << std::endl;
+        std::cout << "  -s  --signalling <ip>:<port>\t\t\tSet the signalling server to use" << std::endl;
         std::cout << "  -h, --help\t\t\t\tShow this help" << std::endl;
         return 0;
-      }
-      if (arg == "-v" || arg == "--verbose")
-      {
-        lmain(Synavis::ELogVerbosity::Debug) << "Verbose logging enabled" << std::endl;
-        rtcInitLogger(RTC_LOG_VERBOSE, nullptr);
-      }
-      if (arg == "-i" || arg == "--ip")
-      {
-        if (args < a + 1)
-        {
-          lmain(Synavis::ELogVerbosity::Debug) << "No IP address provided" << std::endl;
-          return -1;
-        }
-        lmain(Synavis::ELogVerbosity::Debug) << "Setting IP to " << argv[a + 1] << std::endl;
-        dc->IP = argv[a + 1];
       }
       if (arg == "-l" || arg == "--loglevel")
       {
@@ -105,6 +92,21 @@ int main(int args, char** argv)
         {
           std::cout << "Unknown log level " << loglevel << std::endl;
         }
+      }
+      if (arg == "-v" || arg == "--verbose")
+      {
+        lmain(Synavis::ELogVerbosity::Debug) << "Verbose logging enabled" << std::endl;
+        rtcInitLogger(RTC_LOG_VERBOSE, nullptr);
+      }
+      if (arg == "-i" || arg == "--ip")
+      {
+        if (args < a + 1)
+        {
+          lmain(Synavis::ELogVerbosity::Debug) << "No IP address provided" << std::endl;
+          return -1;
+        }
+        lmain(Synavis::ELogVerbosity::Debug) << "Setting IP to " << argv[a + 1] << std::endl;
+        dc->IP = argv[a + 1];
       }
       if (arg == "-c" || arg == "--codec")
       {
@@ -161,6 +163,33 @@ int main(int args, char** argv)
         }
         dc->ConfigureRelay(strrelay.substr(0, pos), std::stoi(strrelay.substr(pos + 1)));
       }
+      if (arg == "-s" || arg == "--signalling")
+      {
+        if (args < a + 1)
+        {
+          lmain(Synavis::ELogVerbosity::Debug) << "No signalling provided" << std::endl;
+          return -1;
+        }
+        lmain(Synavis::ELogVerbosity::Debug) << "Setting signalling to " << argv[a + 1] << std::endl;
+        std::string strsignalling = argv[a + 1];
+        auto pos = strsignalling.find(':');
+        if (pos == std::string::npos)
+        {
+                   lmain(Synavis::ELogVerbosity::Debug) << "Invalid signalling " << strsignalling << std::endl;
+          return -1;
+        }
+        auto ip = strsignalling.substr(0, pos);
+        auto port = std::stoi(strsignalling.substr(pos + 1));
+        // check if ip is valid
+        if (ip.find_first_not_of("0123456789.") != std::string::npos)
+        {
+          lmain(Synavis::ELogVerbosity::Debug) << "Invalid signalling " << strsignalling << std::endl;
+          return -1;
+        }
+        // put it in the config
+        Config["SignallingIP"] = ip;
+        Config["SignallingPort"] = port;
+      }
     }
   }
   Synavis::Logger::Get()->SetVerbosity(LogVerbosity);
@@ -188,7 +217,6 @@ int main(int args, char** argv)
     lmain(Synavis::ELogVerbosity::Debug) << "Got message: " << message << std::endl;
   });
 
-  json Config = { {"SignallingIP","127.0.0.1"}, {"SignallingPort", 8080} };
   dc->SetConfig(Config);
   lmain(Synavis::ELogVerbosity::Debug) << "----------------------------------------- Connecting ----------------------------------------------------" << std::endl;
 

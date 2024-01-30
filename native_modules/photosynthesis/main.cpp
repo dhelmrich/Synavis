@@ -104,11 +104,13 @@ static std::mutex submissionQueueLock;
 static std::condition_variable submissionQueueCondition;
 
 // global static start seed based on day/moth/year + hour
-auto start_seed = std::chrono::duration_cast<std::chrono::hours>(std::chrono::system_clock::now().time_since_epoch()).count();
+auto start_seed = std::chrono::duration_cast<std::chrono::hours>(
+  std::chrono::system_clock::now().time_since_epoch()).count();
 
 
 class FieldManager
 {
+
 public:
   FieldManager(V::V2 FieldSize, int comm_rank, int comm_size,
     std::string parameter_file,
