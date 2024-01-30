@@ -47,6 +47,7 @@ ifconfig = []
 # read in ifconfig globally once
 if sys.platform.startswith("linux") :
   ifconfig = subprocess.check_output(["ifconfig", "-a"], stderr=subprocess.STDOUT).decode("utf-8").split("\n")
+  ifconfig = [line.strip() for line in ifconfig if len(line) > 0]
 #endif
 
 class NoLog() :
@@ -106,7 +107,6 @@ class Logger() :
     self.log_file.close()
     self.log_file = log
   #enddef
-
   def set_log_file(self, fname) :
     self.log_file.close()
     # quick convenience: remove old log file
@@ -115,7 +115,6 @@ class Logger() :
     #endif
     self.fname = fname
     self.log_file = open(fname, "w")
-
   def log_outgoing(self, message, receiver = None) :
     if receiver != None :
       self.log(str(receiver.role) + "[" + str(receiver.id) + "]" + " -> " + str(message), Fore.BLUE)
@@ -128,7 +127,6 @@ class Logger() :
     else :
       self.log("<- " + message, Fore.CYAN)
   #enddef
-
   def log_many(self, level = "info", *messages) :
     cumulated = ""
     for message in messages :
@@ -458,7 +456,7 @@ async def main() :
   if not custom_ip :
     ib = get_infiniband_interface()
     if ib != None :
-      target_ip = get_interface_ip(ib)
+      target_ip = get_interface_ip("ib")
       if target_ip != None :
         glog.info("Using infiniband IP: " + target_ip)
       else :

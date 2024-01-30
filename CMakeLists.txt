@@ -48,8 +48,22 @@ endif()
 
 if(UNIX)
   # search for libpcap with pkg-config
-  find_package(PkgConfig REQUIRED)
-  pkg_check_modules(PCAP REQUIRED IMPORTED_TARGET libpcap)
+  find_package(PkgConfig)
+  # set a flag if pkgconfig cannot be found
+  if(NOT PkgConfig_FOUND)
+    set(PKG_NOT_FOUND TRUE)
+  endif()
+
+  # try to find pcap
+  if (NOT PKG_NOT_FOUND)
+    pkg_check_modules(PCAP IMPORTED_TARGET libpcap)
+    if (NOT PCAP_FOUND)
+      message(STATUS "libpcap not found, you will have to set it manually for libdatachannel")
+    endif()
+  else()
+    # only print a message here as libdatachannel only calls for library and include dirs
+    message(WARNING "pkg-config not found, you will have to set libpcap manually for libdatachannel")
+  endif()
 else()
   # print warning and instruction to build pcap with vcpkg
   message(WARNING "Please install libpcap, as libdatachannel requires it")
@@ -75,7 +89,7 @@ if(BUILD_WITH_DECODING)
   # we build using FFMPEG
   # options for ffmpeg: cluster, local(unix), local(windows)
   # we will try to find first
-  if(UNIX)
+  if(UNIX AND NOT PKG_NOT_FOUND)
     # try to find ffmpeg
     pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
       libavcodec
@@ -89,6 +103,7 @@ if(BUILD_WITH_DECODING)
   else()
     # try to find ffmpeg
     find_package(FFMPEG REQUIRED)
+    find_package(FFMPEG_LIBRARIES NAMES avcodec avformat avutil swresample swscale)
   endif()
 
   # if not found
