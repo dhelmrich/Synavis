@@ -618,13 +618,13 @@ void Synavis::DataConnector::Initialize()
       switch (state)
       {
       case rtc::PeerConnection::GatheringState::Complete:
-        std::cout << Prefix << "State switched to complete" << std::endl;
+        lconnector(ELogVerbosity::Info) << "State switched to complete" << std::endl;
         break;
       case rtc::PeerConnection::GatheringState::InProgress:
-        std::cout << Prefix << "State switched to in progress" << std::endl;
+        lconnector(ELogVerbosity::Info) << "State switched to in progress" << std::endl;
         break;
       case rtc::PeerConnection::GatheringState::New:
-        std::cout << Prefix << "State switched to new connection" << std::endl;
+        lconnector(ELogVerbosity::Info) << "State switched to new connection" << std::endl;
         break;
       }
     });
@@ -640,7 +640,7 @@ void Synavis::DataConnector::Initialize()
       lconnector(ELogVerbosity::Warning) << "I received a channel I did not ask for" << std::endl;
       datachannel->onOpen([this]()
         {
-          std::cout << Prefix << "THEIR DataChannel connection is setup!" << std::endl;
+          lconnector(ELogVerbosity::Warning) << "THEIR DataChannel connection is setup!" << std::endl;
         });
       datachannel->onMessage([this](auto messageordata)
         {
