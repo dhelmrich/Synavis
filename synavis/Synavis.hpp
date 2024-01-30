@@ -484,6 +484,16 @@ namespace Synavis
   using StreamVariant = std::variant<std::shared_ptr<rtc::DataChannel>,
     std::shared_ptr<rtc::Track>>;
 
+  class SYNAVIS_EXPORT CommandLineParser
+  {
+    public:
+    CommandLineParser(int argc, char** argv);
+    std::string GetArgument(std::string Name);
+    bool HasArgument(std::string Name);
+    private:
+    std::unordered_map<std::string, std::string> Arguments;
+  };
+
   class SYNAVIS_EXPORT NoBufferThread
   {
   public:
