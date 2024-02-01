@@ -461,14 +461,22 @@ namespace Synavis
     // reset state when std::endl or std::flush is detected
     Logger& operator<<(std::ostream& (*pf)(std::ostream&))
     {
-      if (LogFile)
-      {
-        *LogFile << std::endl;
-      }
       if (this->StatusVerbosity <= ELogVerbosity::Error)
+      {
         std::cerr << std::endl;
+        if (LogFile)
+        {
+          *LogFile << std::endl;
+        }
+      }
       else if (this->StatusVerbosity <= Verbosity)
+      {
+        if (LogFile)
+        {
+          *LogFile << std::endl;
+        }
         std::cout << std::endl;
+      }
       this->StatusVerbosity = ELogVerbosity::Silent;
       return *this;
     }

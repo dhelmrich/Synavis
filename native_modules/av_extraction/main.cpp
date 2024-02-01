@@ -27,6 +27,19 @@ inline std::byte operator++(std::byte& b) noexcept
 
 static Synavis::Logger::LoggerInstance lmain = Synavis::Logger::Get()->LogStarter("main");
 
+void help(auto program)
+{
+  std::cout << "Usage: " << program << " [options]" << std::endl;
+  std::cout << "Options:" << std::endl;
+  std::cout << "  -v, --verbose\t\t\tEnable verbose logging on the WebRTC backend" << std::endl;
+  std::cout << "  -i, --ip <ip address>\t\tSet the IP address to connect to for webrtc" << std::endl;
+  std::cout << "  -l, --loglevel <log level>\t\tSet the log level (verbose, info, debug, warning, error, silent)" << std::endl;
+  std::cout << "  -c, --codec <codec>\t\t\tSet the codec to use (h264, vp8, vp9, h265)" << std::endl;
+  std::cout << "  -r, --relay <ip>:<port>\t\t\tSet the relay server to use" << std::endl;
+  std::cout << "  -s  --signalling <ip>:<port>\t\t\tSet the signalling server to use" << std::endl;
+  std::cout << "  -d  --sdp <filename>\t\t\tLogs the SDP Description to a file" << std::endl;
+  std::cout << "  -h, --help\t\t\t\tShow this help" << std::endl;
+}
 
 int main(int args, char** argv)
 {
@@ -36,6 +49,7 @@ int main(int args, char** argv)
   // if we have arguments, we check if verbose logging is requested
   Synavis::ELogVerbosity LogVerbosity = Synavis::ELogVerbosity::Error;
   Synavis::ECodec codec = Synavis::ECodec::H264;
+  bool logsdp = false;
   json Config = { {"SignallingIP","127.0.0.1"}, {"SignallingPort", 8080} };
   if (args > 1)
   {
@@ -44,15 +58,7 @@ int main(int args, char** argv)
       std::string arg = argv[a];
       if (arg == "-h" || arg == "--help")
       {
-        std::cout << "Usage: " << argv[0] << " [options]" << std::endl;
-        std::cout << "Options:" << std::endl;
-        std::cout << "  -v, --verbose\t\t\tEnable verbose logging on the WebRTC backend" << std::endl;
-        std::cout << "  -i, --ip <ip address>\t\tSet the IP address to connect to for webrtc" << std::endl;
-        std::cout << "  -l, --loglevel <log level>\t\tSet the log level (verbose, info, debug, warning, error, silent)" << std::endl;
-        std::cout << "  -c, --codec <codec>\t\t\tSet the codec to use (h264, vp8, vp9, h265)" << std::endl;
-        std::cout << "  -r, --relay <ip>:<port>\t\t\tSet the relay server to use" << std::endl;
-        std::cout << "  -s  --signalling <ip>:<port>\t\t\tSet the signalling server to use" << std::endl;
-        std::cout << "  -h, --help\t\t\t\tShow this help" << std::endl;
+        help(argv[0]);
         return 0;
       }
       if (arg == "-l" || arg == "--loglevel")
@@ -142,15 +148,15 @@ int main(int args, char** argv)
       {
         if (args < a + 1)
         {
-          lmain(Synavis::ELogVerbosity::Debug) << "No relay provided" << std::endl;
+          lmain(Synavis::ELogVerbosity::Error) << "No relay provided" << std::endl;
           return -1;
         }
-        lmain(Synavis::ELogVerbosity::Debug) << "Setting relay to " << argv[a + 1] << std::endl;
+        lmain(Synavis::ELogVerbosity::Warning) << "Setting relay to " << argv[a + 1] << std::endl;
         std::string strrelay = argv[a + 1];
         auto pos = strrelay.find(':');
         if (pos == std::string::npos)
         {
-          lmain(Synavis::ELogVerbosity::Debug) << "Invalid relay " << strrelay << std::endl;
+          lmain(Synavis::ELogVerbosity::Error) << "Invalid relay " << strrelay << std::endl;
           return -1;
         }
         auto ip = strrelay.substr(0, pos);
@@ -158,7 +164,7 @@ int main(int args, char** argv)
         // check if ip is valid
         if (ip.find_first_not_of("0123456789.") != std::string::npos)
         {
-          lmain(Synavis::ELogVerbosity::Debug) << "Invalid relay " << strrelay << std::endl;
+          lmain(Synavis::ELogVerbosity::Error) << "Invalid relay " << strrelay << std::endl;
           return -1;
         }
         dc->ConfigureRelay(strrelay.substr(0, pos), std::stoi(strrelay.substr(pos + 1)));
@@ -190,7 +196,24 @@ int main(int args, char** argv)
         Config["SignallingIP"] = ip;
         Config["SignallingPort"] = port;
       }
+      if (arg == "-d" || arg == "--sdp")
+      {
+        if (args < a + 1)
+        {
+          lmain(Synavis::ELogVerbosity::Debug) << "No SDP file provided" << std::endl;
+          return -1;
+        }
+        lmain(Synavis::ELogVerbosity::Debug) << "Setting SDP file to " << argv[a + 1] << std::endl;
+        logsdp = true;
+        Config["SDPFile"] = argv[a + 1];
+      }
     }
+  }
+  else
+  {
+    std::cout << "No comand line options provided, this launch will not have any effect." << std::endl;
+    help(argv[0]);
+    return 0;
   }
   Synavis::Logger::Get()->SetVerbosity(LogVerbosity);
   Synavis::Logger::Get()->SetupLogfile(Synavis::OpenUniqueFile("log.txt"));
@@ -218,7 +241,15 @@ int main(int args, char** argv)
   });
 
   dc->SetConfig(Config);
-  lmain(Synavis::ELogVerbosity::Debug) << "----------------------------------------- Connecting ----------------------------------------------------" << std::endl;
+  if(logsdp)
+  {
+    dc->SetOnTrackOpenCallback([&Config,dc]()
+    {
+      dc->WriteSDPsToFile(Config["SDPFile"]);
+    });
+  }
+  lmain(Synavis::ELogVerbosity::Debug)
+  << "----------------------------------------- Connecting ----------------------------------------------------" << std::endl;
 
   dc->Initialize();
   dc->StartSignalling();
@@ -227,16 +258,19 @@ int main(int args, char** argv)
   {
     std::this_thread::yield();
   }
-  lmain(Synavis::ELogVerbosity::Debug) << "----------------------------------------- Connected ------------------------------------------------------" << std::endl;
+  lmain(Synavis::ELogVerbosity::Debug)
+  << "----------------------------------------- Connected ------------------------------------------------------" << std::endl;
 
   std::this_thread::sleep_for(std::chrono::seconds(2));
 
   dc->SendJSON(json({ {"type","command"},{"name","cam"}, {"camera", "scene"} }));
   dc->StartStreaming();
+  dc->SendMouseClick();
 
   while (Synavis::EConnectionState::CONNECTED == dc->GetState())
   {
-    std::this_thread::sleep_for(100ms);
+    std::this_thread::sleep_for(500ms);
+    dc->StartStreaming();
     //dc->SendMouseClick();
     //dc->RequestKeyFrame();
   }

@@ -29,11 +29,11 @@ void Synavis::MediaReceiver::Initialize()
   DataConnector::Initialize();
   lmedia(ELogVerbosity::Warning) << "Initializing MediaReceiver" << std::endl;
   const unsigned int bitrate = 90000;
-  if(!FrameRelay)
-    FrameRelay = std::make_shared<BridgeSocket>();
-  FrameRelay->Outgoing = true;
-  FrameRelay->Address = "127.0.0.1";
-  FrameRelay->Port = 5535;
+  //if(!FrameRelay)
+  //  FrameRelay = std::make_shared<BridgeSocket>();
+  //FrameRelay->Outgoing = true;
+  //FrameRelay->Address = "127.0.0.1";
+  //FrameRelay->Port = 5535;
   MediaDescription.setDirection(rtc::Description::Direction::RecvOnly);
   MediaDescription.setBitrate(bitrate);
   RtcpReceivingSession = std::make_shared<rtc::RtcpReceivingSession>();
@@ -93,7 +93,6 @@ void Synavis::MediaReceiver::Initialize()
   Track->onOpen([this]()
   {
     lmedia(ELogVerbosity::Debug) << "OUR Track opened" << std::endl;
-    FrameRelay->Connect();
     if (this->DataChannel->isOpen())
     {
       //StartStreaming();
@@ -117,8 +116,20 @@ void Synavis::MediaReceiver::ConfigureRelay(std::string IP, int Port)
 {
   if(!FrameRelay)
     FrameRelay = std::make_shared<BridgeSocket>();
+  FrameRelay->Outgoing = true;
   FrameRelay->SetAddress(IP);
   FrameRelay->SetSocketPort(Port);
+  if(!FrameRelay->Connect())
+  {
+    lmedia(ELogVerbosity::Error) << "Could not connect to FrameRelay" << std::endl;
+    lmedia(ELogVerbosity::Error) << "FrameRelay: " << FrameRelay->GetAddress() << ":" << FrameRelay->GetSocketPort() << std::endl;
+    lmedia(ELogVerbosity::Error) << "What says: " << FrameRelay->What() << std::endl;
+    throw std::runtime_error("Could not connect to FrameRelay");
+  }
+  else
+  {
+    lmedia(ELogVerbosity::Info) << "Connected to FrameRelay" << std::endl;
+  }
 }
 
 void Synavis::MediaReceiver::PrintCommunicationData()
@@ -141,18 +152,18 @@ void Synavis::MediaReceiver::SendMouseClick()
   rtc::binary m_up = { 73_b, 0_b, 0_b, 0_b, 0_b, 0_b };
 
   DataChannel->send(m_down);
-  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  std::this_thread::sleep_for(std::chrono::milliseconds(10));
   DataChannel->send(m_up);
 }
 
 void Synavis::MediaReceiver::StartStreaming()
 {
-  DataChannel->send(rtc::binary({ 4_b,0_b }));
+  DataChannel->send(rtc::binary({ 4_b }));
 }
 
 void Synavis::MediaReceiver::StopStreaming()
 {
-  DataChannel->send(rtc::binary({ 5_b,0_b }));
+  DataChannel->send(rtc::binary({ 5_b }));
 }
 
 void Synavis::MediaReceiver::MediaHandler(rtc::message_variant DataOrMessage)
@@ -172,12 +183,13 @@ void Synavis::MediaReceiver::MediaHandler(rtc::message_variant DataOrMessage)
     {
       FrameReceptionCallback.value()(std::get<rtc::binary>(DataOrMessage));
     }
-    FrameRelay->Send(std::get<rtc::binary>(DataOrMessage));
+    if(FrameRelay)
+      FrameRelay->Send(std::get<rtc::binary>(DataOrMessage));
 }
   else if (std::holds_alternative<std::string>(DataOrMessage))
   {
     auto Message = std::get<std::string>(DataOrMessage);
     rtc::binary MessageBinary((std::byte*)Message.data(), (std::byte*)(Message.data() + Message.size()));
-    FrameRelay->Send(MessageBinary);
+    //FrameRelay->Send(MessageBinary);
   }
 }

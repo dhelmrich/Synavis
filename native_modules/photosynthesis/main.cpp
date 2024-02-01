@@ -319,7 +319,7 @@ int main(int argc, char** argv)
   // amount of plants per thread per rank
   int num_rows = static_cast<int>(field_size[1] / inter_row_distance);
   int num_columns = static_cast<int>(field_size[0] / seeding_distance);
-int plants_per_thread = static_cast<int>(std::ceil((num_rows * num_columns) / (size * threads_per_rank)));
+  int plants_per_thread = static_cast<int>(std::ceil((num_rows * num_columns) / (size * threads_per_rank)));
 
 
 
@@ -341,6 +341,14 @@ int plants_per_thread = static_cast<int>(std::ceil((num_rows * num_columns) / (s
   m->Initialize();
   m->StartSignalling();
   m->LockUntilConnected(2000);
+
+  m->SetMessageCallback([](auto message)
+  {
+    using json = nlohmann::json;
+    json interp = json::parse(message);
+    auto id = interp["id"].get<uint32_t>();
+    
+  });
 
   m->SendJSON({ {"type","command"},{"name","cam"}, {"camera", "scene"} });
 
