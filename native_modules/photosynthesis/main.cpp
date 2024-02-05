@@ -50,6 +50,7 @@ struct is_iterator
   static constexpr bool value = type::value;
 };
 
+static auto lmain = Synavis::Logger::Get()->LogStarter("main");
 
 
 namespace V
@@ -95,7 +96,44 @@ namespace V
   using V2 = std::array<double, 2>;
   using V3 = std::array<double, 3>;
 
+  template < typename T, typename Q, std::size_t N >
+  std::array<T, N> As(const std::array<Q, N>& arr)
+  {
+    std::array<T, N> result;
+    std::transform(arr.begin(), arr.end(), result.begin(), [](const Q& val) { return static_cast<T>(val); });
+    return result;
+  }
+
+  template < typename T, std::size_t N, typename Q >
+  std::array<T, N> As(const std::initializer_list<Q>& arr)
+  {
+    std::array<T, N> result;
+    std::transform(arr.begin(), arr.end(), result.begin(), [](const Q& val) { return static_cast<T>(val); });
+    return result;
+  }
+
+  // element wise multiplication (function only)
+  template < typename T, std::size_t N >
+  std::array<T, N> Dot(const std::array<T, N>& lhs, const std::array<T, N>& rhs)
+  {
+    std::array<T, N> result;
+    std::transform(lhs.begin(), lhs.end(), rhs.begin(), result.begin(), std::multiplies<T>());
+    return result;
+  }
+
+  // function to pad an array to a given size
+  template < typename T, std::size_t N, std::size_t M >
+  std::array<T, N> Pad(const std::array<T, M>& arr, const T& pad_value)
+  {
+    static_assert(N >= M, "N must be greater than or equal to M");
+    std::array<T, N> result;
+    std::fill(result.begin(), result.end(), pad_value);
+    std::copy(arr.begin(), arr.end(), result.begin());
+    return result;
+  }
 }
+
+
 
 static std::deque<std::shared_ptr<TaggedPlantVisualiser>> submissionQueue;
 // thread lock for submission queue
@@ -148,6 +186,20 @@ public:
     return field_seed[row][column];
   }
 
+  std::shared_ptr<TaggedPlantVisualiser> generate_(std::size_t position)
+  {
+    auto plant = std::make_shared<CPlantBox::MappedPlant>();
+    plant->readParameters(parameter_file, "plant", true, false);
+    plant->setSeed(get_seed_by_id(position));
+    auto rd = plant->getOrganRandomParameter(CPlantBox::Organism::OrganTypes::ot_seed);
+    for (auto& r : rd)
+    {
+      auto seed_parameter = std::dynamic_pointer_cast<CPlantBox::SeedRandomParameter>(r);
+      const auto id_pos = get_position_from_num(position);
+      seed_parameter->seedPos = { id_pos[0], id_pos[1], 0.0 };
+    }
+  }
+
   void populate_n(std::size_t n)
   {
     std::vector<std::shared_ptr<CPlantBox::MappedPlant>> plants;
@@ -158,6 +210,13 @@ public:
       plant->readParameters(parameter_file, "plant", true, false);
       // set the plant seed
       plant->setSeed(get_seed_by_id(i));
+      auto rd = plant->getOrganRandomParameter(CPlantBox::Organism::OrganTypes::ot_seed);
+      for (auto& r : rd)
+      {
+        auto seed_parameter = std::dynamic_pointer_cast<CPlantBox::SeedRandomParameter>(r);
+        const auto id_pos = get_position_from_num(i);
+        seed_parameter->seedPos = { id_pos[0], id_pos[1], 0.0 };
+      }
       // simulate the plant
       plant->simulate(plant_age, false);
       // add the plant to the list
@@ -206,6 +265,17 @@ public:
     }
   }
 
+  std::array<double, 2> get_position_from_num(int num)
+  {
+    // fetch num columns
+    int columns = field_seed[0].size();
+    // make 2D id from input
+    int row = num / columns;
+    int column = num % columns;
+    // return the seed at the given location
+    return V::As<double, 2>({ row, column });
+  }
+
 private:
   std::vector<std::vector<int>> field_seed;
   std::string parameter_file;
@@ -214,6 +284,46 @@ private:
   int plant_age = 30;
   std::array<double, 4> local_field_bounds;
 };
+
+void scalability_test(auto m, auto field_manager)
+{
+
+}
+
+void field_population(auto m, auto field_manager, auto& worker_threads, auto threads_per_rank, auto plants_per_thread)
+{
+  // make tasks for each thread to populate the field
+  for (auto i : std::views::iota(0, threads_per_rank))
+  {
+    worker_threads[i]->AddTask([field_manager, plants_per_thread]() {
+      // populate the field
+      field_manager->populate_n(plants_per_thread);
+      });
+  }
+
+  bool stop = false;
+
+  while (!stop)
+  {
+    std::unique_lock<std::mutex> lock(submissionQueueLock);
+    submissionQueueCondition.wait(lock, [&] { return !submissionQueue.empty(); });
+    // get the visualiser
+    std::shared_ptr<TaggedPlantVisualiser> visualiser = submissionQueue.front();
+    // remove the visualiser from the queue
+    submissionQueue.pop_front();
+    // if the visualiser is still valid
+    if (visualiser)
+    {
+      // submit the visualiser to the media receiver
+      m->SendGeometry(
+        visualiser->GetGeometry(),
+        visualiser->GetGeometryIndices(),
+        "plant" + std::to_string(visualiser->tag),
+        visualiser->GetGeometryNormals()
+      );
+    }
+  }
+}
 
 int main(int argc, char** argv)
 {
@@ -343,49 +453,22 @@ int main(int argc, char** argv)
   m->LockUntilConnected(2000);
 
   m->SetMessageCallback([](auto message)
-  {
-    using json = nlohmann::json;
-    json interp = json::parse(message);
-    auto id = interp["id"].get<uint32_t>();
-    
-  });
+    {
+      using json = nlohmann::json;
+      json interp = json::parse(message);
+      auto id = interp["id"].get<uint32_t>();
+
+    });
 
   m->SendJSON({ {"type","command"},{"name","cam"}, {"camera", "scene"} });
+  m->SendJSON({ {"type", "schedule"}, {"time",0.5}, {"repeat",0.5}, {"command",{{"type","info"},{"fps","yeye"}}} });
 
-  // make tasks for each thread to populate the field
-  for (auto i : std::views::iota(0, threads_per_rank))
-  {
-    worker_threads[i]->AddTask([field_manager, plants_per_thread]() {
-      // populate the field
-      field_manager->populate_n(plants_per_thread);
-      });
-  }
-
-  bool stop = false;
-
-  while (!stop)
-  {
-    std::unique_lock<std::mutex> lock(submissionQueueLock);
-    submissionQueueCondition.wait(lock, [&] { return !submissionQueue.empty(); });
-    // get the visualiser
-    std::shared_ptr<TaggedPlantVisualiser> visualiser = submissionQueue.front();
-    // remove the visualiser from the queue
-    submissionQueue.pop_front();
-    // if the visualiser is still valid
-    if (visualiser)
-    {
-      // submit the visualiser to the media receiver
-      m->SendGeometry(
-        visualiser->GetGeometry(),
-        visualiser->GetGeometryIndices(),
-        "plant" + std::to_string(visualiser->tag),
-        visualiser->GetGeometryNormals()
-      );
-    }
-  }
 
   // MPI finalize
-  MPI_Finalize();
+  if (!parser.HasArgument("no-mpi"))
+  {
+    MPI_Finalize();
+  }
   return 0;
 
 }
