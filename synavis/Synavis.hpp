@@ -348,7 +348,6 @@ namespace Synavis
     None
   };
 
-
   // a simple logger for the library
   class SYNAVIS_EXPORT Logger
   {
@@ -370,6 +369,7 @@ namespace Synavis
       {
         return std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
       }
+
       std::string Instigator;
       Logger* Parent;
     public:
@@ -458,6 +458,34 @@ namespace Synavis
       this->Verbosity = V;
     }
 
+    void SetVerbosity(std::string V)
+    {
+      if (V == "Silent")
+      {
+        this->Verbosity = ELogVerbosity::Silent;
+      }
+      else if (V == "Error")
+      {
+        this->Verbosity = ELogVerbosity::Error;
+      }
+      else if (V == "Warning")
+      {
+        this->Verbosity = ELogVerbosity::Warning;
+      }
+      else if (V == "Info")
+      {
+        this->Verbosity = ELogVerbosity::Info;
+      }
+      else if (V == "Debug")
+      {
+        this->Verbosity = ELogVerbosity::Debug;
+      }
+      else if (V == "Verbose")
+      {
+        this->Verbosity = ELogVerbosity::Verbose;
+      }
+    }
+
     // reset state when std::endl or std::flush is detected
     Logger& operator<<(std::ostream& (*pf)(std::ostream&))
     {
@@ -494,11 +522,11 @@ namespace Synavis
 
   class SYNAVIS_EXPORT CommandLineParser
   {
-    public:
+  public:
     CommandLineParser(int argc, char** argv);
     std::string GetArgument(std::string Name);
     bool HasArgument(std::string Name);
-    private:
+  private:
     std::unordered_map<std::string, std::string> Arguments;
   };
 

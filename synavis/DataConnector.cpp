@@ -826,6 +826,7 @@ void Synavis::DataConnector::Initialize()
           catch (std::exception e)
           {
             lconnector(ELogVerbosity::Error) << "Could not add remote candidate: " << e.what() << std::endl;
+            lconnector(ELogVerbosity::Debug) << "Candidate was: " << content.dump() << std::endl;
           }
           // if we have no more required candidates, we can send an answer
           if (RequiredCandidate.size() == 0)

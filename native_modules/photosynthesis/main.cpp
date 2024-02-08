@@ -133,6 +133,32 @@ namespace V
   }
 }
 
+void write_visualiser_to_file(std::shared_ptr<TaggedPlantVisualiser> visualiser, std::string filename)
+{
+  std::ofstream file(filename, std::ios::binary);
+  // write number of vertices
+  std::size_t num_vertices = visualiser->GetGeometry().size() / 3uL;
+  file.write(reinterpret_cast<const char*>(&num_vertices), sizeof(num_vertices));
+  // write vertices
+  file.write(reinterpret_cast<const char*>(visualiser->GetGeometry().data()), num_vertices * sizeof(double));
+  // write number of indices
+  std::size_t num_indices = visualiser->GetGeometryIndices().size() / 3uL;
+  file.write(reinterpret_cast<const char*>(&num_indices), sizeof(num_indices));
+  // write indices
+  file.write(reinterpret_cast<const char*>(visualiser->GetGeometryIndices().data()), num_indices * sizeof(unsigned int));
+  // write number of normals
+  std::size_t num_normals = visualiser->GetGeometryNormals().size() / 3uL;
+  file.write(reinterpret_cast<const char*>(&num_normals), sizeof(num_normals));
+  // write normals
+  file.write(reinterpret_cast<const char*>(visualiser->GetGeometryNormals().data()), num_normals * sizeof(double));
+  // write number of ucs
+  std::size_t num_ucs = visualiser->GetGeometryColors().size() / 2uL;
+  file.write(reinterpret_cast<const char*>(&num_ucs), sizeof(num_ucs));
+  // write ucs
+  file.write(reinterpret_cast<const char*>(visualiser->GetGeometryColors().data()), num_ucs * sizeof(double));
+  // close the file
+  file.close();
+}
 
 
 static std::deque<std::shared_ptr<TaggedPlantVisualiser>> submissionQueue;
@@ -159,7 +185,7 @@ public:
     // our field size in each dimension
     V2 field_size = FieldSize / comm_size;
     // our field origin in each dimension
-    V2 field_origin = { field_size[0] * comm_rank, field_size[1] * (comm_size % comm_rank) };
+    V2 field_origin = { field_size[0] * comm_rank, field_size[1] * (comm_size % (comm_rank + 1)) };
     // divide the field into rows
     int rows = static_cast<int>(field_size[1] / inter_row_distance);
     // divide the field into columns
@@ -174,6 +200,8 @@ public:
     local_field_bounds[2] = field_origin[1] + buffer_area[1];
     local_field_bounds[3] = field_origin[1] + field_size[1] - buffer_area[1];
   }
+
+  bool ScaleResolutionByRank{ false };
 
   int get_seed_by_id(int id)
   {
@@ -198,6 +226,18 @@ public:
       const auto id_pos = get_position_from_num(position);
       seed_parameter->seedPos = { id_pos[0], id_pos[1], 0.0 };
     }
+    plant->simulate(plant_age, false);
+    auto visualiser = std::make_shared<TaggedPlantVisualiser>();
+    visualiser->tag = get_seed_by_id(position);
+    visualiser->setPlant(plant);
+    if (ScaleResolutionByRank)
+    {
+      visualiser->SetLeafResolution(20 * (comm_rank + 1));
+      visualiser->SetGeometryResolution(8 * (comm_rank + 1));
+    }
+    visualiser->ComputeGeometryForOrganType(CPlantBox::Organism::OrganTypes::ot_leaf, false);
+    visualiser->ComputeGeometryForOrganType(CPlantBox::Organism::OrganTypes::ot_stem, false);
+    return visualiser;
   }
 
   void populate_n(std::size_t n)
@@ -285,9 +325,49 @@ private:
   std::array<double, 4> local_field_bounds;
 };
 
-void scalability_test(auto m, auto field_manager)
+void scalability_test(std::shared_ptr<Synavis::DataConnector> m, auto field_manager, auto rank = -1, auto size = -1, std::string tempf = "./", bool useFile = false)
 {
-
+  field_manager->ScaleResolutionByRank = true;
+  // ensure tempf ends with a slash
+  if (tempf.back() != '/') tempf += "/";
+  std::chrono::system_clock::time_point start_t = std::chrono::system_clock::now();
+  // sample fps
+  std::size_t w = 0;
+  auto file = Synavis::OpenUniqueFile("scalability_test.csv");
+  file << "time;fps;num" << std::endl;
+  auto log_fsp = [&file, &w, start_t](auto message)
+  {
+    auto jsonmessage = nlohmann::json::parse(message);
+    if(!jsonmessage.contains("fps")) return;
+    auto fps = jsonmessage["fps"].get<double>();
+    auto time = Synavis::TimeSince(start_t);
+    file << time << ";" << fps << ";" << w << std::endl;
+  };
+  m->SetMessageCallback(log_fsp);
+  lmain(Synavis::ELogVerbosity::Info) << "Scalability test started" << std::endl;
+  while (true)
+  {
+    // let the thread sleep for 10 seconds
+    std::this_thread::sleep_for(std::chrono::seconds(10));
+    // another plant
+    std::shared_ptr<TaggedPlantVisualiser> vis = field_manager->generate_(w++);
+    vis->tag = static_cast<int>(w);
+    if(useFile)
+    {
+      auto filename = tempf + "plant" + std::to_string(vis->tag) + ".bin";
+      write_visualiser_to_file(vis, filename);
+      m->SendJSON({{"type","file"}, {"filename",filename}});
+    }
+    else
+    {
+      m->SendGeometry(
+        vis->GetGeometry(),
+        vis->GetGeometryIndices(),
+        "plant" + std::to_string(vis->tag),
+        vis->GetGeometryNormals()
+      );
+    }
+  }
 }
 
 void field_population(auto m, auto field_manager, auto& worker_threads, auto threads_per_rank, auto plants_per_thread)
@@ -333,10 +413,15 @@ int main(int argc, char** argv)
 
   Synavis::CommandLineParser parser(argc, argv);
   std::string ip_address = parser.GetArgument("i");
+  if(parser.HasArgument("l"))
+  {
+    std::string log_level = parser.GetArgument("l");
+    Synavis::Logger::Get()->SetVerbosity(log_level);
+  }
   if (ip_address.empty())
   {
-    std::cerr << "No IP address provided" << std::endl;
-    std::cout << "Usage: srun [slurm job info] " << argv[0] << " <ip address>" << std::endl;
+    lmain(Synavis::ELogVerbosity::Error) << "No IP address provided" << std::endl;
+    lmain(Synavis::ELogVerbosity::Warning) << "Usage: srun [slurm job info] " << argv[0] << " <ip address>" << std::endl;
     return 1;
   }
   else
@@ -354,8 +439,8 @@ int main(int argc, char** argv)
 
   if (!parser.HasArgument("p"))
   {
-    std::cerr << "No parameter file provided" << std::endl;
-    std::cout << "Usage: srun [slurm job info] " << argv[0] << " <ip address> -p <parameter file>" << std::endl;
+    lmain(Synavis::ELogVerbosity::Error) << "No parameter file provided" << std::endl;
+    lmain(Synavis::ELogVerbosity::Error) << "Usage: srun [slurm job info] " << argv[0] << " <ip address> -p <parameter file>" << std::endl;
     return 1;
   }
   V::V2 field_size;
@@ -363,8 +448,8 @@ int main(int argc, char** argv)
   double inter_row_distance = 0.1;
   if (!parser.HasArgument("f"))
   {
-    std::cerr << "No field information [wxhxsxi] provided" << std::endl;
-    std::cout << "Usage: srun [slurm job info] " << argv[0] << " <ip address> -p <parameter file> -f <field information>" << std::endl;
+    lmain(Synavis::ELogVerbosity::Error) << "No field information [wxhxsxi] provided" << std::endl;
+    lmain(Synavis::ELogVerbosity::Error) << "Usage: srun [slurm job info] " << argv[0] << " <ip address> -p <parameter file> -f <field information>" << std::endl;
     return 1;
   }
   else
@@ -413,8 +498,8 @@ int main(int argc, char** argv)
     }
     catch (const std::exception& e)
     {
-      std::cerr << "MPI_Init failed: " << e.what() << std::endl;
-      std::cout << "Usage: srun [slurm job info] " << argv[0] << " <ip address>" << std::endl;
+      lmain(Synavis::ELogVerbosity::Error) << "MPI_Init failed: " << e.what() << std::endl;
+      lmain(Synavis::ELogVerbosity::Error) << "Usage: srun [slurm job info] " << argv[0] << " <ip address>" << std::endl;
       return 1;
     }
   }
@@ -447,7 +532,7 @@ int main(int argc, char** argv)
   // create a new media receiver
   auto m = std::make_shared<Synavis::DataConnector>();
   m->SetConfig({ {"SignallingIP", ip_address}, {"SignallingPort", sig_port} });
-  m->SetTakeFirstStep(true);
+  m->SetTakeFirstStep(false);
   m->Initialize();
   m->StartSignalling();
   m->LockUntilConnected(2000);
@@ -457,12 +542,23 @@ int main(int argc, char** argv)
       using json = nlohmann::json;
       json interp = json::parse(message);
       auto id = interp["id"].get<uint32_t>();
-
     });
 
   m->SendJSON({ {"type","command"},{"name","cam"}, {"camera", "scene"} });
   m->SendJSON({ {"type", "schedule"}, {"time",0.5}, {"repeat",0.5}, {"command",{{"type","info"},{"fps","yeye"}}} });
 
+  if (parser.HasArgument("test"))
+  {
+    std::string test = parser.GetArgument("test");
+    if (test == "scalability")
+    {
+      scalability_test(m, field_manager, rank, size, "/dev/shm/", true);
+    }
+    else if (test == "field-population")
+    {
+      field_population(m, field_manager, worker_threads, threads_per_rank, plants_per_thread);
+    }
+  }
 
   // MPI finalize
   if (!parser.HasArgument("no-mpi"))
