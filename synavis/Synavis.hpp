@@ -458,29 +458,36 @@ namespace Synavis
       this->Verbosity = V;
     }
 
+    ELogVerbosity GetVerbosity() const
+    {
+      return Verbosity;
+    }
+
     void SetVerbosity(std::string V)
     {
-      if (V == "Silent")
+      // make V lowercase
+      std::transform(V.begin(), V.end(), V.begin(), ::tolower);
+      if (V == "silent")
       {
         this->Verbosity = ELogVerbosity::Silent;
       }
-      else if (V == "Error")
+      else if (V == "error")
       {
         this->Verbosity = ELogVerbosity::Error;
       }
-      else if (V == "Warning")
+      else if (V == "warning")
       {
         this->Verbosity = ELogVerbosity::Warning;
       }
-      else if (V == "Info")
+      else if (V == "info")
       {
         this->Verbosity = ELogVerbosity::Info;
       }
-      else if (V == "Debug")
+      else if (V == "debug")
       {
         this->Verbosity = ELogVerbosity::Debug;
       }
-      else if (V == "Verbose")
+      else if (V == "verbose")
       {
         this->Verbosity = ELogVerbosity::Verbose;
       }
@@ -614,13 +621,13 @@ namespace Synavis
     EMessageTimeoutPolicy TimeoutPolicy;
     std::chrono::system_clock::duration Timeout;
     json Config{
-      {
-        {"LocalPort", int()},
-        {"RemotePort",int()},
-        {"LocalAddress",int()},
-        {"RemoteAddress",int()},
-        {"Signalling",int()}
-      } };
+    {
+      {"LocalPort", int()},
+      {"RemotePort",int()},
+      {"LocalAddress",int()},
+      {"RemoteAddress",int()},
+      {"Signalling",int()}
+    } };
     std::unordered_map<int, std::shared_ptr<Adapter>> EndpointById;
     std::future<void> BridgeThread;
     std::mutex QueueAccess;

@@ -50,7 +50,7 @@ struct is_iterator
   static constexpr bool value = type::value;
 };
 
-static auto lmain = Synavis::Logger::Get()->LogStarter("main");
+static const Synavis::Logger::LoggerInstance lmain = Synavis::Logger::Get()->LogStarter("main");
 
 
 namespace V
@@ -180,6 +180,7 @@ public:
     std::string parameter_file,
     float seeding_distance = 0.05 /*[m]*/,
     float inter_row_distance = 0.1 /*[m]*/)
+      : comm_rank(comm_rank), comm_size(comm_size), parameter_file(parameter_file)
   {
     using namespace V;
     // our field size in each dimension
@@ -216,8 +217,9 @@ public:
 
   std::shared_ptr<TaggedPlantVisualiser> generate_(std::size_t position)
   {
+    bool verbose_plant = Synavis::Logger::Get()->GetVerbosity() >= Synavis::ELogVerbosity::Debug;
     auto plant = std::make_shared<CPlantBox::MappedPlant>();
-    plant->readParameters(parameter_file, "plant", true, false);
+    plant->readParameters(parameter_file, "plant", true, verbose_plant);
     plant->setSeed(get_seed_by_id(position));
     auto rd = plant->getOrganRandomParameter(CPlantBox::Organism::OrganTypes::ot_seed);
     for (auto& r : rd)
@@ -226,7 +228,8 @@ public:
       const auto id_pos = get_position_from_num(position);
       seed_parameter->seedPos = { id_pos[0], id_pos[1], 0.0 };
     }
-    plant->simulate(plant_age, false);
+    plant->initialize(verbose_plant, true); // initialize with stochastic = true
+    plant->simulate(plant_age, verbose_plant);
     auto visualiser = std::make_shared<TaggedPlantVisualiser>();
     visualiser->tag = get_seed_by_id(position);
     visualiser->setPlant(plant);
@@ -272,6 +275,11 @@ public:
         submissionQueueCondition.notify_one();
       }
     }
+  }
+
+  void set_parameter_file(std::string parameter_file)
+  {
+    this->parameter_file = parameter_file;
   }
 
   void populate(auto lower_x, auto upper_x, auto lower_y, auto upper_y)
@@ -325,7 +333,7 @@ private:
   std::array<double, 4> local_field_bounds;
 };
 
-void scalability_test(std::shared_ptr<Synavis::DataConnector> m, auto field_manager, auto rank = -1, auto size = -1, std::string tempf = "./", bool useFile = false)
+void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr<FieldManager> field_manager, auto rank = -1, auto size = -1, std::string tempf = "./", bool useFile = false)
 {
   field_manager->ScaleResolutionByRank = true;
   // ensure tempf ends with a slash
@@ -336,13 +344,13 @@ void scalability_test(std::shared_ptr<Synavis::DataConnector> m, auto field_mana
   auto file = Synavis::OpenUniqueFile("scalability_test.csv");
   file << "time;fps;num" << std::endl;
   auto log_fsp = [&file, &w, start_t](auto message)
-  {
-    auto jsonmessage = nlohmann::json::parse(message);
-    if(!jsonmessage.contains("fps")) return;
-    auto fps = jsonmessage["fps"].get<double>();
-    auto time = Synavis::TimeSince(start_t);
-    file << time << ";" << fps << ";" << w << std::endl;
-  };
+    {
+      auto jsonmessage = nlohmann::json::parse(message);
+      if (!jsonmessage.contains("fps")) return;
+      auto fps = jsonmessage["fps"].get<double>();
+      auto time = Synavis::TimeSince(start_t);
+      file << time << ";" << fps << ";" << w << std::endl;
+    };
   m->SetMessageCallback(log_fsp);
   lmain(Synavis::ELogVerbosity::Info) << "Scalability test started" << std::endl;
   while (true)
@@ -352,11 +360,11 @@ void scalability_test(std::shared_ptr<Synavis::DataConnector> m, auto field_mana
     // another plant
     std::shared_ptr<TaggedPlantVisualiser> vis = field_manager->generate_(w++);
     vis->tag = static_cast<int>(w);
-    if(useFile)
+    if (useFile)
     {
       auto filename = tempf + "plant" + std::to_string(vis->tag) + ".bin";
       write_visualiser_to_file(vis, filename);
-      m->SendJSON({{"type","file"}, {"filename",filename}});
+      m->SendJSON({ {"type","file"}, {"filename",filename} });
     }
     else
     {
@@ -413,11 +421,13 @@ int main(int argc, char** argv)
 
   Synavis::CommandLineParser parser(argc, argv);
   std::string ip_address = parser.GetArgument("i");
-  if(parser.HasArgument("l"))
+  if (parser.HasArgument("l"))
   {
     std::string log_level = parser.GetArgument("l");
     Synavis::Logger::Get()->SetVerbosity(log_level);
+    lmain(Synavis::ELogVerbosity::Info) << "Log level set to " << log_level << std::endl;
   }
+  lmain(Synavis::ELogVerbosity::Debug) << "Starting photosynthesis main" << std::endl;
   if (ip_address.empty())
   {
     lmain(Synavis::ELogVerbosity::Error) << "No IP address provided" << std::endl;
@@ -509,7 +519,27 @@ int main(int argc, char** argv)
     size = 1;
   }
 
-  std::string parameter_file = parser.GetArgument("p");
+  std::string parameter_file;
+  for(auto c : parser.GetArgument("p"))
+  {
+    parameter_file += c;
+  }
+  
+  // test parameter file by reading it into CPB
+  try
+  {
+    auto plant = std::make_shared<CPlantBox::Plant>();
+    //plant->readParameters(parameter_file, std::string("plant"), true, false);
+
+    plant->readParametersChar(parameter_file.c_str());
+
+    plant->initialize(true);
+  }
+  catch (const std::exception& e)
+  {
+    lmain(Synavis::ELogVerbosity::Error) << "Parameter file failed to load: " << e.what() << std::endl;
+    return 1;
+  }
 
   // amount of plants per thread per rank
   int num_rows = static_cast<int>(field_size[1] / inter_row_distance);
@@ -518,7 +548,7 @@ int main(int argc, char** argv)
 
 
 
-  auto field_manager = std::make_shared<FieldManager>(field_size,
+  std::shared_ptr<FieldManager> field_manager = std::make_shared<FieldManager>(field_size,
     rank, size,
     parameter_file,
     seeding_distance, inter_row_distance);
@@ -547,12 +577,18 @@ int main(int argc, char** argv)
   m->SendJSON({ {"type","command"},{"name","cam"}, {"camera", "scene"} });
   m->SendJSON({ {"type", "schedule"}, {"time",0.5}, {"repeat",0.5}, {"command",{{"type","info"},{"fps","yeye"}}} });
 
+  std::string tempf = "/dev/shm/";
+  if (parser.HasArgument("tempf"))
+  {
+    tempf = parser.GetArgument("tempf");
+  }
+
   if (parser.HasArgument("test"))
   {
     std::string test = parser.GetArgument("test");
     if (test == "scalability")
     {
-      scalability_test(m, field_manager, rank, size, "/dev/shm/", true);
+      scalability_test(m, field_manager, rank, size, tempf, true);
     }
     else if (test == "field-population")
     {
