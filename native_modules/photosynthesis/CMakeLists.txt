@@ -20,7 +20,14 @@ find_package(CPlantBox REQUIRED)
 
 # find MPI
 find_package(MPI REQUIRED)
-find_package(tinyxml2 CONFIG REQUIRED)
+
+if (UNIX)
+  if(pkgconfig_FOUND)
+    pkg_check_modules(TINYXML2 tinyxml2)
+  endif()
+else ()
+  find_package(tinyxml2 CONFIG REQUIRED)
+endif ()
 
 target_include_directories(${Folder}
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
@@ -64,7 +71,7 @@ target_link_libraries(${Folder}
     nlohmann_json::nlohmann_json
     datachannel-static
     CPlantBox
-    tinyxml2::tinyxml2
+    ${tinyxml2_LIBRARIES}
     ${MPI_CXX_LIBRARIES}
 )
 

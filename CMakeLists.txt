@@ -33,6 +33,15 @@ endif()
 include(FetchContent)
 include(ExternalProject)
 
+if(UNIX)
+  # search for libpcap with pkg-config
+  find_package(PkgConfig)
+  # set a flag if pkgconfig cannot be found
+  if(NOT PkgConfig_FOUND)
+    set(PKG_NOT_FOUND TRUE)
+  endif()
+endif()
+
 # Fetch libdatachannel
 FetchContent_Declare(
     libdatachannel
@@ -47,13 +56,6 @@ if(NOT libdatachannel)
 endif()
 
 if(UNIX)
-  # search for libpcap with pkg-config
-  find_package(PkgConfig)
-  # set a flag if pkgconfig cannot be found
-  if(NOT PkgConfig_FOUND)
-    set(PKG_NOT_FOUND TRUE)
-  endif()
-
   # try to find pcap
   if (NOT PKG_NOT_FOUND)
     pkg_check_modules(PCAP IMPORTED_TARGET libpcap)
@@ -68,6 +70,32 @@ else()
   # print warning and instruction to build pcap with vcpkg
   message(WARNING "Please install libpcap, as libdatachannel requires it")
   message(STATUS "...using vcpkg: vcpkg install pcap")
+endif()
+
+include(CheckIncludeFileCXX)
+check_include_file_cxx("format" CXX_FORMAT_SUPPORT)
+if (NOT CXX_FORMAT_SUPPORT)
+  # set a c++ environment variable for this
+  message(STATUS "Search for <format>: failed")
+  if(UNIX AND NOT PKG_NOT_FOUND)
+    pkg_check_modules(fmt REQUIRED IMPORTED_TARGET fmt)
+    set(fmt_libraries PkgConfig::fmt)
+  else()
+    FetchContent_Declare(
+      fmt
+      GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+      GIT_TAG 8.1.0
+      GIT_SHALLOW True
+    )
+    FetchContent_GetProperties(fmt)
+    if(NOT fmt_POPULATED)
+        FetchContent_Populate(fmt)
+        add_subdirectory(${fmt_SOURCE_DIR} ${fmt_BINARY_DIR})
+    endif()
+  endif()
+else()
+  message(STATUS "Search for <format>: succeeded")
+  add_compile_definitions(__HAS_FORMAT)
 endif()
 
 

@@ -34,6 +34,8 @@ bool ParseTimeFromString(std::string Source, std::chrono::utc_time<std::chrono::
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <date/date.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
 #include <fcntl.h>
 bool ParseTimeFromString(std::string Source, std::chrono::time_point<std::chrono::system_clock>& Destination);
 
@@ -145,6 +147,9 @@ namespace Synavis
 
   int64_t TimeSince(std::chrono::system_clock::time_point t);
   double HighRes();
+
+  std::string GetLocalIP();
+  std::string FormattedTime(std::chrono::system_clock::time_point Time, bool ms = false);
 
   inline void SYNAVIS_EXPORT VerboseMode()
   {
@@ -367,7 +372,7 @@ namespace Synavis
       }
       inline std::string TimeStamp() const
       {
-        return std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
+        return FormattedTime(std::chrono::system_clock::now(), true);
       }
 
       std::string Instigator;

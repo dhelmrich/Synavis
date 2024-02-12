@@ -335,6 +335,7 @@ private:
 
 void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr<FieldManager> field_manager, auto rank = -1, auto size = -1, std::string tempf = "./", bool useFile = false)
 {
+  using namespace std::literals::chrono_literals;
   field_manager->ScaleResolutionByRank = true;
   // ensure tempf ends with a slash
   if (tempf.back() != '/') tempf += "/";
@@ -347,7 +348,9 @@ void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr
     {
       auto jsonmessage = nlohmann::json::parse(message);
       if (!jsonmessage.contains("fps")) return;
-      auto fps = jsonmessage["fps"].get<double>();
+
+      double fps = jsonmessage["fps"];
+
       auto time = Synavis::TimeSince(start_t);
       file << time << ";" << fps << ";" << w << std::endl;
     };
@@ -565,7 +568,7 @@ int main(int argc, char** argv)
   m->SetTakeFirstStep(false);
   m->Initialize();
   m->StartSignalling();
-  m->LockUntilConnected(2000);
+  m->LockUntilConnected(800);
 
   m->SetMessageCallback([](auto message)
     {
@@ -588,7 +591,9 @@ int main(int argc, char** argv)
     std::string test = parser.GetArgument("test");
     if (test == "scalability")
     {
-      scalability_test(m, field_manager, rank, size, tempf, true);
+      bool use_file = parser.HasArgument("use-file");
+      lmain(Synavis::ELogVerbosity::Info) << "We are " << (use_file ? "" : "not ") << "using file-based transmission." << std::endl;
+      scalability_test(m, field_manager, rank, size, tempf, use_file);
     }
     else if (test == "field-population")
     {
