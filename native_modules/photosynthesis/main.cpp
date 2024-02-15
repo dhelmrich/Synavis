@@ -146,21 +146,21 @@ void write_visualiser_to_file(std::shared_ptr<TaggedPlantVisualiser> visualiser,
   // write number of vertices
   uint64_t num_vertices = visualiser->GetGeometry().size() / 3uL;
   uint64_t byte_size_total = Synavis::ByteSize(visualiser->GetGeometry()) + sizeof(uint64_t);
-  wait_for_key("About to write the number of vertices");
+  //wait_for_key("About to write the number of vertices");
   file.write(reinterpret_cast<const char*>(&num_vertices), sizeof(uint64_t));
   file.flush();
-  wait_for_key("About to write the vertices");
+  //wait_for_key("About to write the vertices");
   // write vertices
   file.write(reinterpret_cast<const char*>(visualiser->GetGeometry().data()), Synavis::ByteSize(visualiser->GetGeometry()));
   file.flush();
-  wait_for_key("About to write the number of indices");
+  //wait_for_key("About to write the number of indices");
   lmain(Synavis::ELogVerbosity::Debug) << "Byte size of vertices: " << Synavis::ByteSize(visualiser->GetGeometry()) << std::endl;
   // write number of indices
   uint64_t num_indices = visualiser->GetGeometryIndices().size();
   byte_size_total += num_indices * sizeof(unsigned int) + sizeof(uint64_t);
   file.write(reinterpret_cast<const char*>(&num_indices), sizeof(uint64_t));
   file.flush();
-  wait_for_key("About to write the indices");
+  //wait_for_key("About to write the indices");
   // write indices
   file.write(reinterpret_cast<const char*>(visualiser->GetGeometryIndices().data()), Synavis::ByteSize(visualiser->GetGeometryIndices()));
   file.flush();
@@ -169,10 +169,10 @@ void write_visualiser_to_file(std::shared_ptr<TaggedPlantVisualiser> visualiser,
   // write number of normals
   uint64_t num_normals = visualiser->GetGeometryNormals().size() / 3uL;
   byte_size_total += num_normals * sizeof(double) * 3uL + sizeof(uint64_t);
-  wait_for_key("About to write the number of normals");
+  //wait_for_key("About to write the number of normals");
   file.write(reinterpret_cast<const char*>(&num_normals), sizeof(uint64_t));
   file.flush();
-  wait_for_key("About to write the normals");
+  //wait_for_key("About to write the normals");
   // write normals
   file.write(reinterpret_cast<const char*>(visualiser->GetGeometryNormals().data()), Synavis::ByteSize(visualiser->GetGeometryNormals()));
   file.flush();
@@ -180,24 +180,24 @@ void write_visualiser_to_file(std::shared_ptr<TaggedPlantVisualiser> visualiser,
   // write number of ucs
   uint64_t num_ucs = visualiser->GetGeometryColors().size() / 2uL;
   byte_size_total += num_ucs * sizeof(double) * 2uL + sizeof(uint64_t);
-  wait_for_key("About to write the number of ucs");
+  //wait_for_key("About to write the number of ucs");
   file.write(reinterpret_cast<const char*>(&num_ucs), sizeof(uint64_t));
   file.flush();
-  wait_for_key("About to write the ucs");
+  //wait_for_key("About to write the ucs");
   // write ucs
   file.write(reinterpret_cast<const char*>(visualiser->GetGeometryColors().data()), Synavis::ByteSize(visualiser->GetGeometryColors()));
   file.flush();
-  wait_for_key();
+  //wait_for_key();
   lmain(Synavis::ELogVerbosity::Debug) << "Byte size of ucs: " << Synavis::ByteSize(visualiser->GetGeometryColors()) << std::endl;
   // close the file
-  std::vector<char> end;
-  end.resize(1000000);
-  for(auto& c : end)
-  {
-    c = 'a';
-  }
+  //std::vector<char> end;
+  //end.resize(1000000);
+  //for(auto& c : end)
+  //{
+  //  c = 'a';
+  //}
   //file.write("Hellotestitest1", 15);
-  lmain(Synavis::ELogVerbosity::Debug) << "Byte size of end: " << end.size() << std::endl;
+  //lmain(Synavis::ELogVerbosity::Debug) << "Byte size of end: " << end.size() << std::endl;
   //file.write(end.data(), end.size());
   //file.write("Hellotestitest1", 15);
   if(file.bad())
@@ -246,7 +246,8 @@ public:
   {
     using namespace V;
     // our field size in each dimension
-    V2 field_size = FieldSize / comm_size;
+    this->field_size = FieldSize / comm_size;
+    plant_offset = { inter_row_distance, seeding_distance };
     // our field origin in each dimension
     V2 field_origin = { field_size[0] * comm_rank, field_size[1] * (comm_size % (comm_rank + 1)) };
     // divide the field into rows
@@ -262,6 +263,7 @@ public:
     local_field_bounds[1] = field_origin[0] + field_size[0] - buffer_area[0];
     local_field_bounds[2] = field_origin[1] + buffer_area[1];
     local_field_bounds[3] = field_origin[1] + field_size[1] - buffer_area[1];
+    
   }
 
   bool ScaleResolutionByRank{ false };
@@ -386,13 +388,14 @@ public:
 
   std::array<double, 2> get_position_from_num(int num)
   {
+    using namespace V;
     // fetch num columns
     int columns = field_seed[0].size();
     // make 2D id from input
     int row = num / columns;
     int column = num % columns;
     // return the seed at the given location
-    return V::As<double, 2>({ row, column });
+    return Dot(As<double, 2>({ row , column }), plant_offset);
   }
 
 private:
@@ -400,7 +403,9 @@ private:
   std::string parameter_file;
   int comm_rank;
   int comm_size;
-  int plant_age = 30;
+  int plant_age = 12;
+  std::array<double, 2> field_size;
+  std::array<double, 2> plant_offset;
   std::array<double, 4> local_field_bounds;
 };
 
@@ -419,6 +424,7 @@ void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr
     {
       auto jsonmessage = nlohmann::json::parse(message);
       if (!jsonmessage.contains("fps")) return;
+      lmain(Synavis::ELogVerbosity::Verbose) << "FPS: " << jsonmessage["fps"] << std::endl;
       double fps = jsonmessage["fps"];
       auto time = Synavis::TimeSince(start_t);
       file << time << ";" << fps << ";" << w << std::endl;
@@ -438,15 +444,19 @@ void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr
     }
     else
     {
+      auto vertices = vis->GetGeometry();
+      auto position = V::Pad<double,3>(field_manager->get_position_from_num(w), 0.0);
+      std::size_t i = 0;
+      std::transform(vertices.begin(), vertices.end(), vertices.begin(), [position,&i](double val) { return val + position[i++ % 3]; });
       m->SendGeometry(
-        vis->GetGeometry(),
+        vertices,
         vis->GetGeometryIndices(),
         "plant" + std::to_string(vis->tag),
         vis->GetGeometryNormals()
       );
     }
     // let the thread sleep for 10 seconds
-    std::this_thread::sleep_for(std::chrono::seconds(100));
+    std::this_thread::sleep_for(std::chrono::seconds(1));
   }
 }
 
@@ -693,7 +703,7 @@ int main(int argc, char** argv)
     });
 
   m->SendJSON({ {"type","command"},{"name","cam"}, {"camera", "scene"} });
-  m->SendJSON({ {"type", "schedule"}, {"time",0.5}, {"repeat",0.5}, {"command",{{"type","info"},{"fps","yeye"}}} });
+  m->SendJSON({ {"type", "schedule"}, {"time",0.5}, {"repeat",0.05}, {"command",{{"type","info"},{"fps","yeye"}}} });
 
   std::string tempf = "/dev/shm/";
   if (parser.HasArgument("tempf"))
