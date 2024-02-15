@@ -54,6 +54,11 @@ else()
     PRIVATE ${tinyxml2_LIBRARIES}
   )
 
+  message(STATUS "CPlantBox_DIR: ${CPlantBox_DIR}")
+message(STATUS "CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
+  message(STATUS "TinyXML2_LIBRARIES: ${tinyxml2_LIBRARIES}")
+message(STATUS "TinyXML2_INCLUDE_DIRS: ${tinyxml2_INCLUDE_DIRS}")
+
   # array of possible build types
   #list( APPEND CMAKE_CONFIGURATION_TYPES Debug Release RelWithDebInfo MinSizeRel )
   # copy dlls to build directory for each build type

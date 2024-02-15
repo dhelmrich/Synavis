@@ -133,31 +133,93 @@ namespace V
   }
 }
 
+void wait_for_key(std::string message = "Press any key to continue...")
+{
+  std::cout << message;
+  std::cin.get();
+}
+
 void write_visualiser_to_file(std::shared_ptr<TaggedPlantVisualiser> visualiser, std::string filename)
 {
   std::ofstream file(filename, std::ios::binary);
+  file.flush();
   // write number of vertices
-  std::size_t num_vertices = visualiser->GetGeometry().size() / 3uL;
-  file.write(reinterpret_cast<const char*>(&num_vertices), sizeof(num_vertices));
+  uint64_t num_vertices = visualiser->GetGeometry().size() / 3uL;
+  uint64_t byte_size_total = Synavis::ByteSize(visualiser->GetGeometry()) + sizeof(uint64_t);
+  wait_for_key("About to write the number of vertices");
+  file.write(reinterpret_cast<const char*>(&num_vertices), sizeof(uint64_t));
+  file.flush();
+  wait_for_key("About to write the vertices");
   // write vertices
-  file.write(reinterpret_cast<const char*>(visualiser->GetGeometry().data()), num_vertices * sizeof(double));
+  file.write(reinterpret_cast<const char*>(visualiser->GetGeometry().data()), Synavis::ByteSize(visualiser->GetGeometry()));
+  file.flush();
+  wait_for_key("About to write the number of indices");
+  lmain(Synavis::ELogVerbosity::Debug) << "Byte size of vertices: " << Synavis::ByteSize(visualiser->GetGeometry()) << std::endl;
   // write number of indices
-  std::size_t num_indices = visualiser->GetGeometryIndices().size() / 3uL;
-  file.write(reinterpret_cast<const char*>(&num_indices), sizeof(num_indices));
+  uint64_t num_indices = visualiser->GetGeometryIndices().size();
+  byte_size_total += num_indices * sizeof(unsigned int) + sizeof(uint64_t);
+  file.write(reinterpret_cast<const char*>(&num_indices), sizeof(uint64_t));
+  file.flush();
+  wait_for_key("About to write the indices");
   // write indices
-  file.write(reinterpret_cast<const char*>(visualiser->GetGeometryIndices().data()), num_indices * sizeof(unsigned int));
+  file.write(reinterpret_cast<const char*>(visualiser->GetGeometryIndices().data()), Synavis::ByteSize(visualiser->GetGeometryIndices()));
+  file.flush();
+  lmain(Synavis::ELogVerbosity::Debug) << "Byte size of indices: " << Synavis::ByteSize(visualiser->GetGeometryIndices()) << std::endl;
+  
   // write number of normals
-  std::size_t num_normals = visualiser->GetGeometryNormals().size() / 3uL;
-  file.write(reinterpret_cast<const char*>(&num_normals), sizeof(num_normals));
+  uint64_t num_normals = visualiser->GetGeometryNormals().size() / 3uL;
+  byte_size_total += num_normals * sizeof(double) * 3uL + sizeof(uint64_t);
+  wait_for_key("About to write the number of normals");
+  file.write(reinterpret_cast<const char*>(&num_normals), sizeof(uint64_t));
+  file.flush();
+  wait_for_key("About to write the normals");
   // write normals
-  file.write(reinterpret_cast<const char*>(visualiser->GetGeometryNormals().data()), num_normals * sizeof(double));
+  file.write(reinterpret_cast<const char*>(visualiser->GetGeometryNormals().data()), Synavis::ByteSize(visualiser->GetGeometryNormals()));
+  file.flush();
+  lmain(Synavis::ELogVerbosity::Debug) << "Byte size of normals: " << Synavis::ByteSize(visualiser->GetGeometryNormals()) << std::endl;
   // write number of ucs
-  std::size_t num_ucs = visualiser->GetGeometryColors().size() / 2uL;
-  file.write(reinterpret_cast<const char*>(&num_ucs), sizeof(num_ucs));
+  uint64_t num_ucs = visualiser->GetGeometryColors().size() / 2uL;
+  byte_size_total += num_ucs * sizeof(double) * 2uL + sizeof(uint64_t);
+  wait_for_key("About to write the number of ucs");
+  file.write(reinterpret_cast<const char*>(&num_ucs), sizeof(uint64_t));
+  file.flush();
+  wait_for_key("About to write the ucs");
   // write ucs
-  file.write(reinterpret_cast<const char*>(visualiser->GetGeometryColors().data()), num_ucs * sizeof(double));
+  file.write(reinterpret_cast<const char*>(visualiser->GetGeometryColors().data()), Synavis::ByteSize(visualiser->GetGeometryColors()));
+  file.flush();
+  wait_for_key();
+  lmain(Synavis::ELogVerbosity::Debug) << "Byte size of ucs: " << Synavis::ByteSize(visualiser->GetGeometryColors()) << std::endl;
   // close the file
+  std::vector<char> end;
+  end.resize(1000000);
+  for(auto& c : end)
+  {
+    c = 'a';
+  }
+  //file.write("Hellotestitest1", 15);
+  lmain(Synavis::ELogVerbosity::Debug) << "Byte size of end: " << end.size() << std::endl;
+  //file.write(end.data(), end.size());
+  //file.write("Hellotestitest1", 15);
+  if(file.bad())
+  {
+    lmain(Synavis::ELogVerbosity::Error) << "Failed to write to file: " << filename << std::endl;
+    return;
+  }
   file.close();
+  lmain(Synavis::ELogVerbosity::Info) << "Wrote visualiser to file: " << filename << std::endl;
+  lmain(Synavis::ELogVerbosity::Info) << "Vertices: " << num_vertices << std::endl;
+  lmain(Synavis::ELogVerbosity::Info) << "Indices: " << num_indices << std::endl;
+  lmain(Synavis::ELogVerbosity::Info) << "Normals: " << num_normals << std::endl;
+  lmain(Synavis::ELogVerbosity::Info) << "UCS: " << num_ucs << std::endl;
+  lmain(Synavis::ELogVerbosity::Info) << "Reference size is: " << sizeof(double) * 3uL << " resulting in " << byte_size_total / 1024uL << "kb" << std::endl;
+  lmain(Synavis::ELogVerbosity::Info) << "10 Vectors, evenly spaced through GetGeometry(): " << std::endl;
+  auto num_points = visualiser->GetGeometryNormals().size() / 3uL;
+  auto step = num_points / 10uL;
+  for (auto i = 0; i < num_points; i += step)
+  {
+    lmain(Synavis::ELogVerbosity::Info) << "Point " << i << ": " << visualiser->GetGeometryNormals()[i * 3uL] << ", " << visualiser->GetGeometryNormals()[i * 3uL + 1uL] << ", " << visualiser->GetGeometryNormals()[i * 3uL + 2uL] << std::endl;
+  }
+  
 }
 
 
@@ -227,6 +289,15 @@ public:
       auto seed_parameter = std::dynamic_pointer_cast<CPlantBox::SeedRandomParameter>(r);
       const auto id_pos = get_position_from_num(position);
       seed_parameter->seedPos = { id_pos[0], id_pos[1], 0.0 };
+    }
+    for(auto p : plant->getOrganRandomParameter(CPlantBox::Organism::OrganTypes::ot_leaf))
+    {
+      auto leaf = std::dynamic_pointer_cast<CPlantBox::LeafRandomParameter>(p);
+      leaf->leafGeometryPhi = {-90.0, -80.0, -45.0, 0.0, 45.0, 90.0};
+      // transform leafGeometryPhi to radians
+      std::transform(leaf->leafGeometryPhi.begin(), leaf->leafGeometryPhi.end(), leaf->leafGeometryPhi.begin(), [](auto val) { return val * M_PI / 180.0; });
+      leaf->leafGeometryX = {38.41053981,1.0 ,1.0, 0.3, 1.0, 38.41053981};
+      leaf->createLeafRadialGeometry(leaf->leafGeometryPhi, leaf->leafGeometryX, 20);
     }
     plant->initialize(verbose_plant, true); // initialize with stochastic = true
     plant->simulate(plant_age, verbose_plant);
@@ -348,9 +419,7 @@ void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr
     {
       auto jsonmessage = nlohmann::json::parse(message);
       if (!jsonmessage.contains("fps")) return;
-
       double fps = jsonmessage["fps"];
-
       auto time = Synavis::TimeSince(start_t);
       file << time << ";" << fps << ";" << w << std::endl;
     };
@@ -358,8 +427,6 @@ void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr
   lmain(Synavis::ELogVerbosity::Info) << "Scalability test started" << std::endl;
   while (true)
   {
-    // let the thread sleep for 10 seconds
-    std::this_thread::sleep_for(std::chrono::seconds(10));
     // another plant
     std::shared_ptr<TaggedPlantVisualiser> vis = field_manager->generate_(w++);
     vis->tag = static_cast<int>(w);
@@ -367,7 +434,7 @@ void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr
     {
       auto filename = tempf + "plant" + std::to_string(vis->tag) + ".bin";
       write_visualiser_to_file(vis, filename);
-      m->SendJSON({ {"type","file"}, {"filename",filename} });
+      m->SendJSON({ {"type","filegeometry"}, {"filename",filename} });
     }
     else
     {
@@ -378,6 +445,8 @@ void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr
         vis->GetGeometryNormals()
       );
     }
+    // let the thread sleep for 10 seconds
+    std::this_thread::sleep_for(std::chrono::seconds(100));
   }
 }
 
@@ -531,12 +600,52 @@ int main(int argc, char** argv)
   // test parameter file by reading it into CPB
   try
   {
-    auto plant = std::make_shared<CPlantBox::Plant>();
-    //plant->readParameters(parameter_file, std::string("plant"), true, false);
+    auto plant = std::shared_ptr<CPlantBox::MappedPlant>(new CPlantBox::MappedPlant());
 
-    plant->readParametersChar(parameter_file.c_str());
+    try
+    {
+      plant->readParametersChar(parameter_file.c_str());
+    }
+    catch (const std::exception& e)
+    {
+       lmain(Synavis::ELogVerbosity::Error) << "Parameter file failed to load: " << e.what() << std::endl;
+    }
 
-    plant->initialize(true);
+    for(auto p : plant->getOrganRandomParameter(CPlantBox::Organism::OrganTypes::ot_leaf))
+    {
+      auto leaf = std::dynamic_pointer_cast<CPlantBox::LeafRandomParameter>(p);
+      leaf->leafGeometryPhi = {-90.0, -80.0, -45.0, 0.0, 45.0, 90.0};
+      // transform leafGeometryPhi to radians
+      std::transform(leaf->leafGeometryPhi.begin(), leaf->leafGeometryPhi.end(), leaf->leafGeometryPhi.begin(), [](auto val) { return val * M_PI / 180.0; });
+      leaf->leafGeometryX = {38.41053981,1.0 ,1.0, 0.3, 1.0, 38.41053981};
+      leaf->createLeafRadialGeometry(leaf->leafGeometryPhi, leaf->leafGeometryX, 20);
+    }
+    
+
+    plant->initialize(true, true);
+    plant->simulate(28, false);
+
+    auto vis = std::make_shared<TaggedPlantVisualiser>();
+    vis->SetLeafResolution(20);
+    vis->SetGeometryResolution(8);
+    vis->setPlant(plant);
+    vis->SetVerbose(false);
+    vis->ComputeGeometryForOrganType(CPlantBox::Organism::OrganTypes::ot_stem, true);
+    vis->ComputeGeometryForOrganType(CPlantBox::Organism::OrganTypes::ot_leaf, false);
+    auto test_points = vis->GetGeometry();
+    auto num_nan = std::count_if(test_points.begin(), test_points.end(), [](auto val) { return std::isnan(val); });
+    lmain(Synavis::ELogVerbosity::Info) << "Number of NaNs in test points: " << num_nan << std::endl;
+    if (num_nan > 0)
+    {
+      lmain(Synavis::ELogVerbosity::Error) << "Parameter file failed to load: " << "NaNs in test points" << std::endl;
+      return 1;
+    }
+    else
+    {
+      lmain(Synavis::ELogVerbosity::Info) << "Parameter file loaded successfully" << std::endl;
+      lmain(Synavis::ELogVerbosity::Info) << "Number of test points: " << test_points.size() / 3 << std::endl;
+    }
+    write_visualiser_to_file(vis, "./test.bin");
   }
   catch (const std::exception& e)
   {
@@ -569,6 +678,12 @@ int main(int argc, char** argv)
   m->Initialize();
   m->StartSignalling();
   m->LockUntilConnected(800);
+
+  if(m->GetState() != Synavis::EConnectionState::CONNECTED)
+  {
+     lmain(Synavis::ELogVerbosity::Error) << "Failed to connect to the signalling server" << std::endl;
+     exit(1);
+   }
 
   m->SetMessageCallback([](auto message)
     {

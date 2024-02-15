@@ -86,6 +86,15 @@ namespace Synavis
   {
   };
 
+  // inline function to retrieve the byte size of a buffer
+  template < typename T >
+  static size_t ByteSize(const T& Data)
+  {
+    // check if the data is convertible to a pointer
+    static_assert(is_pointer_convertible<T>::value, "Data must be convertible to a pointer");
+    return Data.size() * sizeof(decltype(*Data.data()));
+  }
+
   // a function to encode a rtc::binary object into a base64 string
   // adapted from https://stackoverflow.com/questions/180947/base64-decode-snippet-in-c
   template < typename T >
@@ -168,7 +177,7 @@ namespace Synavis
     // remove file extension
     Filename.erase(Filename.find_last_of("."), std::string::npos);
     // add timestamp
-    Filename += "_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
+    Filename += "_" + FormattedTime(std::chrono::system_clock::now());
     // add file extension
     Filename += ".log";
     return std::ofstream(Filename, std::ios::app);
