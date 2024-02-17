@@ -419,13 +419,13 @@ void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr
   // sample fps
   std::size_t w = 0;
   auto file = Synavis::OpenUniqueFile("scalability_test.csv");
-  file << "time;fps;num" << std::endl;
+  file << "time;frametime;num" << std::endl;
   auto log_fsp = [&file, &w, start_t](auto message)
     {
       auto jsonmessage = nlohmann::json::parse(message);
-      if (!jsonmessage.contains("fps")) return;
-      lmain(Synavis::ELogVerbosity::Verbose) << "FPS: " << jsonmessage["fps"] << std::endl;
-      double fps = jsonmessage["fps"];
+      if (!jsonmessage.contains("frametime")) return;
+      lmain(Synavis::ELogVerbosity::Verbose) << "frametime: " << jsonmessage["frametime"] << std::endl;
+      double fps = jsonmessage["frametime"];
       auto time = Synavis::TimeSince(start_t);
       file << time << ";" << fps << ";" << w << std::endl;
     };
@@ -456,7 +456,7 @@ void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr
       );
     }
     // let the thread sleep for 10 seconds
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
 }
 
@@ -703,7 +703,8 @@ int main(int argc, char** argv)
     });
 
   m->SendJSON({ {"type","command"},{"name","cam"}, {"camera", "scene"} });
-  m->SendJSON({ {"type", "schedule"}, {"time",0.5}, {"repeat",0.05}, {"command",{{"type","info"},{"fps","yeye"}}} });
+  m->SendJSON({ {"type","settings"},{"fMaxVelocity",0.0} });
+  m->SendJSON({ {"type", "schedule"}, {"time",0.5}, {"repeat",0.05}, {"command",{{"type","info"},{"frametime","yeye"}}} });
 
   std::string tempf = "/dev/shm/";
   if (parser.HasArgument("tempf"))
