@@ -6,6 +6,8 @@
 *.lo
 *.o
 *.obj
+*/.ipynb_checkpoints/*
+
 
 # Precompiled Headers
 *.gch
