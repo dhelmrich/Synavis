@@ -256,7 +256,6 @@ public:
     int columns = static_cast<int>(field_size[0] / seeding_distance);
     // our buffer areas are 10% of our field size
     V2 buffer_area = field_size * 0.1;
-    field_seed = std::vector<std::vector<int>>(rows, std::vector<int>(columns, 0));
     // compute local field bounds
     // we assume comm_size to be a square number
     local_field_bounds[0] = field_origin[0] + buffer_area[0];
@@ -271,12 +270,23 @@ public:
   int get_seed_by_id(int id)
   {
     // fetch num columns
-    int columns = field_seed[0].size();
+    int columns = field_size[0] / plant_offset[0];
     // make 2D id from input
     int row = id / columns;
     int column = id % columns;
     // return the seed at the given location
-    return field_seed[row][column];
+    return start_seed + row * columns + column;
+  }
+
+  int get_seed_by_position(double x, double y)
+  {
+    // fetch num columns
+    int columns = field_size[0] / plant_offset[0];
+    // make 2D id from input
+    int row = static_cast<int>(x / plant_offset[0]);
+    int column = static_cast<int>(y / plant_offset[1]);
+    // return the seed at the given location
+    return start_seed + row * columns + column;
   }
 
   std::shared_ptr<TaggedPlantVisualiser> generate_(std::size_t position)
@@ -366,14 +376,14 @@ public:
         auto plant = std::make_shared<CPlantBox::MappedPlant>();
         plant->readParameters(parameter_file, "plant", true, false);
         // set the plant seed
-        plant->setSeed(field_seed[x][y]);
+        
         // simulate the plant
         plant->simulate(plant_age, false);
         // add the plant to the list
         plants.push_back(plant);
         // make a new visualiser
         auto visualiser = std::make_shared<TaggedPlantVisualiser>();
-        visualiser->tag = field_seed[x][y];
+        visualiser->tag = get_seed_by_position(x, y);
         visualiser->setPlant(plant);
         visualiser->ComputeGeometryForOrganType(CPlantBox::Organism::OrganTypes::ot_leaf, false);
         visualiser->ComputeGeometryForOrganType(CPlantBox::Organism::OrganTypes::ot_stem, false);
@@ -390,7 +400,7 @@ public:
   {
     using namespace V;
     // fetch num columns
-    int columns = field_seed[0].size();
+    int columns = field_size[0] / plant_offset[0];
     // make 2D id from input
     int row = num / columns;
     int column = num % columns;
@@ -399,7 +409,6 @@ public:
   }
 
 private:
-  std::vector<std::vector<int>> field_seed;
   std::string parameter_file;
   int comm_rank;
   int comm_size;
@@ -456,7 +465,7 @@ void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr
       );
     }
     // let the thread sleep for 10 seconds
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
   }
 }
 
@@ -608,59 +617,59 @@ int main(int argc, char** argv)
   }
   
   // test parameter file by reading it into CPB
-  try
+  if(!parser.HasArgument("no-test"))
   {
-    auto plant = std::shared_ptr<CPlantBox::MappedPlant>(new CPlantBox::MappedPlant());
-
     try
     {
-      plant->readParametersChar(parameter_file.c_str());
+      lmain(Synavis::ELogVerbosity::Info) << "Testing parameter file: " << parameter_file << std::endl;
+      auto plant = std::shared_ptr<CPlantBox::MappedPlant>(new CPlantBox::MappedPlant());
+      try
+      {
+        plant->readParametersChar(parameter_file.c_str());
+      }
+      catch (const std::exception& e)
+      {
+        lmain(Synavis::ELogVerbosity::Error) << "Parameter file failed to load: " << e.what() << std::endl;
+      }
+      for(auto p : plant->getOrganRandomParameter(CPlantBox::Organism::OrganTypes::ot_leaf))
+      {
+        auto leaf = std::dynamic_pointer_cast<CPlantBox::LeafRandomParameter>(p);
+        leaf->leafGeometryPhi = {-90.0, -80.0, -45.0, 0.0, 45.0, 90.0};
+        // transform leafGeometryPhi to radians
+        std::transform(leaf->leafGeometryPhi.begin(), leaf->leafGeometryPhi.end(), leaf->leafGeometryPhi.begin(), [](auto val) { return val * M_PI / 180.0; });
+        leaf->leafGeometryX = {38.41053981,1.0 ,1.0, 0.3, 1.0, 38.41053981};
+        leaf->createLeafRadialGeometry(leaf->leafGeometryPhi, leaf->leafGeometryX, 20);
+      }
+      plant->initialize(true, true);
+      plant->simulate(8, false);
+
+      auto vis = std::make_shared<TaggedPlantVisualiser>();
+      vis->SetLeafResolution(20);
+      vis->SetGeometryResolution(8);
+      vis->setPlant(plant);
+      vis->SetVerbose(false);
+      vis->ComputeGeometryForOrganType(CPlantBox::Organism::OrganTypes::ot_stem, true);
+      vis->ComputeGeometryForOrganType(CPlantBox::Organism::OrganTypes::ot_leaf, false);
+      auto test_points = vis->GetGeometry();
+      auto num_nan = std::count_if(test_points.begin(), test_points.end(), [](auto val) { return std::isnan(val); });
+      lmain(Synavis::ELogVerbosity::Info) << "Number of NaNs in test points: " << num_nan << std::endl;
+      if (num_nan > 0)
+      {
+        lmain(Synavis::ELogVerbosity::Error) << "Parameter file failed to load: " << "NaNs in test points" << std::endl;
+        return 1;
+      }
+      else
+      {
+        lmain(Synavis::ELogVerbosity::Info) << "Parameter file loaded successfully" << std::endl;
+        lmain(Synavis::ELogVerbosity::Info) << "Number of test points: " << test_points.size() / 3 << std::endl;
+      }
+      //write_visualiser_to_file(vis, "./test.bin");
     }
     catch (const std::exception& e)
     {
-       lmain(Synavis::ELogVerbosity::Error) << "Parameter file failed to load: " << e.what() << std::endl;
-    }
-
-    for(auto p : plant->getOrganRandomParameter(CPlantBox::Organism::OrganTypes::ot_leaf))
-    {
-      auto leaf = std::dynamic_pointer_cast<CPlantBox::LeafRandomParameter>(p);
-      leaf->leafGeometryPhi = {-90.0, -80.0, -45.0, 0.0, 45.0, 90.0};
-      // transform leafGeometryPhi to radians
-      std::transform(leaf->leafGeometryPhi.begin(), leaf->leafGeometryPhi.end(), leaf->leafGeometryPhi.begin(), [](auto val) { return val * M_PI / 180.0; });
-      leaf->leafGeometryX = {38.41053981,1.0 ,1.0, 0.3, 1.0, 38.41053981};
-      leaf->createLeafRadialGeometry(leaf->leafGeometryPhi, leaf->leafGeometryX, 20);
-    }
-    
-
-    plant->initialize(true, true);
-    plant->simulate(28, false);
-
-    auto vis = std::make_shared<TaggedPlantVisualiser>();
-    vis->SetLeafResolution(20);
-    vis->SetGeometryResolution(8);
-    vis->setPlant(plant);
-    vis->SetVerbose(false);
-    vis->ComputeGeometryForOrganType(CPlantBox::Organism::OrganTypes::ot_stem, true);
-    vis->ComputeGeometryForOrganType(CPlantBox::Organism::OrganTypes::ot_leaf, false);
-    auto test_points = vis->GetGeometry();
-    auto num_nan = std::count_if(test_points.begin(), test_points.end(), [](auto val) { return std::isnan(val); });
-    lmain(Synavis::ELogVerbosity::Info) << "Number of NaNs in test points: " << num_nan << std::endl;
-    if (num_nan > 0)
-    {
-      lmain(Synavis::ELogVerbosity::Error) << "Parameter file failed to load: " << "NaNs in test points" << std::endl;
+      lmain(Synavis::ELogVerbosity::Error) << "Parameter file failed to load: " << e.what() << std::endl;
       return 1;
     }
-    else
-    {
-      lmain(Synavis::ELogVerbosity::Info) << "Parameter file loaded successfully" << std::endl;
-      lmain(Synavis::ELogVerbosity::Info) << "Number of test points: " << test_points.size() / 3 << std::endl;
-    }
-    write_visualiser_to_file(vis, "./test.bin");
-  }
-  catch (const std::exception& e)
-  {
-    lmain(Synavis::ELogVerbosity::Error) << "Parameter file failed to load: " << e.what() << std::endl;
-    return 1;
   }
 
   // amount of plants per thread per rank

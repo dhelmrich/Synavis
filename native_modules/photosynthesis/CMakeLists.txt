@@ -21,10 +21,14 @@ find_package(CPlantBox REQUIRED)
 # find MPI
 find_package(MPI REQUIRED)
 
+
 if (UNIX)
   if(pkgconfig_FOUND)
     pkg_check_modules(TINYXML2 tinyxml2)
   endif()
+  find_package(CUDA 9.0 REQUIRED)
+  target_link_libraries(${Folder} PUBLIC CUDA::cudart)
+  target_include_directories(${Folder} PUBLIC ${CUDA_INCLUDE_DIRS})
 else ()
   find_package(tinyxml2 CONFIG REQUIRED)
 endif ()
