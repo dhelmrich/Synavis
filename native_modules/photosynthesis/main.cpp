@@ -34,6 +34,7 @@ public:
 // include cstlib for system call on unix
 #if defined(__unix__)
 #include <cstdlib>
+#include <cuda_runtime.h>
 #else
 // on windows the system call is called _system
 #include <stdlib.h>
@@ -418,6 +419,23 @@ private:
   std::array<double, 4> local_field_bounds;
 };
 
+#ifdef __unix__
+int GPU_Usage()
+{
+  static bool first = true;
+  static int device = 0;
+  if(first)
+  {
+    cudaSetDevice(device);
+  }
+  cudaDeviceProp prop;
+  cudaGetDeviceProperties(&prop, device);
+  int utilization;
+  cudaError_t err = cudaDeviceGetUtilizationRates(&utilization, &device);
+  return utilization;
+}
+#endif
+
 void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr<FieldManager> field_manager, auto rank = -1, auto size = -1, std::string tempf = "./", bool useFile = false)
 {
   using namespace std::literals::chrono_literals;
@@ -428,7 +446,11 @@ void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr
   // sample fps
   std::size_t w = 0;
   auto file = Synavis::OpenUniqueFile("scalability_test.csv");
+#ifdef WIN32
   file << "time;frametime;num" << std::endl;
+#else defined __unix__
+  file << "time;frametime;num;gpu" << std::endl;
+#endif
   auto log_fsp = [&file, &w, start_t](auto message)
     {
       auto jsonmessage = nlohmann::json::parse(message);
@@ -436,7 +458,11 @@ void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr
       lmain(Synavis::ELogVerbosity::Verbose) << "frametime: " << jsonmessage["frametime"] << std::endl;
       double fps = jsonmessage["frametime"];
       auto time = Synavis::TimeSince(start_t);
+#ifdef WIN32
       file << time << ";" << fps << ";" << w << std::endl;
+#else defined __unix__
+    file << time << ";" << fps << ";" << w << ";" << GPU_Usage() << std::endl;
+#endif
     };
   m->SetMessageCallback(log_fsp);
   lmain(Synavis::ELogVerbosity::Info) << "Scalability test started" << std::endl;
