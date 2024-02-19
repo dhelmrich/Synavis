@@ -9,6 +9,7 @@ import threading
 import sys
 import ast
 import os
+import numpy as np
 
 ws.debug = True
 
@@ -274,6 +275,9 @@ class Connection() :
       self.supports_synchronous_data = True
     #endfor
   #enddef
+  def __len__(self) :
+    return len(self.connected_ids)
+  #enddef    
 #endclass
 
 async def handle(connection, message) :
@@ -344,11 +348,18 @@ async def connection(websocket, path) :
     connections[connection.id] = connection
   if connection.role == "client" :
     await connection.send(json.dumps({"type": "id", "id": connection.id}))
-    if active_server != None :
-      connection.assign(active_server)
-      active_server.assign(connection)
+    servers = [id for id in connections if connections[id].role == "server"]
+    least_used = None
+    usage_min = np.argmin([len(connections[id]) for id in servers])
+    if len(servers) > 0 and usage_min < len(servers) :
+      least_used = connections[servers[usage_min]]
+    #endif
+    if least_used != None :
+      connection.assign(least_used)
+      least_used.assign(connection)
       # send an unreal-like player connect message
-      await active_server.send(json.dumps({"type":"playerConnected", "playerId": str(connection.id), "dataChannel": True, "sfu": False}))
+      await least_used.send(json.dumps({"type":"playerConnected", "playerId": str(connection.id), "dataChannel": True, "sfu": False}))
+    #endif
   elif connection.role == "server" :
     # deactivate ping frames
     connection.websocket.ping_interval = None
