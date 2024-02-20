@@ -823,6 +823,13 @@ int main(int argc, char** argv)
     {
       field_population(m, field_manager, worker_threads, threads_per_rank, plants_per_thread);
     }
+    else if (test == "concurrency")
+    {
+      bool use_file = parser.HasArgument("use-file");
+      lmain(Synavis::ELogVerbosity::Info) << "We are " << (use_file ? "" : "not ") << "using file-based transmission." << std::endl;
+      response_concurrency(m, field_manager, rank, size, tempf, use_file, delay);
+    
+    }
   }
 
   // MPI finalize
