@@ -502,7 +502,7 @@ void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr
       );
     }
     // let the thread sleep for 10 seconds
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::this_thread::sleep_for(std::chrono::milliseconds(delay));
   }
 }
 
@@ -538,6 +538,51 @@ void field_population(auto m, auto field_manager, auto& worker_threads, auto thr
         visualiser->GetGeometryNormals()
       );
     }
+  }
+}
+
+
+void response_concurrency(std::shared_ptr<Synavis::DataConnector> m, auto field_manager, auto rank = -1, auto size = -1, std::string tempf = "./", bool useFile = false, int delay = 100)
+{
+  field_manager->ScaleResolutionByRank = true;
+  // ensure tempf ends with a slash
+  if (tempf.back() != '/') tempf += "/";
+  std::size_t w = 0;
+  auto file = Synavis::OpenUniqueFile("concurrency_test.csv");
+  // time stamp of reception, processing time (round trip), number of plants
+  file << "time;processing_time;num" << std::endl;
+  auto log_response = [&file, &w, start_t](auto message)
+  {
+    auto jsonmessage = nlohmann::json::parse(message);
+    if(!jsonmessage.contains("processed_time")) return;
+    auto processed_time = jsonmessage["processed_time"].get<double>();
+    double current_time = Synavis::HighRes();
+    file << current_time - processed_time << ";" << processed_time << ";" << w << std::endl;
+  };
+  m->SetMessageCallback(log_response);
+  lmain(Synavis::ELogVerbosity::Info) << "Concurrency test started" << std::endl;
+  std::shared_ptr<TaggedPlantVisualiser> vis = field_manager->generate_(w++);
+  vis->tag = static_cast<int>(w);
+  auto filename = tempf + "plant" + std::to_string(vis->tag) + ".bin";
+  write_visualiser_to_file(vis, filename);
+  while (true)
+  {
+    // another plant
+    if(useFile)
+    {
+      m->SendJSON({{"type","file"}, {"filename",filename}});
+    }
+    else
+    {
+      m->SendGeometry(
+        vis->GetGeometry(),
+        vis->GetGeometryIndices(),
+        "plant" + std::to_string(vis->tag),
+        vis->GetGeometryNormals()
+      );
+    }
+    
+    std::this_thread::sleep_for(std::chrono::milliseconds(delay));
   }
 }
 
