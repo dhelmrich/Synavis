@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <map>
 #include <chrono>
+#include <sstream>
 
 // synavis includes
 #include "Synavis.hpp"
@@ -34,7 +35,6 @@ public:
 // include cstlib for system call on unix
 #if defined(__unix__)
 #include <cstdlib>
-#include <cuda_runtime.h>
 #else
 // on windows the system call is called _system
 #include <stdlib.h>
@@ -422,21 +422,32 @@ private:
 #ifdef __unix__
 int GPU_Usage()
 {
-  static bool first = true;
-  static int device = 0;
-  if(first)
+  auto command = "nvidia-smi --format=csv,noheader --query-gpu=utilization.gpu";
+  char buffer[128];
+  std::string result;
+  FILE* pipe = popen(command, "r");
+  if (!pipe)
   {
-    cudaSetDevice(device);
+       throw std::runtime_error("popen() failed!");
   }
-  cudaDeviceProp prop;
-  cudaGetDeviceProperties(&prop, device);
-  int utilization;
-  cudaError_t err = cudaDeviceGetUtilizationRates(&utilization, &device);
-  return utilization;
+  while (fgets(buffer, sizeof(buffer), pipe) != nullptr)
+  {
+    result += buffer;
+  }
+  // result are 4 entries, we want the largest
+  std::vector<int> values;
+  std::stringstream ss(result);
+  std::string token;
+  while (std::getline(ss, token))
+  {
+    values.push_back(std::stoi(token));
+  }
+  pclose(pipe);
+  return *std::max_element(values.begin(), values.end());
 }
 #endif
 
-void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr<FieldManager> field_manager, auto rank = -1, auto size = -1, std::string tempf = "./", bool useFile = false)
+void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr<FieldManager> field_manager, auto rank = -1, auto size = -1, std::string tempf = "./", bool useFile = false, int delay = 100)
 {
   using namespace std::literals::chrono_literals;
   field_manager->ScaleResolutionByRank = true;
@@ -491,7 +502,7 @@ void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr
       );
     }
     // let the thread sleep for 10 seconds
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
 }
 
@@ -535,6 +546,7 @@ int main(int argc, char** argv)
   // MPI init
   int rank, size;
   int sig_port = -1;
+  int delay = 100;
 
   Synavis::CommandLineParser parser(argc, argv);
   std::string ip_address = parser.GetArgument("i");
@@ -562,6 +574,11 @@ int main(int argc, char** argv)
       // get the ip address
       ip_address = ip_address.substr(0, colon);
     }
+  }
+  
+  if(parser.HasArgument("delay"))
+  {
+    delay = std::stoi(parser.GetArgument("delay"));
   }
 
   if (!parser.HasArgument("p"))
@@ -738,8 +755,9 @@ int main(int argc, char** argv)
     });
 
   m->SendJSON({ {"type","command"},{"name","cam"}, {"camera", "scene"} });
-  m->SendJSON({ {"type","settings"},{"fMaxVelocity",0.0} });
-  m->SendJSON({ {"type", "schedule"}, {"time",0.5}, {"repeat",0.05}, {"command",{{"type","info"},{"frametime","yeye"}}} });
+  m->SendJSON({{"type","console"},{"command","r.Streaming.PoolSize 30000"}});
+  m->SendJSON({ {"type","settings"},{"fMaxVelocity",50.0}, {"bRespondWithTiming", true} });
+  m->SendJSON({ {"type", "schedule"}, {"time",1.0}, {"repeat",0.1}, {"command",{{"type","info"},{"frametime","yeye"}}} });
 
   std::string tempf = "/dev/shm/";
   if (parser.HasArgument("tempf"))
@@ -754,7 +772,7 @@ int main(int argc, char** argv)
     {
       bool use_file = parser.HasArgument("use-file");
       lmain(Synavis::ELogVerbosity::Info) << "We are " << (use_file ? "" : "not ") << "using file-based transmission." << std::endl;
-      scalability_test(m, field_manager, rank, size, tempf, use_file);
+      scalability_test(m, field_manager, rank, size, tempf, use_file, delay);
     }
     else if (test == "field-population")
     {
