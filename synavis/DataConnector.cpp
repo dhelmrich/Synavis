@@ -123,7 +123,7 @@ bool Synavis::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, 
   int StateTracker = 1;
   this->SetMessageCallback([&msg_callback, &MessageState, this](std::string Message)
     {
-      std::cout << "Message received: " << Message << std::endl;
+      lconnector(ELogVerbosity::Info) << "Message received: " << Message << std::endl;
       json content = json::parse(Message);
       if (content["type"] == "buffer")
       {
@@ -789,12 +789,12 @@ void Synavis::DataConnector::Initialize()
                 RequiredCandidate.push_back(media->mid());
               }
             }
-            std::cout << Prefix << "I have " << RequiredCandidate.size() << " required candidates: ";
+            auto& l = lconnector(ELogVerbosity::Info) << "I have " << RequiredCandidate.size() << " required candidates: ";
             for (auto i = 0; i < RequiredCandidate.size(); ++i)
             {
-              std::cout << Prefix << RequiredCandidate[i] << " ";
+              l << RequiredCandidate[i] << " ";
             }
-            std::cout << Prefix << std::endl;
+            l << std::endl;
             InitializedRemote = true;
           }
         }
@@ -844,12 +844,12 @@ void Synavis::DataConnector::Initialize()
           }
           else
           {
-            lconnector(ELogVerbosity::Debug) << "I still have " << RequiredCandidate.size() << " required candidates: ";
+            auto l = lconnector(ELogVerbosity::Debug) << "I still have " << RequiredCandidate.size() << " required candidates: ";
             for (auto i = 0; i < RequiredCandidate.size(); ++i)
             {
-              if (this->LogVerbosity >= ELogVerbosity::Debug) std::cout << RequiredCandidate[i] << " ";
+              l << RequiredCandidate[i] << " ";
             }
-            if (this->LogVerbosity >= ELogVerbosity::Debug) std::cout << std::endl;
+            l << std::endl;
           }
         }
         else if (content["type"] == "control")
