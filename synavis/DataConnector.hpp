@@ -44,6 +44,8 @@ public:
 
   void SetDataCallback(std::function<void(rtc::binary)> Callback);
   void SetMessageCallback(std::function<void(std::string)> Callback);
+  auto GetMessageCallback() { return MessageReceptionCallback; }
+  auto GetDataCallback() { return DataReceptionCallback; }
   std::shared_ptr<rtc::DataChannel> DataChannel;
   void SetConfigFile(std::string ConfigFile);
   void SetConfig(json Config);
@@ -87,6 +89,25 @@ public:
   void SetIPForICE(std::string IP) { rtcconfig_.bindAddress = IP; }
   void SetPortRangeForICE(uint16_t Min, uint16_t Max) { rtcconfig_.portRangeBegin = Min; rtcconfig_.portRangeBegin = Max; }
 
+  /**
+   * brief Sets a message callback that is called when a message is received.
+   * This is experimental with the intention to replace the MessageReceptionCallback
+   * \param Callback
+   */
+  void exp__PushMessageCallback(auto Callback) { exp__OnMessagecallbacks.push_back(Callback); }
+  void exp__ClearMessageCallbacks() { exp__OnMessagecallbacks.clear(); }
+  void exp__ActivateCallbacks()
+  {
+    MessageReceptionCallback = [this](std::string Message)
+    {
+      for (auto& Callback : exp__OnMessagecallbacks)
+      {
+        Callback(Message);
+      }
+    };
+  }
+  void exp__DeactivateCallbacks();
+
 protected:
   /**
    * Callbacks for additional custom behavior
@@ -97,6 +118,9 @@ protected:
   std::optional<std::function<void(void)>> OnIceGatheringFinished;
   std::optional<std::function<void(std::string)>> OnRemoteDescriptionCallback;
   std::optional<std::function<void(void)>> OnDataChannelAvailableCallback;
+
+  // mark as experimental; data channel message handling with many callbacks
+  std::deque<std::function<void(std::string)>> exp__OnMessagecallbacks;
 
   inline void DataChannelMessageHandling(rtc::message_variant Data);
 

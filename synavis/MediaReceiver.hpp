@@ -28,6 +28,8 @@ public:
     FrameReceptionCallback = Callback;
   }
 
+  auto GetFrameReceptionCallback(){ return this->FrameReceptionCallback; }
+
   void SetOnTrackOpenCallback(std::function<void(void)> Callback)
   {
     OnTrackOpenCallback = Callback;
