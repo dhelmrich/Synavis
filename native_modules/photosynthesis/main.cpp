@@ -54,6 +54,7 @@ struct is_iterator
 static const Synavis::Logger::LoggerInstance lmain = Synavis::Logger::Get()->LogStarter("main");
 
 
+
 namespace V
 {
   // addition of arrays of N size
@@ -96,6 +97,8 @@ namespace V
 
   using V2 = std::array<double, 2>;
   using V3 = std::array<double, 3>;
+  using I2 = std::array<int, 2>;
+  using I3 = std::array<int, 3>;
 
   template < typename T, typename Q, std::size_t N >
   std::array<T, N> As(const std::array<Q, N>& arr)
@@ -166,7 +169,7 @@ void write_visualiser_to_file(std::shared_ptr<TaggedPlantVisualiser> visualiser,
   file.write(reinterpret_cast<const char*>(visualiser->GetGeometryIndices().data()), Synavis::ByteSize(visualiser->GetGeometryIndices()));
   file.flush();
   lmain(Synavis::ELogVerbosity::Debug) << "Byte size of indices: " << Synavis::ByteSize(visualiser->GetGeometryIndices()) << std::endl;
-  
+
   // write number of normals
   uint64_t num_normals = visualiser->GetGeometryNormals().size() / 3uL;
   byte_size_total += num_normals * sizeof(double) * 3uL + sizeof(uint64_t);
@@ -190,18 +193,8 @@ void write_visualiser_to_file(std::shared_ptr<TaggedPlantVisualiser> visualiser,
   file.flush();
   //wait_for_key();
   lmain(Synavis::ELogVerbosity::Debug) << "Byte size of ucs: " << Synavis::ByteSize(visualiser->GetGeometryColors()) << std::endl;
-  // close the file
-  //std::vector<char> end;
-  //end.resize(1000000);
-  //for(auto& c : end)
-  //{
-  //  c = 'a';
-  //}
-  //file.write("Hellotestitest1", 15);
-  //lmain(Synavis::ELogVerbosity::Debug) << "Byte size of end: " << end.size() << std::endl;
-  //file.write(end.data(), end.size());
-  //file.write("Hellotestitest1", 15);
-  if(file.bad())
+
+  if (file.bad())
   {
     lmain(Synavis::ELogVerbosity::Error) << "Failed to write to file: " << filename << std::endl;
     return;
@@ -220,7 +213,7 @@ void write_visualiser_to_file(std::shared_ptr<TaggedPlantVisualiser> visualiser,
   {
     lmain(Synavis::ELogVerbosity::Info) << "Point " << i << ": " << visualiser->GetGeometryNormals()[i * 3uL] << ", " << visualiser->GetGeometryNormals()[i * 3uL + 1uL] << ", " << visualiser->GetGeometryNormals()[i * 3uL + 2uL] << std::endl;
   }
-  
+
 }
 
 
@@ -234,6 +227,15 @@ static std::condition_variable submissionQueueCondition;
 auto start_seed = std::chrono::duration_cast<std::chrono::hours>(
   std::chrono::system_clock::now().time_since_epoch()).count();
 
+inline nlohmann::json concat(const nlohmann::json& j1, const nlohmann::json& j2)
+{
+  nlohmann::json result = j1;
+  for (auto& el : j2.items())
+  {
+    result[el.key()] = el.value();
+  }
+  return result;
+}
 
 class FieldManager
 {
@@ -243,7 +245,7 @@ public:
     std::string parameter_file,
     float seeding_distance = 0.05 /*[m]*/,
     float inter_row_distance = 0.1 /*[m]*/)
-      : comm_rank(comm_rank), comm_size(comm_size), parameter_file(parameter_file)
+    : comm_rank(comm_rank), comm_size(comm_size), parameter_file(parameter_file)
   {
     using namespace V;
     // our field size in each dimension
@@ -263,7 +265,7 @@ public:
     local_field_bounds[1] = field_origin[0] + field_size[0] - buffer_area[0];
     local_field_bounds[2] = field_origin[1] + buffer_area[1];
     local_field_bounds[3] = field_origin[1] + field_size[1] - buffer_area[1];
-    
+
   }
 
   bool ScaleResolutionByRank{ false };
@@ -303,13 +305,13 @@ public:
       const auto id_pos = get_position_from_num(position);
       seed_parameter->seedPos = { id_pos[0], id_pos[1], 0.0 };
     }
-    for(auto p : plant->getOrganRandomParameter(CPlantBox::Organism::OrganTypes::ot_leaf))
+    for (auto p : plant->getOrganRandomParameter(CPlantBox::Organism::OrganTypes::ot_leaf))
     {
       auto leaf = std::dynamic_pointer_cast<CPlantBox::LeafRandomParameter>(p);
-      leaf->leafGeometryPhi = {-90.0, -80.0, -45.0, 0.0, 45.0, 90.0};
+      leaf->leafGeometryPhi = { -90.0, -80.0, -45.0, 0.0, 45.0, 90.0 };
       // transform leafGeometryPhi to radians
       std::transform(leaf->leafGeometryPhi.begin(), leaf->leafGeometryPhi.end(), leaf->leafGeometryPhi.begin(), [](auto val) { return val * M_PI / 180.0; });
-      leaf->leafGeometryX = {38.41053981,1.0 ,1.0, 0.3, 1.0, 38.41053981};
+      leaf->leafGeometryX = { 38.41053981,1.0 ,1.0, 0.3, 1.0, 38.41053981 };
       leaf->createLeafRadialGeometry(leaf->leafGeometryPhi, leaf->leafGeometryX, 20);
     }
     plant->initialize(verbose_plant, true); // initialize with stochastic = true
@@ -377,7 +379,7 @@ public:
         auto plant = std::make_shared<CPlantBox::MappedPlant>();
         plant->readParameters(parameter_file, "plant", true, false);
         // set the plant seed
-        
+
         // simulate the plant
         plant->simulate(plant_age, false);
         // add the plant to the list
@@ -426,13 +428,15 @@ int GPU_Usage()
   char buffer[128];
   std::string result;
   FILE* pipe = popen(command, "r");
+
   if (!pipe)
   {
-       throw std::runtime_error("popen() failed!");
+    throw std::runtime_error("popen() failed!");
   }
   while (fgets(buffer, sizeof(buffer), pipe) != nullptr)
   {
     result += buffer;
+
   }
   // result are 4 entries, we want the largest
   std::vector<int> values;
@@ -443,9 +447,65 @@ int GPU_Usage()
     values.push_back(std::stoi(token));
   }
   pclose(pipe);
+
   return *std::max_element(values.begin(), values.end());
 }
 #endif
+
+void communicate_backend_swap(std::shared_ptr<Synavis::DataConnector> old, std::shared_ptr<Synavis::DataConnector> current)
+{
+  V::V3 position = { 0.0, 0.0, 0.0 };
+  V::V3 rotation = { 0.0, 0.0, 0.0 };
+  V::V3 desired_position = { 0.0, 0.0, 0.0 };
+  std::string DroneName = "SynavisDrone";
+  int registered = 0;
+  auto receive_callback = [&](auto endpoint, auto message)
+    {
+      auto jsonmessage = nlohmann::json::parse(message);
+      std::string type = jsonmessage["type"];
+      if (type == "query")
+      {
+        std::string property = jsonmessage["property"];
+        if (property == "position" && jsonmessage.contains("x") && jsonmessage.contains("y") && jsonmessage.contains("z"))
+        {
+          position = { jsonmessage["value"]["x"], jsonmessage["value"]["y"], jsonmessage["value"]["z"] };
+          registered++;
+        }
+        else if (property == "rotation" && jsonmessage.contains("r") && jsonmessage.contains("p") && jsonmessage.contains("j"))
+        {
+          rotation = { jsonmessage["value"]["r"], jsonmessage["value"]["p"], jsonmessage["value"]["j"] };
+          registered++;
+        }
+      }
+    };
+  auto old_callback = std::bind(receive_callback, old, std::placeholders::_1);
+  auto current_callback = std::bind(receive_callback, current, std::placeholders::_1);
+  old->SendJSON({ {"type","query"} });
+  old->SendJSON({ {"type","query"}, {"object","SynavisDrone"}, {"property","position"} });
+  current->SendJSON({ {"type","query"} });
+  current->SendJSON({ {"type","parameter"},{"object",""},{"property","position"},
+    {"x",position[0]},{"y",position[1]},{"z",position[2]} });
+  // try pointer cast to media receiver
+  auto old_media = std::dynamic_pointer_cast<Synavis::MediaReceiver>(old);
+  auto current_media = std::dynamic_pointer_cast<Synavis::MediaReceiver>(current);
+  // change streaming source only if both are media receivers
+  if (old_media && current_media)
+  {
+    old_media->StopStreaming();
+    auto old_callback = old_media->GetFrameReceptionCallback();
+    auto current_callback = current_media->GetFrameReceptionCallback();
+    if(old_callback.has_value() && current_callback.has_value())
+    {
+      current_media->SetFrameReceptionCallback(old_callback.value());
+      old_media->SetFrameReceptionCallback(current_callback.value());
+    }
+    else
+    {
+      lmain(Synavis::ELogVerbosity::Warning) << "Failed to swap frame reception callback" << std::endl;
+    }
+    current_media->StartStreaming();
+  }
+}
 
 void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr<FieldManager> field_manager, auto rank = -1, auto size = -1, std::string tempf = "./", bool useFile = false, int delay = 100)
 {
@@ -472,7 +532,7 @@ void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr
 #ifdef WIN32
       file << time << ";" << fps << ";" << w << std::endl;
 #else defined __unix__
-    file << time << ";" << fps << ";" << w << ";" << GPU_Usage() << std::endl;
+      file << time << ";" << fps << ";" << w << ";" << GPU_Usage() << std::endl;
 #endif
     };
   m->SetMessageCallback(log_fsp);
@@ -491,9 +551,9 @@ void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr
     else
     {
       auto vertices = vis->GetGeometry();
-      auto position = V::Pad<double,3>(field_manager->get_position_from_num(w), 0.0);
+      auto position = V::Pad<double, 3>(field_manager->get_position_from_num(w), 0.0);
       std::size_t i = 0;
-      std::transform(vertices.begin(), vertices.end(), vertices.begin(), [position,&i](double val) { return val + position[i++ % 3]; });
+      std::transform(vertices.begin(), vertices.end(), vertices.begin(), [position, &i](double val) { return val + position[i++ % 3]; });
       m->SendGeometry(
         vertices,
         vis->GetGeometryIndices(),
@@ -541,7 +601,6 @@ void field_population(auto m, auto field_manager, auto& worker_threads, auto thr
   }
 }
 
-
 void response_concurrency(std::shared_ptr<Synavis::DataConnector> m, auto field_manager, auto rank = -1, auto size = -1, std::string tempf = "./", bool useFile = false, int delay = 100)
 {
   field_manager->ScaleResolutionByRank = true;
@@ -551,14 +610,14 @@ void response_concurrency(std::shared_ptr<Synavis::DataConnector> m, auto field_
   auto file = Synavis::OpenUniqueFile("concurrency_test.csv");
   // time stamp of reception, processing time (round trip), number of plants
   file << "time;processing_time;num" << std::endl;
-  auto log_response = [&file, &w, start_t](auto message)
-  {
-    auto jsonmessage = nlohmann::json::parse(message);
-    if(!jsonmessage.contains("processed_time")) return;
-    auto processed_time = jsonmessage["processed_time"].get<double>();
-    double current_time = Synavis::HighRes();
-    file << current_time - processed_time << ";" << processed_time << ";" << w << std::endl;
-  };
+  auto log_response = [&file, &w](auto message)
+    {
+      auto jsonmessage = nlohmann::json::parse(message);
+      if (!jsonmessage.contains("processed_time")) return;
+      double processed_time = jsonmessage["processed_time"];
+      double current_time = Synavis::HighRes();
+      file << current_time - processed_time << ";" << processed_time << ";" << w << std::endl;
+    };
   m->SetMessageCallback(log_response);
   lmain(Synavis::ELogVerbosity::Info) << "Concurrency test started" << std::endl;
   std::shared_ptr<TaggedPlantVisualiser> vis = field_manager->generate_(w++);
@@ -568,9 +627,9 @@ void response_concurrency(std::shared_ptr<Synavis::DataConnector> m, auto field_
   while (true)
   {
     // another plant
-    if(useFile)
+    if (useFile)
     {
-      m->SendJSON({{"type","file"}, {"filename",filename}});
+      m->SendJSON({ {"type","file"}, {"filename",filename} });
     }
     else
     {
@@ -581,9 +640,118 @@ void response_concurrency(std::shared_ptr<Synavis::DataConnector> m, auto field_
         vis->GetGeometryNormals()
       );
     }
-    
+
     std::this_thread::sleep_for(std::chrono::milliseconds(delay));
   }
+}
+
+void photosynthesis_evaluation(std::shared_ptr<Synavis::DataConnector> m, auto field_manager, V::I2 FieldSize, auto rank = -1, auto size = -1, std::string tempf = "/dev/shm/", bool useFile = false)
+{
+  auto plants = std::vector<std::shared_ptr<CPlantBox::MappedPlant>>();
+  auto node_positions = std::vector<V::V3>();
+  int total = FieldSize[0] * FieldSize[1];
+  auto light_intensities = std::vector<double>(total);
+  std::vector<std::string> MeterNames;
+  auto receive_light = [&](auto endpoint, auto message)
+  {
+    auto jsonmessage = nlohmann::json::parse(message);
+    if (jsonmessage.contains("type"))
+    {
+      if(jsonmessage["type"] == "meter")
+      {
+        for (auto& [key, value] : jsonmessage.items())
+        {
+          if (key != "type")
+          {
+            auto data = jsonmessage[key];
+            auto id = data["t"];
+            auto segment = data["s"];
+            auto intensity = data["i"];
+            light_intensities[id] = intensity;
+          }
+        }
+      }
+      else if(jsonmessage["type"] == "spawnmeter")
+      {
+        auto name = jsonmessage["name"];
+        MeterNames.push_back(name);
+      }
+    }
+  };
+  for (int i = 0; i < total; ++i)
+  {
+    auto plant = std::make_shared<CPlantBox::MappedPlant>();
+    plant->readParameters(field_manager->parameter_file, "plant", true, false);
+    plant->setSeed(field_manager->get_seed_by_id(i));
+    auto rd = plant->getOrganRandomParameter(CPlantBox::Organism::OrganTypes::ot_seed);
+    for (auto& r : rd)
+    {
+      auto seed_parameter = std::dynamic_pointer_cast<CPlantBox::SeedRandomParameter>(r);
+      const auto id_pos = field_manager->get_position_from_num(i);
+      seed_parameter->seedPos = { id_pos[0], id_pos[1], 0.0 };
+    }
+    for (auto p : plant->getOrganRandomParameter(CPlantBox::Organism::OrganTypes::ot_stem))
+    {
+      auto stem = std::dynamic_pointer_cast<CPlantBox::StemRandomParameter>(p);
+      stem->delayNGStart = 1.0;
+      stem->delayNGStarts = 2.0;
+    }
+    for (auto p : plant->getOrganRandomParameter(CPlantBox::Organism::OrganTypes::ot_leaf))
+    {
+      auto leaf = std::dynamic_pointer_cast<CPlantBox::LeafRandomParameter>(p);
+      leaf->leafGeometryPhi = { -90.0, -80.0, -45.0, 0.0, 45.0, 90.0 };
+      // transform leafGeometryPhi to radians
+      std::transform(leaf->leafGeometryPhi.begin(), leaf->leafGeometryPhi.end(), leaf->leafGeometryPhi.begin(), [](auto val) { return val * M_PI / 180.0; });
+      leaf->leafGeometryX = { 38.41053981,1.0 ,1.0, 0.3, 1.0, 38.41053981 };
+      leaf->createLeafRadialGeometry(leaf->leafGeometryPhi, leaf->leafGeometryX, 20);
+    }
+    plant->initialize(false, true); // initialize with stochastic = true
+    plant->simulate(20.0, false);
+    plants.push_back(plant);
+  }
+
+  std::shared_ptr<TaggedPlantVisualiser> vis = std::make_shared<TaggedPlantVisualiser>();
+
+  for(auto p : plants)
+  {
+    vis->ResetGeometry();
+    vis->setPlant(p);
+    vis->ComputeGeometryForOrganType(CPlantBox::Organism::OrganTypes::ot_leaf, false);
+    vis->ComputeGeometryForOrganType(CPlantBox::Organism::OrganTypes::ot_stem, false);
+    auto filename = tempf + "plant" + std::to_string(vis->tag) + ".bin";
+    write_visualiser_to_file(vis, filename);
+    V::V3 position = field_manager->get_position_from_num(vis->tag);
+    V::V3 rotation = { std::rand() * 360.0, std::rand() * 360.0, 0.0 };
+    // make random rotation within 0-360 degrees
+    nlohmann::json meta = {"position", {}};
+    if(useFile)
+    {
+      m->SendJSON(concat({ {"type","filegeometry"}, {"filename",filename}}, meta));
+    }
+    else
+    {
+      m->SendGeometry(
+      vis->GetGeometry(),
+      vis->GetGeometryIndices(),
+      "plant" + std::to_string(vis->tag),
+      vis->GetGeometryNormals(), vis->GetGeometryTextureCoordinates(), std::nullopt, false
+      );
+      m->SendJSON(concat({{"type","spawn"}}, meta));
+    }
+  }
+
+  // schedule intensity report
+  m->SetMessageCallback(receive_light);
+  m->SendJSON({
+    {"type","schedule"},
+    {"time",5.0},
+    {"repeat",1.0},
+    {"command", {
+      {"type", "lightmeters"}
+    }}
+  });
+
+  // spawn a few meters to measure light intensity
 }
 
 int main(int argc, char** argv)
@@ -620,8 +788,8 @@ int main(int argc, char** argv)
       ip_address = ip_address.substr(0, colon);
     }
   }
-  
-  if(parser.HasArgument("delay"))
+
+  if (parser.HasArgument("delay"))
   {
     delay = std::stoi(parser.GetArgument("delay"));
   }
@@ -699,13 +867,13 @@ int main(int argc, char** argv)
   }
 
   std::string parameter_file;
-  for(auto c : parser.GetArgument("p"))
+  for (auto c : parser.GetArgument("p"))
   {
     parameter_file += c;
   }
-  
+
   // test parameter file by reading it into CPB
-  if(!parser.HasArgument("no-test"))
+  if (!parser.HasArgument("no-test"))
   {
     try
     {
@@ -719,13 +887,13 @@ int main(int argc, char** argv)
       {
         lmain(Synavis::ELogVerbosity::Error) << "Parameter file failed to load: " << e.what() << std::endl;
       }
-      for(auto p : plant->getOrganRandomParameter(CPlantBox::Organism::OrganTypes::ot_leaf))
+      for (auto p : plant->getOrganRandomParameter(CPlantBox::Organism::OrganTypes::ot_leaf))
       {
         auto leaf = std::dynamic_pointer_cast<CPlantBox::LeafRandomParameter>(p);
-        leaf->leafGeometryPhi = {-90.0, -80.0, -45.0, 0.0, 45.0, 90.0};
+        leaf->leafGeometryPhi = { -90.0, -80.0, -45.0, 0.0, 45.0, 90.0 };
         // transform leafGeometryPhi to radians
         std::transform(leaf->leafGeometryPhi.begin(), leaf->leafGeometryPhi.end(), leaf->leafGeometryPhi.begin(), [](auto val) { return val * M_PI / 180.0; });
-        leaf->leafGeometryX = {38.41053981,1.0 ,1.0, 0.3, 1.0, 38.41053981};
+        leaf->leafGeometryX = { 38.41053981,1.0 ,1.0, 0.3, 1.0, 38.41053981 };
         leaf->createLeafRadialGeometry(leaf->leafGeometryPhi, leaf->leafGeometryX, 20);
       }
       plant->initialize(true, true);
@@ -786,22 +954,22 @@ int main(int argc, char** argv)
   m->StartSignalling();
   m->LockUntilConnected(800);
 
-  if(m->GetState() != Synavis::EConnectionState::CONNECTED)
+  if (m->GetState() != Synavis::EConnectionState::CONNECTED)
   {
-     lmain(Synavis::ELogVerbosity::Error) << "Failed to connect to the signalling server" << std::endl;
-     exit(1);
-   }
+    lmain(Synavis::ELogVerbosity::Error) << "Failed to connect to the signalling server" << std::endl;
+    exit(1);
+  }
 
   m->SetMessageCallback([](auto message)
     {
       using json = nlohmann::json;
       json interp = json::parse(message);
-      auto id = interp["id"].get<uint32_t>();
+      uint32_t id = interp["id"];
     });
 
   m->SendJSON({ {"type","command"},{"name","cam"}, {"camera", "scene"} });
-  m->SendJSON({{"type","console"},{"command","r.Streaming.PoolSize 30000"}});
-  m->SendJSON({ {"type","settings"},{"fMaxVelocity",50.0}, {"bRespondWithTiming", true} });
+  m->SendJSON({ {"type","console"},{"command","r.Streaming.PoolSize 30000"} });
+  m->SendJSON({ {"type","settings"},{"fMaxVelocity",50.0}, {"bRespondWithTiming", true}, {"bAutoNavigation", false} });
   m->SendJSON({ {"type", "schedule"}, {"time",1.0}, {"repeat",0.1}, {"command",{{"type","info"},{"frametime","yeye"}}} });
 
   std::string tempf = "/dev/shm/";
@@ -828,7 +996,7 @@ int main(int argc, char** argv)
       bool use_file = parser.HasArgument("use-file");
       lmain(Synavis::ELogVerbosity::Info) << "We are " << (use_file ? "" : "not ") << "using file-based transmission." << std::endl;
       response_concurrency(m, field_manager, rank, size, tempf, use_file, delay);
-    
+
     }
   }
 
