@@ -1,5 +1,8 @@
 # Synavis
 
+![synavis_small](https://github.com/dhelmrich/Synavis/assets/9272590/84b4c6b9-56f3-4d95-9f85-9cac7768eaaa)
+
+
 C++ WebRTC Bridge for Unreal Engine PixelStreaming
 
 Unreal Engine released PixelStreaming with its 4.27 version. It enables remote visualization for small-frontend devices.
