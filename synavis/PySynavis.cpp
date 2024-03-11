@@ -199,6 +199,7 @@ namespace Synavis
 
     m.def("VerboseMode", &VerboseMode);
     m.def("SilentMode", &SilentMode);
+    m.def("ExitWithMessage", &ExitWithMessage, py::arg("Message"), py::arg("Code"));
 
     py::class_<rtc::Configuration>(m, "PeerConnectionConfig")
         .def(py::init<>())
@@ -269,6 +270,7 @@ namespace Synavis
       .def("SetDontWaitForAnswer", &DataConnector::SetDontWaitForAnswer, py::arg("DontWaitForAnswer"))
       .def_readwrite("IP", &DataConnector::IP)
       .def_readwrite("PortRange", &DataConnector::IP)
+      .def("LockUntilConnected", &DataConnector::LockUntilConnected, py::arg("additional_wait") = 0)
     ;
 
     py::class_<MediaReceiver, PyMediaReceiver<>, std::shared_ptr<MediaReceiver>>(m, "MediaReceiver")
@@ -307,6 +309,7 @@ namespace Synavis
       .def("SetDontWaitForAnswer", &MediaReceiver::SetDontWaitForAnswer, py::arg("DontWaitForAnswer"))
       .def_readwrite("IP", &MediaReceiver::IP)
       .def_readwrite("PortRange", &MediaReceiver::IP)
+      .def("LockUntilConnected", &MediaReceiver::LockUntilConnected, py::arg("additional_wait") = 0)
     ;
 
     py::enum_<rtc::PeerConnection::GatheringState>(m, "GatheringState")

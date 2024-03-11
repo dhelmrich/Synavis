@@ -49,6 +49,12 @@ int Synavis::BridgeSocket::Receive(bool invalidIsFailure)
 #endif
 }
 
+void Synavis::ExitWithMessage(std::string Message, int Code)
+{
+  std::cout << Message << std::endl;
+  exit(Code);
+}
+
 int64_t Synavis::TimeSince(std::chrono::system_clock::time_point t)
 {
   std::chrono::system_clock::time_point sysnow = std::chrono::system_clock::now();

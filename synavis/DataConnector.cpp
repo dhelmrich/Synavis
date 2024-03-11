@@ -29,8 +29,8 @@ Synavis::DataConnector::~DataConnector()
 {
   SignallingServer->close();
   PeerConnection->close();
-  while (SignallingServer->readyState() != rtc::WebSocket::State::Closed)
-    std::this_thread::yield();
+  SubmissionHandler.Stop();
+  DataChannel->close();
 }
 
 void Synavis::DataConnector::StartSignalling()

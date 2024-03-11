@@ -150,6 +150,7 @@ namespace Synavis
     return encoded_length;
   }
 
+  void ExitWithMessage(std::string Message, int Code = 0);
 
   // forward definitions
   class Adapter;
