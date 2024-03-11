@@ -9,24 +9,27 @@
 // over the WebRTC connection. There are two roles: the sender and the receiver.
 int main(int args, char** arg)
 {
-  rtcInitLogger(RTC_LOG_VERBOSE, nullptr);
+  //rtcInitLogger(RTC_LOG_VERBOSE, nullptr);
   using namespace std::chrono_literals;
   using json = nlohmann::json;
   json Config = { {"SignallingIP","localhost"}, {"SignallingPort", 8080} };
   std::vector <uint64_t> times;
   std::string role;
-  if(args < 2)
+  if (args < 2)
   {
     role = "receiver";
   }
-  role = arg[1];
+  else
+  {
+    role = arg[1];
+  }
   auto dc = std::make_shared<Synavis::DataConnector>();
-  if(role == "sender")
+  if (role == "sender")
   {
     Config["SignallingPort"] = 8888;
     dc->SetTakeFirstStep(true);
   }
-  else if(role == "receiver")
+  else if (role == "receiver")
   {
     dc->SetMessageCallback([&times](std::string m)
     {
@@ -38,12 +41,14 @@ int main(int args, char** arg)
     });
   }
   dc->SetConfig(Config);
+  dc->Initialize();
   dc->StartSignalling();
-  while(dc->GetState() != Synavis::EConnectionState::CONNECTED)
+  dc->LockUntilConnected(2000);
+  if (dc->GetState() != Synavis::EConnectionState::CONNECTED)
   {
-    std::this_thread::yield();
+    std::cout << "Connection failed" << std::endl;
   }
-  if(role == "sender")
+  if (role == "sender")
   {
     while (dc->GetState() == Synavis::EConnectionState::CONNECTED)
     {
