@@ -8,6 +8,8 @@
 #include <json.hpp>
 
 #include "rtc/description.hpp"
+#include "rtc/rtcpreceivingsession.hpp"
+#include "rtc/track.hpp"
 
 namespace Synavis
 {
@@ -26,6 +28,8 @@ public:
     FrameReceptionCallback = Callback;
   }
 
+  auto GetFrameReceptionCallback(){ return this->FrameReceptionCallback; }
+
   void SetOnTrackOpenCallback(std::function<void(void)> Callback)
   {
     OnTrackOpenCallback = Callback;
@@ -35,18 +39,20 @@ public:
 
   virtual void PrintCommunicationData() override;
 
-  std::vector<uint8_t> DecodeFrame(rtc::binary Frame);
-
   void RequestKeyFrame();
-
+  void SendMouseClick();
+  void StartStreaming();
+  void StopStreaming();
   void SetCodec(ECodec Codec) {this->Codec = Codec;}
 
 
 protected:
   std::shared_ptr<rtc::Track> Track;
+  std::shared_ptr<rtc::Track> theirTrack;
   rtc::Description::Video MediaDescription{"video", rtc::Description::Direction::RecvOnly};
   std::shared_ptr<BridgeSocket> FrameRelay;
   std::shared_ptr<rtc::RtcpReceivingSession> RtcpReceivingSession;
+  std::shared_ptr<rtc::MediaHandler> BaseMediaHandler;
 
   std::optional<std::function<void(rtc::binary)>> FrameReceptionCallback;
   std::optional<std::function<void(void)>> OnTrackOpenCallback;

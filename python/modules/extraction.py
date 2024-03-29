@@ -56,6 +56,8 @@ def frame_callback(frame) :
   print("Received frame.")
 
 m = rtc.MediaReceiver()
+f = rtc.FrameDecode()
+f.SetFrameCallback(frame_callback)
 m.Initialize()
 #Media.SetConfigFile("config.json")
 m.SetConfig({"SignallingIP": "127.0.0.1","SignallingPort":8080})
@@ -63,29 +65,9 @@ m.SetTakeFirstStep(False)
 m.StartSignalling()
 m.SetDataCallback(data_callback)
 m.SetMessageCallback(message_callback)
-m.SetFrameReceptionCallback(frame_callback)
+m.SetFrameReceptionCallback(f.CreateAcceptor(data_callback))
 
 while not m.GetState() == rtc.EConnectionState.CONNECTED:
   time.sleep(0.1)
 
 print("Starting")
-
-time.sleep(1)
-
-reset_message()
-
-
-
-
-# try parse json
-#answer = json.loads(answer)
-# get a random entry form answer["data"]
-#entry = answer["data"][np.random.randint(0, len(answer["data"]))]
-# send the entry to the server with a query again
-#msg = {"type":"query", "object":entry}
-#print("Sending: ", msg)
-#m.SendJSON(msg)
-#answer = get_message()
-#print("In main thread: ", answer)
-
-

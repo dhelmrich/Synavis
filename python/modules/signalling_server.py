@@ -9,6 +9,7 @@ import threading
 import sys
 import ast
 import os
+import numpy as np
 
 ws.debug = True
 
@@ -47,6 +48,7 @@ ifconfig = []
 # read in ifconfig globally once
 if sys.platform.startswith("linux") :
   ifconfig = subprocess.check_output(["ifconfig", "-a"], stderr=subprocess.STDOUT).decode("utf-8").split("\n")
+  ifconfig = [line.strip() for line in ifconfig if len(line) > 0]
 #endif
 
 class NoLog() :
@@ -102,7 +104,10 @@ class Logger() :
   def success(self, message) :
     self.log(message, Fore.GREEN)
   #enddef
-
+  def set_log_(self, log) :
+    self.log_file.close()
+    self.log_file = log
+  #enddef
   def set_log_file(self, fname) :
     self.log_file.close()
     # quick convenience: remove old log file
@@ -111,7 +116,6 @@ class Logger() :
     #endif
     self.fname = fname
     self.log_file = open(fname, "w")
-
   def log_outgoing(self, message, receiver = None) :
     if receiver != None :
       self.log(str(receiver.role) + "[" + str(receiver.id) + "]" + " -> " + str(message), Fore.BLUE)
@@ -124,7 +128,6 @@ class Logger() :
     else :
       self.log("<- " + message, Fore.CYAN)
   #enddef
-
   def log_many(self, level = "info", *messages) :
     cumulated = ""
     for message in messages :
@@ -272,6 +275,9 @@ class Connection() :
       self.supports_synchronous_data = True
     #endfor
   #enddef
+  def __len__(self) :
+    return len(self.connected_ids)
+  #enddef    
 #endclass
 
 async def handle(connection, message) :
@@ -342,11 +348,18 @@ async def connection(websocket, path) :
     connections[connection.id] = connection
   if connection.role == "client" :
     await connection.send(json.dumps({"type": "id", "id": connection.id}))
-    if active_server != None :
-      connection.assign(active_server)
-      active_server.assign(connection)
+    servers = [id for id in connections if connections[id].role == "server"]
+    least_used = None
+    usage_min = np.argmin([len(connections[id]) for id in servers])
+    if len(servers) > 0 and usage_min < len(servers) :
+      least_used = connections[servers[usage_min]]
+    #endif
+    if least_used != None :
+      connection.assign(least_used)
+      least_used.assign(connection)
       # send an unreal-like player connect message
-      await active_server.send(json.dumps({"type":"playerConnected", "playerId": str(connection.id), "dataChannel": True, "sfu": False}))
+      await least_used.send(json.dumps({"type":"playerConnected", "playerId": str(connection.id), "dataChannel": True, "sfu": False}))
+    #endif
   elif connection.role == "server" :
     # deactivate ping frames
     connection.websocket.ping_interval = None
@@ -432,14 +445,14 @@ async def main() :
     elif any(p in a for a in sys.argv for p in ["--target-ip", "-t"]) :
       custom_ip = True
       target_ip = sys.argv[sys.argv.index("--target-ip") + 1]
-    elif any(p in a for a in sys.argv for p in ["--log-file", "-l"]) :
+    elif any(p in a for a in sys.argv for p in ["--log-file", "-f"]) :
       glog.set_log_file(sys.argv[sys.argv.index("--log-file") + 1])
     elif any(p in a for a in sys.argv for p in ["--cluster", "-j"]) :
       # cluster mode, communicate that certain ICE candidates are preffered to UE
       glog.info("Cluster mode enabled")
       cluster_mode = True
     elif "--no-log" in sys.argv :
-      glog.set_log_file(NoLog())
+      glog.set_log_(NoLog())
     elif "--loopback" in sys.argv :
       lo = get_loopback_interface()
       if lo != None :
@@ -454,7 +467,7 @@ async def main() :
   if not custom_ip :
     ib = get_infiniband_interface()
     if ib != None :
-      target_ip = get_interface_ip(ib)
+      target_ip = get_interface_ip("ib")
       if target_ip != None :
         glog.info("Using infiniband IP: " + target_ip)
       else :
@@ -469,7 +482,12 @@ async def main() :
     glog.warn("IP address was not provided through interface search or command line arguments")
     glog.warn("Using wildcard: " + target_ip)
   # start the signalling server
-  glog.info("Starting server...")
+  # print where we expect the client/server connections
+  glog.info("Starting signalling server..."
+    + "\n  Server: " + target_ip + ":" + str(server_port)
+    + "\n  Client: " + target_ip + ":" + str(client_port))
+  
+
   async with ws.serve(connection, target_ip, server_port, compression = None) as ServerConnection, \
    ws.serve(connection, target_ip, client_port, compression = None) as ClientConnection:
     ServerConnection.ping_interval = None

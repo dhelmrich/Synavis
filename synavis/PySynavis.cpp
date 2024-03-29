@@ -19,6 +19,7 @@
 
 #include "DataConnector.hpp"
 #include "MediaReceiver.hpp"
+#include "FrameDecodeAV.hpp"
 namespace py = pybind11;
 
 #include "UnrealReceiver.hpp"
@@ -198,6 +199,7 @@ namespace Synavis
 
     m.def("VerboseMode", &VerboseMode);
     m.def("SilentMode", &SilentMode);
+    m.def("ExitWithMessage", &ExitWithMessage, py::arg("Message"), py::arg("Code"));
 
     py::class_<rtc::Configuration>(m, "PeerConnectionConfig")
         .def(py::init<>())
@@ -227,6 +229,13 @@ namespace Synavis
       .def("Connect",&BridgeSocket::Connect)
       .def("Peek",&BridgeSocket::Peek)
       .def("ReinterpretInt",&BridgeSocket::Reinterpret<int>)
+    ;
+
+    py::class_<WorkerThread, std::shared_ptr<WorkerThread>>(m, "WorkerThread")
+      .def(py::init<>())
+      .def("AddTask", &WorkerThread::AddTask)
+      .def("Stop", &WorkerThread::Stop)
+      .def("GetTaskCount", &WorkerThread::GetTaskCount)
     ;
 
     py::class_<DataConnector, PyDataConnector<>, std::shared_ptr<DataConnector>>(m, "DataConnector")
@@ -261,6 +270,7 @@ namespace Synavis
       .def("SetDontWaitForAnswer", &DataConnector::SetDontWaitForAnswer, py::arg("DontWaitForAnswer"))
       .def_readwrite("IP", &DataConnector::IP)
       .def_readwrite("PortRange", &DataConnector::IP)
+      .def("LockUntilConnected", &DataConnector::LockUntilConnected, py::arg("additional_wait") = 0)
     ;
 
     py::class_<MediaReceiver, PyMediaReceiver<>, std::shared_ptr<MediaReceiver>>(m, "MediaReceiver")
@@ -299,6 +309,7 @@ namespace Synavis
       .def("SetDontWaitForAnswer", &MediaReceiver::SetDontWaitForAnswer, py::arg("DontWaitForAnswer"))
       .def_readwrite("IP", &MediaReceiver::IP)
       .def_readwrite("PortRange", &MediaReceiver::IP)
+      .def("LockUntilConnected", &MediaReceiver::LockUntilConnected, py::arg("additional_wait") = 0)
     ;
 
     py::enum_<rtc::PeerConnection::GatheringState>(m, "GatheringState")
@@ -332,6 +343,11 @@ namespace Synavis
       .def("OnSignallingMessage", (void(Provider::*)(std::string)) & PyProvider<>::OnSignallingMessage, py::arg("Message"))
     ;
 
+    py::class_<FrameDecode, std::shared_ptr<FrameDecode>>(m, "FrameDecode")
+      .def(py::init<>())
+      .def("CreateAcceptor", &FrameDecode::CreateAcceptor)
+      .def("SetFrameCallback", &FrameDecode::SetFrameCallback)
+    ;
   }
 
 }

@@ -7,10 +7,19 @@
 #include <span>
 #include <variant>
 #include <chrono>
+#include <fstream>
+#include <queue>
+#include <ostream>
+#include <syncstream>
 #include <rtc/rtc.hpp>
 #include "Synavis/export.hpp"
 
 #define MAX_RTP_SIZE 208 * 1024
+
+#define AS_UINT8(x) reinterpret_cast<uint8_t*>(x)
+#define AS_CUINT8(x) reinterpret_cast<const uint8_t*>(x)
+#define AS_BYTE(x) reinterpret_cast<std::byte*>(x)
+#define AS_CBYTE(x) reinterpret_cast<const std::byte*>(x)
 
 #if defined _WIN32
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
@@ -25,11 +34,12 @@ bool ParseTimeFromString(std::string Source, std::chrono::utc_time<std::chrono::
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <date/date.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
 #include <fcntl.h>
 bool ParseTimeFromString(std::string Source, std::chrono::time_point<std::chrono::system_clock>& Destination);
 
 #endif
-
 
 namespace Synavis
 {
@@ -75,6 +85,15 @@ namespace Synavis
     >, void >> : public std::true_type
   {
   };
+
+  // inline function to retrieve the byte size of a buffer
+  template < typename T >
+  static size_t ByteSize(const T& Data)
+  {
+    // check if the data is convertible to a pointer
+    static_assert(is_pointer_convertible<T>::value, "Data must be convertible to a pointer");
+    return Data.size() * sizeof(decltype(*Data.data()));
+  }
 
   // a function to encode a rtc::binary object into a base64 string
   // adapted from https://stackoverflow.com/questions/180947/base64-decode-snippet-in-c
@@ -131,11 +150,16 @@ namespace Synavis
     return encoded_length;
   }
 
+  void ExitWithMessage(std::string Message, int Code = 0);
+
   // forward definitions
   class Adapter;
 
   int64_t TimeSince(std::chrono::system_clock::time_point t);
   double HighRes();
+
+  std::string GetLocalIP();
+  std::string FormattedTime(std::chrono::system_clock::time_point Time, bool ms = false);
 
   inline void SYNAVIS_EXPORT VerboseMode()
   {
@@ -145,6 +169,19 @@ namespace Synavis
   inline void SYNAVIS_EXPORT SilentMode()
   {
     rtcInitLogger(RTC_LOG_NONE, nullptr);
+  }
+
+  inline std::ofstream SYNAVIS_EXPORT OpenUniqueFile(std::string Base)
+  {
+    // remove ending
+    std::string Filename = Base;
+    // remove file extension
+    Filename.erase(Filename.find_last_of("."), std::string::npos);
+    // add timestamp
+    Filename += "_" + FormattedTime(std::chrono::system_clock::now());
+    // add file extension
+    Filename += ".log";
+    return std::ofstream(Filename, std::ios::app);
   }
 
   // a class to represent access to a buffer in reverse byte order
@@ -246,7 +283,7 @@ namespace Synavis
   };
 
 #pragma pack(push, 1)
-  struct BridgeRTPHeader
+  struct SYNAVIS_EXPORT BridgeRTPHeader
   {
     // Extension Header
     uint16_t profile_id{ 1667 };
@@ -268,7 +305,8 @@ namespace Synavis
     UnfreezeFrame,
     VideoEncoderAvgQP,
     LatencyTest,
-    InitialSettings
+    InitialSettings,
+    TestEcho
   };
 
   enum class SYNAVIS_EXPORT EConnectionState
@@ -321,11 +359,198 @@ namespace Synavis
     VP8 = (std::uint8_t)ELogVerbosity::Verbose + 1u,
     VP9,
     H264,
-    H265
+    H265,
+    None
+  };
+
+  // a simple logger for the library
+  class SYNAVIS_EXPORT Logger
+  {
+  public:
+    class LoggerInstance
+    {
+      LoggerInstance(const LoggerInstance&) = delete;
+      LoggerInstance& operator=(const LoggerInstance&) = delete;
+      LoggerInstance(LoggerInstance&&) = delete;
+      LoggerInstance& operator=(LoggerInstance&&) = delete;
+    private:
+      friend class Logger;
+      LoggerInstance(std::string Instigator)
+      {
+        this->Instigator = Instigator;
+        this->Parent = Logger::Get();
+      }
+      inline std::string TimeStamp() const
+      {
+        return FormattedTime(std::chrono::system_clock::now(), true);
+      }
+
+      std::string Instigator;
+      Logger* Parent;
+    public:
+      ~LoggerInstance() = default;
+      template < typename T >
+      Logger& operator<<(T&& Message) const
+      {
+        *Parent << "[" << Instigator << "]"
+          << "[" << TimeStamp() << "]: "
+          << Message;
+        return *Parent;
+      }
+      const LoggerInstance& operator()(ELogVerbosity V) const
+      {
+        Parent->SetState(V);
+        return *this;
+      }
+
+    };
+    // singleton
+    Logger(const Logger&) = default;
+    Logger& operator=(const Logger&) = default;
+    Logger(Logger&&) = delete;
+    Logger& operator=(Logger&&) = delete;
+    ~Logger()
+    {
+      if (LogFile)
+      {
+        LogFile->flush();
+        delete LogFile;
+      }
+    }
+
+    static Logger* Get()
+    {
+      static Logger instance;
+      return &instance;
+    }
+
+    LoggerInstance LogStarter(std::string Instigator) const
+    {
+      return LoggerInstance(Instigator);
+    }
+
+    void SetupLogfile(std::string Filename)
+    {
+      LogFile = new std::ofstream(OpenUniqueFile(Filename));
+      // combine file and cout streams
+      LogFile->rdbuf()->pubsetbuf(0, 0);
+    }
+
+    void SetupLogfile(std::ofstream&& File)
+    {
+      LogFile = new std::ofstream(std::move(File));
+      // combine file and cout streams
+      LogFile->rdbuf()->pubsetbuf(0, 0);
+    }
+
+    // two stream operators for logging
+    // first use of << will be the verbosity
+    // second use of << will be the message
+    template < typename T >
+    Logger& operator<<(T&& Message)
+    {
+      if (this->StatusVerbosity <= Verbosity)
+      {
+        if (LogFile)
+        {
+          *LogFile << Message;
+        }
+        if (this->StatusVerbosity <= ELogVerbosity::Error)
+          std::cerr << Message;
+        else
+          std::cout << Message;
+      }
+      return *this;
+    }
+
+    void SetState(ELogVerbosity V) const
+    {
+      this->StatusVerbosity = V;
+    }
+
+    void SetVerbosity(ELogVerbosity V)
+    {
+      this->Verbosity = V;
+    }
+
+    ELogVerbosity GetVerbosity() const
+    {
+      return Verbosity;
+    }
+
+    void SetVerbosity(std::string V)
+    {
+      // make V lowercase
+      std::transform(V.begin(), V.end(), V.begin(), ::tolower);
+      if (V == "silent")
+      {
+        this->Verbosity = ELogVerbosity::Silent;
+      }
+      else if (V == "error")
+      {
+        this->Verbosity = ELogVerbosity::Error;
+      }
+      else if (V == "warning")
+      {
+        this->Verbosity = ELogVerbosity::Warning;
+      }
+      else if (V == "info")
+      {
+        this->Verbosity = ELogVerbosity::Info;
+      }
+      else if (V == "debug")
+      {
+        this->Verbosity = ELogVerbosity::Debug;
+      }
+      else if (V == "verbose")
+      {
+        this->Verbosity = ELogVerbosity::Verbose;
+      }
+    }
+
+    // reset state when std::endl or std::flush is detected
+    Logger& operator<<(std::ostream& (*pf)(std::ostream&))
+    {
+      if (this->StatusVerbosity <= ELogVerbosity::Error)
+      {
+        std::cerr << std::endl;
+        if (LogFile)
+        {
+          *LogFile << std::endl;
+        }
+      }
+      else if (this->StatusVerbosity <= Verbosity)
+      {
+        if (LogFile)
+        {
+          *LogFile << std::endl;
+        }
+        std::cout << std::endl;
+      }
+      this->StatusVerbosity = ELogVerbosity::Silent;
+      return *this;
+    }
+
+  private:
+    Logger() = default;
+
+    std::ostream* LogFile = nullptr;
+    ELogVerbosity Verbosity = ELogVerbosity::Info;
+    mutable ELogVerbosity StatusVerbosity = ELogVerbosity::Silent;
   };
 
   using StreamVariant = std::variant<std::shared_ptr<rtc::DataChannel>,
     std::shared_ptr<rtc::Track>>;
+
+  class SYNAVIS_EXPORT CommandLineParser
+  {
+  public:
+    CommandLineParser(int argc, char** argv);
+    std::string GetArgument(std::string Name);
+    bool HasArgument(std::string Name);
+  private:
+    std::unordered_map<std::string, std::string> Arguments;
+  };
 
   class SYNAVIS_EXPORT NoBufferThread
   {
@@ -350,6 +575,8 @@ namespace Synavis
     ~WorkerThread();
     void Run();
     void AddTask(std::function<void(void)>&& Task);
+    void Stop();
+    uint64_t GetTaskCount();
   private:
     std::future<void> Thread;
     std::mutex TaskMutex;
@@ -409,13 +636,13 @@ namespace Synavis
     EMessageTimeoutPolicy TimeoutPolicy;
     std::chrono::system_clock::duration Timeout;
     json Config{
-      {
-        {"LocalPort", int()},
-        {"RemotePort",int()},
-        {"LocalAddress",int()},
-        {"RemoteAddress",int()},
-        {"Signalling",int()}
-      } };
+    {
+      {"LocalPort", int()},
+      {"RemotePort",int()},
+      {"LocalAddress",int()},
+      {"RemoteAddress",int()},
+      {"Signalling",int()}
+    } };
     std::unordered_map<int, std::shared_ptr<Adapter>> EndpointById;
     std::future<void> BridgeThread;
     std::mutex QueueAccess;

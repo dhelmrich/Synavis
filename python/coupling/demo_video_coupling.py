@@ -28,9 +28,9 @@ def message_callback(msg) :
 
 import PySynavis as rtc
 
-dataconnector = rtc.DataConnector()
+dataconnector = rtc.MediaReceiver()
 dataconnector.Initialize()
-dataconnector.SetConfig({"SignallingIP": "127.0.0.1", "SignallingPort", 8080})
+dataconnector.SetConfig({"SignallingIP": "127.0.0.1", "SignallingPort": 8080})
 dataconnector.SetTakeFirstStep(True)
 dataconnector.StartSignalling()
 dataconnector.SetMessageCallback(message_callback)

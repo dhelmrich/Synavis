@@ -5,33 +5,54 @@
 #include <fstream>
 #include <span>
 
+#ifdef __HAS_FORMAT
+#include <format>
+#else
+#define FMT_HEADER_ONLY
+#include <fmt/format.h>
+namespace std
+{
+  using fmt::format;
+}
+#endif
+
+
+
 // std::cout << "" << std::endl;
+
+
 
 int Synavis::BridgeSocket::Receive(bool invalidIsFailure)
 {
 #ifdef _WIN32
   int length = sizeof(Remote);
-  auto size = recvfrom(Sock,Reception,MAX_RTP_SIZE,0,reinterpret_cast<sockaddr*>(&Remote),&length);
+  auto size = recvfrom(Sock, Reception, MAX_RTP_SIZE, 0, reinterpret_cast<sockaddr*>(&Remote), &length);
   //auto size = recv(Sock,Reception,MAX_RTP_SIZE,0);
-  if(size < 0)
+  if (size < 0)
   {
     std::cout << "Encountered error!" << std::endl;
     return 0;
   }
-  StringData = std::string_view(Reception,size);
+  StringData = std::string_view(Reception, size);
   return size;
 #elif __linux__
 #include <sys/socket.h>
   socklen_t length = static_cast<socklen_t>(sizeof(Remote));
   auto size = recvfrom(Sock, Reception, MAX_RTP_SIZE, 0, reinterpret_cast<struct sockaddr*>(&Remote), &length);
-  if(size < 0)
+  if (size < 0)
   {
     std::cout << "Encountered error!" << std::endl;
     return 0;
   }
-  StringData = std::string_view(Reception,size);
+  StringData = std::string_view(Reception, size);
   return 0;
 #endif
+}
+
+void Synavis::ExitWithMessage(std::string Message, int Code)
+{
+  std::cout << Message << std::endl;
+  exit(Code);
 }
 
 int64_t Synavis::TimeSince(std::chrono::system_clock::time_point t)
@@ -49,11 +70,80 @@ double Synavis::HighRes()
   return diff.count();
 }
 
+std::string Synavis::GetLocalIP()
+{
+  std::string ip;
+#ifdef _WIN32
+  WSADATA wsaData;
+  if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
+  {
+    // fetch error message
+    auto error = WSAGetLastError();
+    std::string message;
+    message.resize(256, '\0');
+    FormatMessage(
+      FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+      0, error, 0, message.data(), 256, 0);
+    std::cout << message << std::endl;
+    return {};
+  }
+  else
+  {
+    char hostname[255];
+    gethostname(hostname, sizeof(hostname));
+    struct hostent* hostinfo;
+    hostinfo = gethostbyname(hostname);
+    ip = inet_ntoa(*(struct in_addr*)*hostinfo->h_addr_list);
+  }
+#elif defined __linux__
+  int fd;
+  struct ifreq ifr;
+  fd = socket(AF_INET, SOCK_DGRAM, 0);
+  ifr.ifr_addr.sa_family = AF_INET;
+  strncpy(ifr.ifr_name, "ib0", IFNAMSIZ - 1);
+  ioctl(fd, SIOCGIFADDR, &ifr);
+  close(fd);
+  ip = inet_ntoa(((struct sockaddr_in*)&ifr.ifr_addr)->sin_addr);
+#endif
+  return ip;
+}
+
+std::string Synavis::FormattedTime(std::chrono::system_clock::time_point Time, bool ms)
+{
+  // format to YYYY_MM_DD_HH_MM_SS
+  std::time_t t = std::chrono::system_clock::to_time_t(Time);
+  std::tm tm;
+#ifdef WIN32
+  // use localtime_s
+  localtime_s(&tm, &t);
+#elif defined __linux__
+  // use localtime_r
+  localtime_r(&t, &tm);
+#endif
+  std::string time;
+  if(ms)
+  {
+    // get milliseconds
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(Time.time_since_epoch()).count() % 1000;
+    time = std::format("{:04d}_{:02d}_{:02d}_{:02d}_{:02d}_{:02d}_{:03d}", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, ms);
+  }
+  else
+  {
+    time = std::format("{:04d}_{:02d}_{:02d}_{:02d}_{:02d}_{:02d}", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+  }
+
+  return time;
+}
+
 void Synavis::BridgeSocket::SetAddress(std::string inAddress)
-{ this->Address = inAddress; }
+{
+  this->Address = inAddress;
+}
 
 std::string Synavis::BridgeSocket::GetAddress()
-{ return this->Address; }
+{
+  return this->Address;
+}
 
 void Synavis::BridgeSocket::SetBlockingEnabled(bool Blocking)
 {
@@ -65,51 +155,55 @@ void Synavis::BridgeSocket::SetBlockingEnabled(bool Blocking)
   int flags = fcntl(Sock, F_GETFL, 0);
   if (flags >= 0)
   {
-    if(Blocking)
+    if (Blocking)
     {
       flags &= (~O_NONBLOCK);
     }
     else
       flags |= O_NONBLOCK;
     fcntl(Sock, F_SETFL, flags);
-  }
+}
 
 #endif
 }
 
-Synavis::BridgeSocket::BridgeSocket():Reception(new char[MAX_RTP_SIZE])
+Synavis::BridgeSocket::BridgeSocket() :Reception(new char[MAX_RTP_SIZE])
 {
 }
 
 Synavis::BridgeSocket::~BridgeSocket()
 {
-    
+
 #ifdef _WIN32
-  auto result = shutdown(Sock,SD_BOTH);
+  auto result = shutdown(Sock, SD_BOTH);
   if (result == SOCKET_ERROR) {
     closesocket(Sock);
     WSACleanup();
   }
 #elif defined __linux__
-      shutdown(Sock,2);
+  shutdown(Sock, 2);
 #endif
   delete[] Reception;
-}
+  }
 
 int Synavis::BridgeSocket::GetSocketPort()
-{return Port;}
+{
+  return Port;
+}
 
 void Synavis::BridgeSocket::SetSocketPort(int Port)
-{this->Port = Port;}
+{
+  this->Port = Port;
+}
 
 std::string Synavis::BridgeSocket::What()
 {
 #ifdef _WIN32
   std::string message;
-  message.resize(256,'\0');
+  message.resize(256, '\0');
   FormatMessage(
-          FORMAT_MESSAGE_FROM_SYSTEM|FORMAT_MESSAGE_IGNORE_INSERTS,
-          0, WSAGetLastError(), 0, message.data(), 256, 0);
+    FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+    0, WSAGetLastError(), 0, message.data(), 256, 0);
   return message;
 #elif defined __linux__
 
@@ -120,15 +214,15 @@ std::string Synavis::BridgeSocket::What()
 
 bool Synavis::BridgeSocket::Connect()
 {
-  if(Address == "localhost")
+  if (Address == "localhost")
   {
     Address = "127.0.0.1";
   }
 #ifdef _WIN32
   int size = sizeof(Addr);
   WSADATA wsaData;
-  auto iResult = WSAStartup(MAKEWORD(2,2), &wsaData);
-  if ( iResult != 0 )
+  auto iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
+  if (iResult != 0)
   {
     return false;
   }
@@ -145,15 +239,15 @@ bool Synavis::BridgeSocket::Connect()
   // ...
   // That being said, I am also not super keen on this setup, so any
   // suggestion is always welcome.IPPROTO_HOPOPTS
-  Sock = socket(AF_INET,SOCK_DGRAM,IPPROTO_UDP);
-  Addr.sin_addr.s_addr=inet_addr(Address.c_str());
+  Sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  Addr.sin_addr.s_addr = inet_addr(Address.c_str());
   Addr.sin_port = htons(Port);
   Addr.sin_family = AF_INET;
   //getsockname(NULL,reinterpret_cast<sockaddr*>(&Addr),&size);
   //Port = *reinterpret_cast<int*>(info.sa_data);
-  if(Outgoing)
+  if (Outgoing)
   {
-    if(connect(Sock,reinterpret_cast<sockaddr*>(&Addr),sizeof(sockaddr_in)) == SOCKET_ERROR)
+    if (connect(Sock, reinterpret_cast<sockaddr*>(&Addr), sizeof(sockaddr_in)) == SOCKET_ERROR)
     {
       closesocket(Sock);
       WSACleanup();
@@ -167,7 +261,7 @@ bool Synavis::BridgeSocket::Connect()
   }
   else
   {
-    if(bind(Sock,reinterpret_cast<sockaddr*>(&Addr),sizeof(sockaddr_in)) == SOCKET_ERROR)
+    if (bind(Sock, reinterpret_cast<sockaddr*>(&Addr), sizeof(sockaddr_in)) == SOCKET_ERROR)
     {
       closesocket(Sock);
       WSACleanup();
@@ -181,24 +275,24 @@ bool Synavis::BridgeSocket::Connect()
   }
 #elif defined __linux__
   Sock = socket(AF_INET, SOCK_DGRAM, 0);
-  int state{-1};
+  int state{ -1 };
   if (Sock < 0)
   {
     std::cout << "[BridgeSocket]: failed at establishing the socket" << std::endl;
-    return false; 
+    return false;
   }
   bzero((char*)&Addr, sizeof(Addr));
   Addr.sin_family = AF_INET;
   //Addr.sin_addr.s_addr <-- via parsing
-  if(inet_aton(Address.c_str(), &Addr.sin_addr) == 0)
+  if (inet_aton(Address.c_str(), &Addr.sin_addr) == 0)
   {
     std::cout << "failed at parsing IP" << std::endl;
     return false;
   }
   Addr.sin_port = htons(Port);
-  if(Outgoing)
+  if (Outgoing)
   {
-    if(connect(Sock,reinterpret_cast<sockaddr*>(&Addr),sizeof(sockaddr_in)) < 0)
+    if (connect(Sock, reinterpret_cast<sockaddr*>(&Addr), sizeof(sockaddr_in)) < 0)
     {
       std::cout << "failed at connecting" << std::endl;
       return false;
@@ -209,13 +303,13 @@ bool Synavis::BridgeSocket::Connect()
     bzero((char*)&Remote, sizeof(Remote));
     Remote.sin_family = AF_INET;
     Remote.sin_addr.s_addr = htonl(INADDR_ANY);
-    
-    if(inet_aton(Address.c_str(), &Addr.sin_addr) == 0)
+
+    if (inet_aton(Address.c_str(), &Addr.sin_addr) == 0)
     {
       std::cout << "failed at parsing IP" << std::endl;
       return false;
     }
-    
+
     Remote.sin_port = htons(Port);
     const int option = 1;
     setsockopt(Sock, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(int));
@@ -229,8 +323,8 @@ bool Synavis::BridgeSocket::Connect()
   Valid = true;
   return true;
 #endif
-    
-}
+
+    }
 
 void Synavis::BridgeSocket::Disconnect()
 {
@@ -238,7 +332,7 @@ void Synavis::BridgeSocket::Disconnect()
   closesocket(Sock);
   WSACleanup();
 #elif defined __linux__
-  shutdown(Sock,2);
+  shutdown(Sock, 2);
 #endif
 }
 
@@ -246,7 +340,7 @@ int Synavis::BridgeSocket::ReadSocketFromBinding()
 {
 #ifdef _WIN32
   int size = sizeof(info);
-  getsockname(Sock,&info,&size);
+  getsockname(Sock, &info, &size);
   Port = *reinterpret_cast<int*>(info.sa_data);
   return Port;
 #elif defined __linux__
@@ -259,21 +353,21 @@ Synavis::BridgeSocket Synavis::BridgeSocket::GetFreeSocket(std::string adr)
   BridgeSocket s;
   s.Address = adr;
   s.Valid = false;
-      
+
 #ifdef _WIN32
   int size = sizeof(Addr);
-  s.Sock = socket(AF_INET,SOCK_DGRAM,0);
+  s.Sock = socket(AF_INET, SOCK_DGRAM, 0);
   s.Addr.sin_addr.s_addr = inet_addr(adr.c_str());
   s.Addr.sin_port = htons(s.Port);
   s.Addr.sin_family = AF_INET;
-  getsockname(s.Sock,&s.info,&size);
+  getsockname(s.Sock, &s.info, &size);
   s.Port = *reinterpret_cast<int*>(s.info.sa_data);
   return s;
 #elif __linux__
   s.Sock = socket(AF_INET, SOCK_DGRAM, 0);
   if (s.Sock < 0)
   {
-    return s; 
+    return s;
   }
   bzero((char*)&s.Addr, sizeof(Addr));
   s.Port = 0;
@@ -294,20 +388,20 @@ int Synavis::BridgeSocket::Peek()
 {
 #ifdef _WIN32
   SetBlockingEnabled(false);
-  auto size = recv(Sock,Reception,MAX_RTP_SIZE,MSG_PEEK);
-  if(size < 0 && WSAGetLastError() == WSAEWOULDBLOCK)
+  auto size = recv(Sock, Reception, MAX_RTP_SIZE, MSG_PEEK);
+  if (size < 0 && WSAGetLastError() == WSAEWOULDBLOCK)
   {
     return 0;
   }
   else
   {
-    StringData = std::string_view(Reception,size);
+    StringData = std::string_view(Reception, size);
   }
   SetBlockingEnabled(true);
 #elif defined __linux__
   SetBlockingEnabled(false);
-  auto size = recv(Sock, Reception, MAX_RTP_SIZE, 0 );
-  if(size < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+  auto size = recv(Sock, Reception, MAX_RTP_SIZE, 0);
+  if (size < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
   {
     return 0;
   }
@@ -322,11 +416,11 @@ int Synavis::BridgeSocket::Peek()
 
 bool Synavis::BridgeSocket::Send(std::variant<rtc::binary, std::string> message)
 {
-  if(Outgoing && this->Valid)
+  if (Outgoing && this->Valid)
   {
     const char* buffer;
     int length;
-    if(std::holds_alternative<std::string>(message))
+    if (std::holds_alternative<std::string>(message))
     {
       buffer = std::get<std::string>(message).c_str();
       length = static_cast<int>(std::get<std::string>(message).length());
@@ -337,8 +431,8 @@ bool Synavis::BridgeSocket::Send(std::variant<rtc::binary, std::string> message)
       length = static_cast<int>(std::get<rtc::binary>(message).size());
     }
     int status;
-    if((status = send(Sock,buffer,length,0)) < 0)
-    //if((status = sendto(Sock, buffer, length, 0, reinterpret_cast<sockaddr*>(&Addr), sizeof(sockaddr_in))) == 0)
+    if ((status = send(Sock, buffer, length, 0)) < 0)
+      //if((status = sendto(Sock, buffer, length, 0, reinterpret_cast<sockaddr*>(&Addr), sizeof(sockaddr_in))) == 0)
     {
       return false;
     }
@@ -353,10 +447,52 @@ bool Synavis::BridgeSocket::Send(std::variant<rtc::binary, std::string> message)
   }
 }
 
-Synavis::NoBufferThread::NoBufferThread(std::shared_ptr<BridgeSocket> inDataSource)
-    : SocketConnection(inDataSource)
+Synavis::CommandLineParser::CommandLineParser(int argc, char** argv)
 {
-  Thread = std::async(&Synavis::NoBufferThread::Run,this);
+  for (int i = 1; i < argc; i++) // skip program name
+  {
+    std::string arg = argv[i];
+    if (arg[0] == '-')
+    {
+      // remove all leading dashes
+      while (arg[0] == '-')
+      {
+        arg.erase(0, 1);
+      }
+      if (i + 1 < argc && argv[i + 1][0] != '-')
+      {
+        std::string value = argv[i + 1];
+        Arguments[arg] = value;
+      }
+      else
+      {
+        Arguments[arg] = "";
+      }
+    }
+  }
+}
+
+std::string Synavis::CommandLineParser::GetArgument(std::string Name)
+{
+  if (Arguments.find(Name) != Arguments.end())
+  {
+    return Arguments[Name];
+  }
+  else
+  {
+    return "";
+  }
+}
+
+bool Synavis::CommandLineParser::HasArgument(std::string Name)
+{
+  return Arguments.find(Name) != Arguments.end();
+}
+
+Synavis::NoBufferThread::NoBufferThread(std::shared_ptr<BridgeSocket> inDataSource)
+  : SocketConnection(inDataSource)
+{
+  Thread = std::async(&Synavis::NoBufferThread::Run, this);
 }
 
 std::size_t Synavis::NoBufferThread::AddRTC(StreamVariant inRTC)
@@ -374,7 +510,7 @@ std::size_t Synavis::NoBufferThread::AddRTC(StreamVariant&& inRTC)
 void Synavis::NoBufferThread::Run()
 {
   // Consume buffer until close (this should never be empty but we never know)
-  
+
   int Length;
   while ((Length = SocketConnection->Receive()) > 0)
   {
@@ -396,7 +532,7 @@ void Synavis::NoBufferThread::Run()
       auto target = head->getExtensionHeader() + this->RtpDestinationHeader;
 
 
-      if(std::holds_alternative<std::shared_ptr<rtc::Track>>(destination))
+      if (std::holds_alternative<std::shared_ptr<rtc::Track>>(destination))
       {
         std::get<std::shared_ptr<rtc::Track>>(destination)->send(byte_data.data(), byte_data.size());
       }
@@ -427,12 +563,14 @@ void Synavis::WorkerThread::Run()
   while (Running)
   {
     TaskCondition.wait(lock, [this] {
-    return (Tasks.size() > 0) || !Running;
+      //std::cout << "Task condition " << ((Tasks.size() > 0) || !Running) << std::endl;
+      return (Tasks.size() > 0) || !Running;
       });
     if (!Running) return;
     if (Tasks.size() > 0)
     {
       auto Task = std::move(Tasks.front());
+      Tasks.pop();
       lock.unlock();
       Task();
       lock.lock();
@@ -440,19 +578,30 @@ void Synavis::WorkerThread::Run()
   }
 }
 
+void Synavis::WorkerThread::Stop()
+{
+  Running = false;
+}
+
+uint64_t Synavis::WorkerThread::GetTaskCount()
+{
+  return Tasks.size();
+}
+
 void Synavis::WorkerThread::AddTask(std::function<void()>&& Task)
 {
   std::unique_lock<std::mutex> lock(TaskMutex);
   Tasks.push(Task);
+  //Tasks.push([Task=std::move(Task), this]() { Task(); this->TaskCondition.notify_all(); }); // todo uncomment if there is a need for a notification
   this->TaskCondition.notify_all();
 }
 
 Synavis::Bridge::Bridge()
 {
   std::cout << Prefix() << "An instance of the Synavis was started, we are starting the threads..." << std::endl;
-  BridgeThread = std::async(std::launch::async, &Bridge::BridgeRun,this);
+  BridgeThread = std::async(std::launch::async, &Bridge::BridgeRun, this);
   std::cout << Prefix() << "Bridge Thread started" << std::endl;
-  ListenerThread = std::async(std::launch::async,&Bridge::Listen, this);
+  ListenerThread = std::async(std::launch::async, &Bridge::Listen, this);
   std::cout << Prefix() << "Listener Thread Started" << std::endl;
 
   BridgeConnection.In = std::make_shared<BridgeSocket>();
@@ -464,7 +613,7 @@ Synavis::Bridge::Bridge()
 
 Synavis::Bridge::~Bridge()
 {
-  if(SignallingConnection->isOpen())
+  if (SignallingConnection->isOpen())
   {
     SignallingConnection->close();
   }
@@ -484,7 +633,7 @@ void Synavis::Bridge::SetTimeoutPolicy(EMessageTimeoutPolicy inPolicy,
 
 void Synavis::Bridge::BridgeSynchronize(Adapter* Instigator, nlohmann::json Message, bool bFailIfNotResolved)
 {
-  if(Instigator != nullptr)
+  if (Instigator != nullptr)
     Message["id"] = Instigator->ID;
   else
     Message["id"] = -1;
@@ -522,11 +671,11 @@ void Synavis::Bridge::BridgeSynchronize(Adapter* Instigator, nlohmann::json Mess
         throw std::runtime_error("An unexpected error occured while parsing the Bridge response");
       }
     }
-    if(Answer["type"] == "ok")
+    if (Answer["type"] == "ok")
     {
-      
+
     }
-    else if(Answer["type"] == "todo")
+    else if (Answer["type"] == "todo")
     {
       Instigator->OnRemoteInformation(Answer);
     }
@@ -547,12 +696,12 @@ void Synavis::Bridge::BridgeSubmit(Adapter* Instigator, StreamVariant origin, st
   {
     json Transmission = { {"id",Instigator->ID} };
     Transmission["data"] = std::get<std::string>(Message);
-    BridgeConnection.Out->Send(Transmission);
+    BridgeConnection.Out->Send(Transmission.dump());
   }
   else
   {
     auto data = std::get<rtc::binary>(Message);
-    if(data.size() > RtpDestinationHeader + 13)
+    if (data.size() > RtpDestinationHeader + 13)
     {
       auto* p_proxy = reinterpret_cast<uint16_t*>((data.data() + RtpDestinationHeader));
       *p_proxy = Instigator->ID;
@@ -565,24 +714,24 @@ void Synavis::Bridge::InitConnection()
 {
   std::cout << Prefix() << "Init connection" << std::endl;
   BridgeConnection.In->Outgoing = false;
-  
+
   BridgeConnection.In->Address = Config["RemoteAddress"].get<std::string>();
   BridgeConnection.In->Port = Config["RemotePort"].get<int>();
 
   std::cout << Prefix() << "Init Bridge In" << std::endl;
-  if(!BridgeConnection.In->Connect())
+  if (!BridgeConnection.In->Connect())
   {
     std::cout << Prefix() << "Unexpected error when connecting to an incoming socket:"
-     << std::endl << BridgeConnection.In->What() << std::endl;
+      << std::endl << BridgeConnection.In->What() << std::endl;
   }
   BridgeConnection.Out->Outgoing = true;
   BridgeConnection.Out->Address = Config["LocalAddress"].get<std::string>();
   BridgeConnection.Out->Port = Config["LocalPort"].get<int>();
   std::cout << Prefix() << "Init Bridge Out" << std::endl;
-  if(!BridgeConnection.Out->Connect())
+  if (!BridgeConnection.Out->Connect())
   {
     std::cout << Prefix() << "Unexpected error when connecting to an incoming socket:"
-     << std::endl << BridgeConnection.In->What() << std::endl;
+      << std::endl << BridgeConnection.In->What() << std::endl;
   }
   /*
   BridgeConnection.DataOut->Outgoing = true;
@@ -619,10 +768,11 @@ void Synavis::Bridge::BridgeRun()
       std::cout << Prefix() << "BridgeThread entered while Run loop" << std::endl;
       return (CommInstructQueue.size() > 0) || !Run;
       });
-    if(!Run) return;
+    if (!Run) return;
     if (CommInstructQueue.size() > 0)
     {
       auto Task = std::move(CommInstructQueue.front());
+      CommInstructQueue.pop();
       lock.unlock();
       Task();
       // locking at the end of the loop is necessary because next
@@ -642,7 +792,7 @@ void Synavis::Bridge::Listen()
       {
         return (bNeedInfo && this->BridgeConnection.In->Peek() > 0) || !Run;
       });
-    if(!Run) return;
+    if (!Run) return;
     bool isMessage = false;
     try
     {
@@ -651,7 +801,7 @@ void Synavis::Bridge::Listen()
       auto message = json::parse(this->BridgeConnection.In->StringData);
       std::string type = message["type"];
       auto app_id = message["id"].get<int>();
-      
+
       EndpointById[app_id]->OnRemoteInformation(message);
     }
     catch (...)
@@ -671,18 +821,18 @@ bool Synavis::Bridge::EstablishedConnection(bool Shallow)
   using namespace std::chrono_literals;
   auto status_bridge_thread = BridgeThread.wait_for(0ms);
   auto status_command_thread = ListenerThread.wait_for(0ms);
-  if(!Shallow)
+  if (!Shallow)
   {
     // check connection validity here and actually ping connected bridges
   }
   return (BridgeConnection.In->Valid && BridgeConnection.Out->Valid
-         && status_bridge_thread != std::future_status::ready
-         && status_command_thread != std::future_status::ready);
+    && status_bridge_thread != std::future_status::ready
+    && status_command_thread != std::future_status::ready);
 }
 
 void Synavis::Bridge::FindBridge()
 {
-  
+
 }
 
 void Synavis::Bridge::StartSignalling(std::string IP, int Port, bool keepAlive, bool useAuthentification)
@@ -692,24 +842,24 @@ void Synavis::Bridge::StartSignalling(std::string IP, int Port, bool keepAlive, 
   std::promise<void> RunGuard;
   auto Notifier = RunGuard.get_future();
   SignallingConnection->onOpen([this, &RunGuard]()
-  {
-    std::cout << "Opened Signalling" << std::endl;
-    RunGuard.set_value();
-  });
-  SignallingConnection->onClosed([this, &RunGuard](){});
-  SignallingConnection->onError([this, &RunGuard](auto error){});
+    {
+      std::cout << "Opened Signalling" << std::endl;
+      RunGuard.set_value();
+    });
+  SignallingConnection->onClosed([this, &RunGuard]() {});
+  SignallingConnection->onError([this, &RunGuard](auto error) {});
   SignallingConnection->onMessage([this](auto message)
-  {
-    if(std::holds_alternative<std::string>(message))
     {
-      OnSignallingMessage(std::get<std::string>(message));
-    }
-    else
-    {
-      OnSignallingData(std::get<rtc::binary>(message));
-    }
-  });
-  if(useAuthentification)
+      if (std::holds_alternative<std::string>(message))
+      {
+        OnSignallingMessage(std::get<std::string>(message));
+      }
+      else
+      {
+        OnSignallingData(std::get<rtc::binary>(message));
+      }
+    });
+  if (useAuthentification)
   {
     // this is its own issue as we are probably obliged to conform to IDM guidelines here
     // these should all interface the same way, but here we should probably
@@ -737,7 +887,7 @@ void Synavis::Bridge::ConfigureTrackOutput(std::shared_ptr<rtc::Track> OutputStr
 
 void Synavis::Bridge::SubmitToSignalling(json Message, Adapter* Endpoint)
 {
-  if(SignallingConnection->isOpen())
+  if (SignallingConnection->isOpen())
   {
     if (Endpoint != nullptr)
     {
@@ -773,10 +923,10 @@ void Synavis::Bridge::UseConfig(json fileConfig)
   this->Config = fileConfig;
   return;
   bool complete = true;
-  for(auto key : Config)
-    if(fileConfig.find(key) == fileConfig.end())
+  for (auto key : Config)
+    if (fileConfig.find(key) == fileConfig.end())
       complete = false;
-  if(complete)
+  if (complete)
   {
     Config = fileConfig;
   }
@@ -787,7 +937,7 @@ bool ParseTimeFromString(std::string Source, std::chrono::utc_time<std::chrono::
 {
   std::string format = "%Y-%m-%d %X";
   std::istringstream ss(Source);
-  if(ss >> std::chrono::parse(format,Destination))
+  if (ss >> std::chrono::parse(format, Destination))
     return true;
   return false;
 }
@@ -796,7 +946,7 @@ bool ParseTimeFromString(std::string Source, std::chrono::time_point<std::chrono
 {
   std::string format = "%Y-%m-%d %X";
   std::istringstream ss(Source);
-  if(ss >> date::parse(format,Destination))
+  if (ss >> date::parse(format, Destination))
     return true;
   else return false;
 }

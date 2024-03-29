@@ -36,8 +36,10 @@ void Synavis::Adapter::SetupWebRTC()
   }); 
   pc_->onDataChannel([this](std::shared_ptr<rtc::DataChannel> channel)
   {
+    auto id = (channel->id().has_value()) ? channel->id().value() : 0;
+
     json desc = {{"label",channel->label()},
-    { "id",channel->id()},
+    { "id",id},
     {"protocol",channel->protocol()},
     {"maxmessagesize",channel->maxMessageSize()}};
 
