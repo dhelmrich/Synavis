@@ -850,7 +850,7 @@ void Synavis::DataConnector::Initialize()
           }
           else
           {
-            auto l = lconnector(ELogVerbosity::Debug) << "I still have " << RequiredCandidate.size() << " required candidates: ";
+            auto& l = lconnector(ELogVerbosity::Debug) << "I still have " << RequiredCandidate.size() << " required candidates: ";
             for (auto i = 0; i < RequiredCandidate.size(); ++i)
             {
               l << RequiredCandidate[i] << " ";

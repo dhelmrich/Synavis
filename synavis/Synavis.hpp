@@ -536,7 +536,7 @@ namespace Synavis
 
     std::ostream* LogFile = nullptr;
     ELogVerbosity Verbosity = ELogVerbosity::Info;
-    mutable ELogVerbosity StatusVerbosity = ELogVerbosity::Silent;
+    mutable std::atomic<ELogVerbosity> StatusVerbosity = ELogVerbosity::Silent;
   };
 
   using StreamVariant = std::variant<std::shared_ptr<rtc::DataChannel>,
