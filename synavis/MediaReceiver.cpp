@@ -17,11 +17,13 @@ constexpr std::byte operator"" _b(unsigned long long int Value)
 
 Synavis::MediaReceiver::MediaReceiver()
 {
+  // empty on purpose (for libdatachannel config changes)
 }
 
 Synavis::MediaReceiver::~MediaReceiver()
 {
-  FrameRelay->Disconnect();
+  if(FrameRelay)
+    FrameRelay->Disconnect();
 }
 
 void Synavis::MediaReceiver::Initialize()
@@ -73,7 +75,8 @@ void Synavis::MediaReceiver::Initialize()
 
             //StartStreaming();
             //NewTrack->send(rtc::binary({ (std::byte)(EClientMessageType::QualityControlOwnership) }));
-            FrameRelay->Connect();
+            if(FrameRelay)
+              FrameRelay->Connect();
           });
         this->theirTrack->onMessage(std::bind(&MediaReceiver::MediaHandler, this, std::placeholders::_1));
         this->theirTrack->onClosed([this]()

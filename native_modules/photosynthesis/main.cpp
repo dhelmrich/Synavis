@@ -332,7 +332,7 @@ public:
   void populate_n(std::size_t n)
   {
     std::vector<std::shared_ptr<CPlantBox::MappedPlant>> plants;
-    for (auto i : std::views::iota(0uL, n))
+    for (std::size_t i = 0; i < n; ++i)
     {
       // create a new plant
       auto plant = std::make_shared<CPlantBox::MappedPlant>();
@@ -569,7 +569,7 @@ void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr
 void field_population(auto m, auto field_manager, auto& worker_threads, auto threads_per_rank, auto plants_per_thread)
 {
   // make tasks for each thread to populate the field
-  for (auto i : std::views::iota(0, threads_per_rank))
+  for (auto i = 0; i < threads_per_rank; ++i)
   {
     worker_threads[i]->AddTask([field_manager, plants_per_thread]() {
       // populate the field
@@ -887,6 +887,7 @@ int main(int argc, char** argv)
       {
         lmain(Synavis::ELogVerbosity::Error) << "Parameter file failed to load: " << e.what() << std::endl;
       }
+
       for (auto p : plant->getOrganRandomParameter(CPlantBox::Organism::OrganTypes::ot_leaf))
       {
         auto leaf = std::dynamic_pointer_cast<CPlantBox::LeafRandomParameter>(p);
@@ -941,7 +942,7 @@ int main(int argc, char** argv)
     seeding_distance, inter_row_distance);
 
   std::vector<std::shared_ptr<Synavis::WorkerThread>> worker_threads;
-  for (auto i : std::views::iota(0, threads_per_rank))
+  for (auto i = 0; i < threads_per_rank; ++i)
   {
     worker_threads.push_back(std::make_shared<Synavis::WorkerThread>());
   }
