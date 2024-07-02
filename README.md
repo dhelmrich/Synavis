@@ -1,5 +1,7 @@
 # Synavis
 
+![synavis_small](https://github.com/dhelmrich/Synavis/assets/9272590/84b4c6b9-56f3-4d95-9f85-9cac7768eaaa)
+
 C++ WebRTC Bridge for Unreal Engine PixelStreaming
 
 Unreal Engine released PixelStreaming with its 4.27 version. It enables remote visualization for small-frontend devices.
@@ -36,4 +38,7 @@ I am working in Berlin time and will respond during work hours when I can spare 
 
 I would like to acknowledge funding provided by the German government to the Gauss Centre for Supercomputing via the InHPC-DE project (01—H17001).
 
+## Cite as
+
+Dirk Norbert Helmrich, Felix Maximilian Bauer, Mona Giraud, Andrea Schnepf, Jens Henrik Göbbert, Hanno Scharr, Ebba Þora Hvannberg, Morris Riedel, A Scalable Pipeline to Create Synthetic Datasets from Functional-Structural Plant Models for Deep Learning, in silico Plants, 2023;, diad022, https://doi.org/10.1093/insilicoplants/diad022
 
