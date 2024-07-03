@@ -754,6 +754,41 @@ void photosynthesis_evaluation(std::shared_ptr<Synavis::DataConnector> m, auto f
   // spawn a few meters to measure light intensity
 }
 
+void light_callibration(
+  std::shared_ptr<Synavis::DataConnector> m,
+  auto field_manager, V::I2 FieldSize,
+  auto rank = -1, auto size = -1,
+  std::string tempf = "/dev/shm",
+  bool useFile = false)
+{
+  std::vector<double> light_intensities;
+  auto start_emissive = 0.0;
+  auto end_emissive = 1000.0;
+  std::size_t step_emissive = 100;
+  double delta_emissive = (end_emissive - start_emissive) / step_emissive;
+  auto start_directional = 1.0;
+  auto end_directional = 1000.0;
+  std::size_t step_directional = 100;
+  double delta_directional = (end_directional - start_directional) / step_directional;
+
+  auto emissive = start_emissive;
+  auto directional = start_directional;
+  auto condition_i = [&](std::size_t i) { return {start_emissive + i / step_directional * delta_emissive, start_directional + i % step_directional * delta_directional};  };
+  std::size_t i = 0;
+
+  auto message_handler = [&light_intensities, emissive, directional, &i](auto message) {
+    auto jsonmessage = nlohmann::json::parse(message);
+    if (jsonmessage.contains("type"))
+    {
+      if(jsonmessage["type"] == "meter")
+      {
+        light_intensities[i] = jsonmessage["intensity"];
+      }
+    }
+  };
+
+}
+
 int main(int argc, char** argv)
 {
   // MPI init
