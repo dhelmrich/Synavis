@@ -122,7 +122,10 @@ class Weather :
   #enddef
   def saturated_vapour_pressure(self, time) :
     temperature = self(time, "AirTemperature_2m_Avg10min [degC]")
-    return 6.1078 * 10 ** (7.5 * temperature / (237.3 + temperature))
+    e0 = 6.1078
+    L = 2.5 * 10 ** 6
+    R0 = 461.5
+    return e0 * np.exp(L/R0 * (1.0/273.15 - 1.0/(temperature + 273.15)))
   #enddef
   def actual_vapour_pressure(self, time) :
     relative_humidity = self.relative_humidity(time)
