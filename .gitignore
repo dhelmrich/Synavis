@@ -49,3 +49,9 @@ __pycache__/*
 CMakeFiles/*
 release/*
 CMakeCache.txt
+
+SynavisUE/Intermediate/*
+SynavisUE/Binaries/*
+SynavisUE/Saved/*
+SynavisUE/Build/*
+
