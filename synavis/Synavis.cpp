@@ -16,6 +16,10 @@ namespace std
 }
 #endif
 
+#ifdef __linux__
+#include <unistd.h>
+#endif
+
 
 
 // std::cout << "" << std::endl;
