@@ -461,7 +461,7 @@ void Synavis::DataConnector::WriteSDPsToFile(std::string Filename)
 
 void Synavis::DataConnector::exp__DeactivateCallbacks()
 {
-  MessageReceptionCallback == std::nullopt;
+  MessageReceptionCallback = std::nullopt;
   lconnector(ELogVerbosity::Warning) << "Deactivating experimental message reception also clears callback" << std::endl;
 }
 

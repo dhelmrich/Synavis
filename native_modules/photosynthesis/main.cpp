@@ -519,7 +519,7 @@ void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr
   auto file = Synavis::OpenUniqueFile("scalability_test.csv");
 #ifdef WIN32
   file << "time;frametime;num" << std::endl;
-#else defined __unix__
+#elif defined __unix__
   file << "time;frametime;num;gpu" << std::endl;
 #endif
   auto log_fsp = [&file, &w, start_t](auto message)
@@ -531,7 +531,7 @@ void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr
       auto time = Synavis::TimeSince(start_t);
 #ifdef WIN32
       file << time << ";" << fps << ";" << w << std::endl;
-#else defined __unix__
+#elif defined __unix__
       file << time << ";" << fps << ";" << w << ";" << GPU_Usage() << std::endl;
 #endif
     };
@@ -773,7 +773,7 @@ void light_callibration(
 
   auto emissive = start_emissive;
   auto directional = start_directional;
-  auto condition_i = [&](std::size_t i) { return {start_emissive + i / step_directional * delta_emissive, start_directional + i % step_directional * delta_directional};  };
+  //auto condition_i = [&](std::size_t i) { return {start_emissive + i / step_directional * delta_emissive, start_directional + i % step_directional * delta_directional};  };
   std::size_t i = 0;
 
   auto message_handler = [&light_intensities, emissive, directional, &i](auto message) {

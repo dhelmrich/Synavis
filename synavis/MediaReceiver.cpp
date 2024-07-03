@@ -41,6 +41,7 @@ void Synavis::MediaReceiver::Initialize()
   RtcpReceivingSession = std::make_shared<rtc::RtcpReceivingSession>();
   switch (Codec)
   {
+  default:
   case ECodec::H264:
     MediaDescription.addH264Codec(96);
     break;
