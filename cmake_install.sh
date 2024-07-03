@@ -8,7 +8,7 @@ nproc=$(nproc)
 # subtract one
 nproc=$((nproc-1))
 
-while getopts d:t:e:j: option
+while getopts d:t:e:j:c: option
 do
 case "${option}"
 in
@@ -16,7 +16,7 @@ d) BUILDDIR=${OPTARG};;
 t) BUILDTYPE=${OPTARG};;
 e) DELBUILD=true;;
 j) nproc=${OPTARG};;
-decode) ACTIVATE_DECODING=false;;
+c) ACTIVATE_DECODING=false;;
 esac
 done
 
