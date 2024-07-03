@@ -24,7 +24,7 @@ jobs:
 
     - name: Configure CMake
       # run the cmake_install.sh script to install using cmake
-      run: cmake_install.sh -d ${{github.workspace}}/build -t ${{env.BUILD_TYPE}} -j 1
+      run: ${{github.workspace}}/cmake_install.sh -d ${{github.workspace}}/build -t ${{env.BUILD_TYPE}} -j 1
     
     - name: Archive
       run: tar -czf build.tar.gz build/Release
