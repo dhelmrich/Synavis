@@ -33,10 +33,18 @@ jobs:
       run: ${{github.workspace}}/cmake_install.sh -d ${{github.workspace}}/build -t ${{env.BUILD_TYPE}} -j 1
     
     - name: Archive
-      run: tar -czf build.tar.gz build/Release
+      run: tar -czf build.tar.gz build/
     
-    - name: Upload
+    - name: Upload-All
       uses: actions/upload-artifact@v2
       with:
         name: build
         path: build.tar.gz
+    
+    - name: Upload-Py
+      uses: actions/upload-artifact@v2
+      with:
+        name: package
+        path: ${{github.workspace}}/build/PySynavis.cpython-310-x86_64-linux-gnu.so
+
+
