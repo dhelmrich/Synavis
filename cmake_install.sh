@@ -16,6 +16,7 @@ d) BUILDDIR=${OPTARG};;
 t) BUILDTYPE=${OPTARG};;
 e) DELBUILD=true;;
 j) nproc=${OPTARG};;
+decode) ACTIVATE_DECODING=false;;
 esac
 done
 
@@ -47,8 +48,12 @@ PYTHON_INCLUDE_DIRS=$(python3 -c "from distutils.sysconfig import get_python_inc
 PYTHON_LIBRARY=$(python -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR'))")
 echo "Python include dir: $PYTHON_INCLUDE_DIRS"
 
-# synavis options
-DECODING="-DBUILD_WITH_DECODING=On"
+# synavis options if DECODING is set
+DECODING=""
+if [ "$ACTIVATE_DECODING" = true ] ; then
+  echo "Activating decoding"
+  DECODING="-DBUILD_WITH_DECODING=On"
+fi
 
 #cmake verbose option
 CMAKE_VERBOSE="-DCMAKE_VERBOSE_MAKEFILE=On"

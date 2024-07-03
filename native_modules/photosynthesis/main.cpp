@@ -332,7 +332,7 @@ public:
   void populate_n(std::size_t n)
   {
     std::vector<std::shared_ptr<CPlantBox::MappedPlant>> plants;
-    for (auto i : std::views::iota(0uL, n))
+    for (std::size_t i = 0; i < n; ++i)
     {
       // create a new plant
       auto plant = std::make_shared<CPlantBox::MappedPlant>();
@@ -519,7 +519,7 @@ void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr
   auto file = Synavis::OpenUniqueFile("scalability_test.csv");
 #ifdef WIN32
   file << "time;frametime;num" << std::endl;
-#else defined __unix__
+#elif defined __unix__
   file << "time;frametime;num;gpu" << std::endl;
 #endif
   auto log_fsp = [&file, &w, start_t](auto message)
@@ -531,7 +531,7 @@ void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr
       auto time = Synavis::TimeSince(start_t);
 #ifdef WIN32
       file << time << ";" << fps << ";" << w << std::endl;
-#else defined __unix__
+#elif defined __unix__
       file << time << ";" << fps << ";" << w << ";" << GPU_Usage() << std::endl;
 #endif
     };
@@ -569,7 +569,7 @@ void scalability_test(std::shared_ptr<Synavis::DataConnector> m, std::shared_ptr
 void field_population(auto m, auto field_manager, auto& worker_threads, auto threads_per_rank, auto plants_per_thread)
 {
   // make tasks for each thread to populate the field
-  for (auto i : std::views::iota(0, threads_per_rank))
+  for (auto i = 0; i < threads_per_rank; ++i)
   {
     worker_threads[i]->AddTask([field_manager, plants_per_thread]() {
       // populate the field
@@ -754,6 +754,41 @@ void photosynthesis_evaluation(std::shared_ptr<Synavis::DataConnector> m, auto f
   // spawn a few meters to measure light intensity
 }
 
+void light_callibration(
+  std::shared_ptr<Synavis::DataConnector> m,
+  auto field_manager, V::I2 FieldSize,
+  auto rank = -1, auto size = -1,
+  std::string tempf = "/dev/shm",
+  bool useFile = false)
+{
+  std::vector<double> light_intensities;
+  auto start_emissive = 0.0;
+  auto end_emissive = 1000.0;
+  std::size_t step_emissive = 100;
+  double delta_emissive = (end_emissive - start_emissive) / step_emissive;
+  auto start_directional = 1.0;
+  auto end_directional = 1000.0;
+  std::size_t step_directional = 100;
+  double delta_directional = (end_directional - start_directional) / step_directional;
+
+  auto emissive = start_emissive;
+  auto directional = start_directional;
+  //auto condition_i = [&](std::size_t i) { return {start_emissive + i / step_directional * delta_emissive, start_directional + i % step_directional * delta_directional};  };
+  std::size_t i = 0;
+
+  auto message_handler = [&light_intensities, emissive, directional, &i](auto message) {
+    auto jsonmessage = nlohmann::json::parse(message);
+    if (jsonmessage.contains("type"))
+    {
+      if(jsonmessage["type"] == "meter")
+      {
+        light_intensities[i] = jsonmessage["intensity"];
+      }
+    }
+  };
+
+}
+
 int main(int argc, char** argv)
 {
   // MPI init
@@ -887,6 +922,7 @@ int main(int argc, char** argv)
       {
         lmain(Synavis::ELogVerbosity::Error) << "Parameter file failed to load: " << e.what() << std::endl;
       }
+
       for (auto p : plant->getOrganRandomParameter(CPlantBox::Organism::OrganTypes::ot_leaf))
       {
         auto leaf = std::dynamic_pointer_cast<CPlantBox::LeafRandomParameter>(p);
@@ -941,7 +977,7 @@ int main(int argc, char** argv)
     seeding_distance, inter_row_distance);
 
   std::vector<std::shared_ptr<Synavis::WorkerThread>> worker_threads;
-  for (auto i : std::views::iota(0, threads_per_rank))
+  for (auto i = 0; i < threads_per_rank; ++i)
   {
     worker_threads.push_back(std::make_shared<Synavis::WorkerThread>());
   }

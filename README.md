@@ -2,31 +2,33 @@
 
 ![synavis_small](https://github.com/dhelmrich/Synavis/assets/9272590/84b4c6b9-56f3-4d95-9f85-9cac7768eaaa)
 
-
 C++ WebRTC Bridge for Unreal Engine PixelStreaming
 
 Unreal Engine released PixelStreaming with its 4.27 version. It enables remote visualization for small-frontend devices.
 
 Synavis enables the coupling of simulation and ML tools to the Unreal Engine by leveraging PixelStreaming as data source.
 
-For testing purposes, I generally recommend the internal signalling server as it, moving forward, inherently more compatible than the PixelStreamingInfrastructure one.
+See our video:
 
-## Progress so far
+[![Synavis Introduction](https://img.youtube.com/vi/H9cw_aE-l3A/0.jpg)](https://www.youtube.com/watch?v=H9cw_aE-l3A)
 
-This Project includes a bridging ability, coupling ability and some means of steering the framework.
+## Feature Set
 
 - DataConnector and MediaReceiver: Connect DL Frameworks and Simulations to UE and interact with the scene
-- WebRTCBridge: Setup connections via a bridged network (like a TURN server) via port relays. This is intended for HPC systems but might be used together with Putty to bridge to client PCs
+- Synavis: Setup connections via a bridged network (like a TURN server) via port relays. This is intended for HPC systems but might be used together with Putty to bridge to client PCs
+- Syanvis Signalling Server: Load Handling and Connection Management
+- PySynavis: Python Coupling of all revelant functionality
 
 ## Open Issues
 
-- We are working on providing software decoding in-place.
-- There are test cases missing that still need to be added, those will also introduce robustness and remove ambiguity.
+- Automatic Connection setup and infrastructure-focussed handling is in works
+- Decoding is in works, with UE allowing the parsing of software-based encoders, we aim to support these primarily, as they are not dependent on a specific GPU.
+
 
 ## Tutorial and Wiki information
 
-- I am updating the wikis slowly, including some information on how to get started.
-- Additionally, I am still editting the recordings for our JSC course "UE for Remote Visualization and Machine Learning", as I would like them to be of high enough quality for publishing.
+- Our course "Virtual Worlds for Machine Learning" provided some in-depth information on the framework and is the newest tutorial. Contact us for more information.
+- The wiki contains all current information and is being edited more frequently than this repository: [Synavis Wiki](https://github.com/dhelmrich/Synavis/wiki)
 
 ## Collaboration
 
@@ -40,5 +42,4 @@ I would like to acknowledge funding provided by the German government to the Gau
 ## Cite as
 
 Dirk Norbert Helmrich, Felix Maximilian Bauer, Mona Giraud, Andrea Schnepf, Jens Henrik Göbbert, Hanno Scharr, Ebba Þora Hvannberg, Morris Riedel, A Scalable Pipeline to Create Synthetic Datasets from Functional-Structural Plant Models for Deep Learning, in silico Plants, 2023;, diad022, https://doi.org/10.1093/insilicoplants/diad022
-
 

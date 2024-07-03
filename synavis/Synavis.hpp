@@ -405,8 +405,8 @@ namespace Synavis
 
     };
     // singleton
-    Logger(const Logger&) = default;
-    Logger& operator=(const Logger&) = default;
+    Logger(const Logger&) = delete;
+    Logger& operator=(const Logger&) = delete;
     Logger(Logger&&) = delete;
     Logger& operator=(Logger&&) = delete;
     ~Logger()
@@ -449,7 +449,7 @@ namespace Synavis
     template < typename T >
     Logger& operator<<(T&& Message)
     {
-      if (this->StatusVerbosity <= Verbosity)
+      if (this->StatusVerbosity.load() <= Verbosity)
       {
         if (LogFile)
         {
@@ -465,7 +465,7 @@ namespace Synavis
 
     void SetState(ELogVerbosity V) const
     {
-      this->StatusVerbosity = V;
+      this->StatusVerbosity.store(V);
     }
 
     void SetVerbosity(ELogVerbosity V)
@@ -511,7 +511,7 @@ namespace Synavis
     // reset state when std::endl or std::flush is detected
     Logger& operator<<(std::ostream& (*pf)(std::ostream&))
     {
-      if (this->StatusVerbosity <= ELogVerbosity::Error)
+      if (this->StatusVerbosity.load() <= ELogVerbosity::Error)
       {
         std::cerr << std::endl;
         if (LogFile)
@@ -519,7 +519,7 @@ namespace Synavis
           *LogFile << std::endl;
         }
       }
-      else if (this->StatusVerbosity <= Verbosity)
+      else if (this->StatusVerbosity.load() <= Verbosity)
       {
         if (LogFile)
         {
@@ -527,7 +527,7 @@ namespace Synavis
         }
         std::cout << std::endl;
       }
-      this->StatusVerbosity = ELogVerbosity::Silent;
+      this->StatusVerbosity.store(ELogVerbosity::Silent);
       return *this;
     }
 
@@ -536,7 +536,7 @@ namespace Synavis
 
     std::ostream* LogFile = nullptr;
     ELogVerbosity Verbosity = ELogVerbosity::Info;
-    mutable ELogVerbosity StatusVerbosity = ELogVerbosity::Silent;
+    mutable std::atomic<ELogVerbosity> StatusVerbosity;
   };
 
   using StreamVariant = std::variant<std::shared_ptr<rtc::DataChannel>,

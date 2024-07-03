@@ -171,6 +171,12 @@ namespace Synavis
       .export_values()
     ;
 
+    // SetLogVerbostiy in PyBind through lambda accessing the singleton
+    m.def("SetGlobalLogVerbosity", [](ELogVerbosity verbostiy)
+    {
+      Logger::Get()->SetVerbosity(verbostiy);
+    }, py::arg("verbostiy"));
+
     py::enum_<ECodec>(m, "Codec")
       .value("VP8", ECodec::VP8)
       .value("VP9", ECodec::VP9)

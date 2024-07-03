@@ -5,14 +5,15 @@
 #include <vector>
 #include <rtc/common.hpp>
 
+#include "MediaReceiver.hpp"
+
 // This is the application to check how long it takes to send and receive a message
 // over the WebRTC connection. There are two roles: the sender and the receiver.
 int main(int args, char** arg)
 {
-  //rtcInitLogger(RTC_LOG_VERBOSE, nullptr);
   using namespace std::chrono_literals;
   using json = nlohmann::json;
-  json Config = { {"SignallingIP","localhost"}, {"SignallingPort", 8080} };
+  json Config = { {"SignallingIP","127.0.0.1"}, {"SignallingPort", 8080} };
   std::vector <uint64_t> times;
   std::string role;
   if (args < 2)
@@ -23,13 +24,18 @@ int main(int args, char** arg)
   {
     role = arg[1];
   }
-  auto dc = std::make_shared<Synavis::DataConnector>();
+  auto dc = std::make_shared<Synavis::MediaReceiver>();
+  Synavis::Logger::Get()->SetVerbosity(Synavis::ELogVerbosity::Verbose);
+  Synavis::VerboseMode();
+  dc->SetTakeFirstStep(false);
   if (role == "sender")
   {
     Config["SignallingPort"] = 8888;
     dc->SetTakeFirstStep(true);
   }
-  else if (role == "receiver")
+  dc->SetConfig(Config);
+  dc->Initialize();
+  if (role == "receiver")
   {
     dc->SetMessageCallback([&times](std::string m)
     {
@@ -40,8 +46,6 @@ int main(int args, char** arg)
       times.push_back(diff);
     });
   }
-  dc->SetConfig(Config);
-  dc->Initialize();
   dc->StartSignalling();
   dc->LockUntilConnected(2000);
   if (dc->GetState() != Synavis::EConnectionState::CONNECTED)
@@ -55,6 +59,13 @@ int main(int args, char** arg)
       // prepare json message containing the unix timestamp
       json msg = { {"timestamp", std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()} };
       dc->SendString(msg.dump());
+    }
+  }
+  else
+  {
+    while (dc->GetState() == Synavis::EConnectionState::CONNECTED)
+    {
+      std::this_thread::yield();
     }
   }
 }

@@ -28,7 +28,7 @@ namespace Synavis
     ~Seeker() override;
 
     // This methods checks whether the SigServ is reachable
-    virtual bool CheckSignallingActive();
+    virtual bool CheckSignallingActive() override;
     
     virtual bool EstablishedConnection(bool Shallow = true) override;
     virtual void FindBridge() override;
@@ -39,15 +39,15 @@ namespace Synavis
     virtual void DestroyConnection(std::shared_ptr<Connector> Connector);
 
     void ConfigureUpstream(Connector* Instigator, const json& Answer);
-    void BridgeRun();
-    void Listen();
+    void BridgeRun() override;
+    void Listen() override;
     
     void OnSignallingMessage(std::string Message) override;
     void OnSignallingData(rtc::binary Message) override;
     uint32_t SignalNewEndpoint() override;
     void RemoteMessage(json Message) override;
     void InitConnection() override;
-    virtual std::string Prefix();
+    virtual std::string Prefix() override;
   }; 
   
 }
