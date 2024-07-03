@@ -32,15 +32,6 @@ jobs:
       # run the cmake_install.sh script to install using cmake
       run: ${{github.workspace}}/cmake_install.sh -d ${{github.workspace}}/build -t ${{env.BUILD_TYPE}} -j 1
     
-    - name: Archive
-      run: tar -czf ${{github.workspace}}/build.tar.gz ${{github.workspace}}/build/
-    
-    - name: Upload-All
-      uses: actions/upload-artifact@v2
-      with:
-        name: build
-        path: ${{github.workspace}}/build.tar.gz
-    
     - name: Upload-Py
       uses: actions/upload-artifact@v2
       with:
