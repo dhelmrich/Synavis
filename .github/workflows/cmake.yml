@@ -17,13 +17,13 @@ jobs:
     # See: https://docs.github.com/en/free-pro-team@latest/actions/learn-github-actions/managing-complex-workflows#using-a-build-matrix
     runs-on: ubuntu-latest
     env:
-     CC:   gcc-10
-     CXX:  g++-10
+     CC:   gcc-11
+     CXX:  g++-11
     steps:
     - uses: actions/checkout@v3
     - uses: awalsh128/cache-apt-pkgs-action@latest
       with:
-        packages: libfmt-dev libavcodec-dev
+        packages: libfmt-dev libavcodec-dev libavformat-dev libavutil-dev
 
     - name: chmod
       run: chmod +x ${{github.workspace}}/cmake_install.sh
@@ -33,10 +33,18 @@ jobs:
       run: ${{github.workspace}}/cmake_install.sh -d ${{github.workspace}}/build -t ${{env.BUILD_TYPE}} -j 1
     
     - name: Archive
-      run: tar -czf build.tar.gz build/Release
+      run: tar -czf ${{github.workspace}}/build.tar.gz ${{github.workspace}}/build/
     
-    - name: Upload
+    - name: Upload-All
       uses: actions/upload-artifact@v2
       with:
         name: build
-        path: build.tar.gz
+        path: ${{github.workspace}}/build.tar.gz
+    
+    - name: Upload-Py
+      uses: actions/upload-artifact@v2
+      with:
+        name: package
+        path: ${{github.workspace}}/build/PySynavis.cpython-310-x86_64-linux-gnu.so
+
+

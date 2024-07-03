@@ -10,7 +10,6 @@
 #include <fstream>
 #include <queue>
 #include <ostream>
-#include <syncstream>
 #include <rtc/rtc.hpp>
 #include "Synavis/export.hpp"
 
