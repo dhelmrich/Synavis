@@ -24,6 +24,7 @@ See our video:
 - Automatic Connection setup and infrastructure-focussed handling is in works
 - Decoding is in works, with UE allowing the parsing of software-based encoders, we aim to support these primarily, as they are not dependent on a specific GPU.
 
+
 ## Tutorial and Wiki information
 
 - Our course "Virtual Worlds for Machine Learning" provided some in-depth information on the framework and is the newest tutorial. Contact us for more information.
