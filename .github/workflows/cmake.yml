@@ -33,13 +33,13 @@ jobs:
       run: ${{github.workspace}}/cmake_install.sh -d ${{github.workspace}}/build -t ${{env.BUILD_TYPE}} -j 1
     
     - name: Archive
-      run: tar -czf build.tar.gz ${{github.workspace}}/build/
+      run: tar -czf ${{github.workspace}}/build.tar.gz ${{github.workspace}}/build/
     
     - name: Upload-All
       uses: actions/upload-artifact@v2
       with:
         name: build
-        path: build.tar.gz
+        path: ${{github.workspace}}/build.tar.gz
     
     - name: Upload-Py
       uses: actions/upload-artifact@v2
