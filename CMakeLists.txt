@@ -23,6 +23,7 @@ set(CMAKE_CXX_STANDARD 23)
 
 # add an option to build with decoding support
 option(BUILD_WITH_DECODING "Build with decoding support" OFF)
+option(BUILD_WITH_APPS "Build with applications" OFF)
 
 # an variable for the vcpkg.cmake path
 set(VCPKG_CMAKE_PATH "" CACHE PATH "Path to the vcpkg.cmake file")
@@ -217,7 +218,9 @@ endif()
 
 add_subdirectory(synavis)
 add_subdirectory(externtest)
-add_subdirectory(native_modules)
+if(BUILD_WITH_APPS)
+  add_subdirectory(native_modules)
+endif()
 
 
 
