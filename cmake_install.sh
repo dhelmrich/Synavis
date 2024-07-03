@@ -8,7 +8,7 @@ nproc=$(nproc)
 # subtract one
 nproc=$((nproc-1))
 
-while getopts d:t:e:j:c: option
+while getopts d:t:e:j:c:b: option
 do
 case "${option}"
 in
@@ -17,6 +17,7 @@ t) BUILDTYPE=${OPTARG};;
 e) DELBUILD=true;;
 j) nproc=${OPTARG};;
 c) ACTIVATE_DECODING=false;;
+B) BASEDIR=${OPTARG};;
 esac
 done
 
@@ -29,6 +30,11 @@ fi
 
 # store current directory in variable
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+if [ -n "$BASEDIR" ]; then
+  DIR=$BASEDIR
+fi
+
 # abort if build directory exists
 if [ -d "$DIR/$BUILDDIR" ]; then
   echo "Build directory exists. Aborting."
