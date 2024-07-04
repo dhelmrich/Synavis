@@ -45,10 +45,10 @@ import PySynavis as rtc
 rtc.SetGlobalLogVerbosity(rtc.LogVerbosity.LogDebug)
 
 #make the data connector
-dataconnector = rtc.MediaReceiver()
+dataconnector = rtc.DataConnector()
 dataconnector.Initialize()
 dataconnector.SetConfig({"SignallingIP": "172.20.16.1","SignallingPort":8080})
-dataconnector.SetTakeFirstStep(False)
+dataconnector.SetTakeFirstStep(True)
 dataconnector.StartSignalling()
 dataconnector.SetDataCallback(data_callback)
 dataconnector.SetMessageCallback(message_callback)
@@ -77,6 +77,18 @@ schedule = {"type": "schedule", "command": {
 }
 
 dataconnector.SendJSON(schedule)
+
+for intensity in intensity_levels :
+  for emissive_boost in emissive_boosts :
+    dataconnector.SendJSON({"type":"command", "name":"set", "property": "EmissiveBoost", "value": emissive_boost})
+    dataconnector.SendJSON({"type":"command", "name":"set", "property": "Intensity", "value": intensity})
+    t0 = time.time()
+    while time.time() - t0 < 2.0 :
+      message = get_message()
+      if message is not None :
+        intensities.append(int(message))
+        break
+  
 
 while True :
   time.sleep(1)
