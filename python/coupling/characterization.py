@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import time
 import sys
 import os
+import json
 
 message_buffer = []
 
@@ -36,7 +37,7 @@ def data_callback(data) :
 # Path: cplantbox_coupling.py
 # if we are on windows, the path to the dll is different
 if sys.platform == "win32" :
-  sys.path.append("../build/synavis/Release/")
+  sys.path.append("../build_win/synavis/Release/")
 else :
   sys.path.append("../unix/")
 sys.path.append("../modules/")
@@ -47,7 +48,7 @@ rtc.SetGlobalLogVerbosity(rtc.LogVerbosity.LogDebug)
 #make the data connector
 dataconnector = rtc.DataConnector()
 dataconnector.Initialize()
-dataconnector.SetConfig({"SignallingIP": "172.20.16.1","SignallingPort":8080})
+dataconnector.SetConfig({"SignallingIP": "127.0.0.1","SignallingPort":8080})
 dataconnector.SetTakeFirstStep(True)
 dataconnector.StartSignalling()
 dataconnector.SetDataCallback(data_callback)
@@ -64,8 +65,15 @@ emissive_boosts = np.arange(0, 10000, 1000)
 # technically, we now need to sample 1000*1000 = 1e6 points
 intensities = []
 
+dataconnector.SendJSON({"type":"query"})
+
 dataconnector.SendJSON({"type":"command", "name":"cam", "camera": "scene"})
+
+# for rapid testing, we can use a vague match
+# TODO: remove this line for cluster execution
 dataconnector.SendJSON({"type":"settings", "bVagueMatchProperties":True})
+
+reset_message()
 
 schedule = {"type": "schedule", "command": {
   "type": "query",
@@ -80,14 +88,22 @@ dataconnector.SendJSON(schedule)
 
 for intensity in intensity_levels :
   for emissive_boost in emissive_boosts :
-    dataconnector.SendJSON({"type":"command", "name":"set", "property": "EmissiveBoost", "value": emissive_boost})
-    dataconnector.SendJSON({"type":"command", "name":"set", "property": "Intensity", "value": intensity})
+    dataconnector.SendJSON({
+      "type":"material",
+      "object":"procedural",
+      "slot": 0,
+      "dtype":"scalar",
+      "data": float(emissive_boost)
+    })
+    dataconnector.SendJSON({
+      "type": "parameter",
+      "object": "SunSky.Light",
+      "property": "Intensity",
+      "value": float(intensity)
+    })
     t0 = time.time()
     while time.time() - t0 < 2.0 :
       message = get_message()
-      if message is not None :
-        intensities.append(int(message))
-        break
   
 
 while True :
