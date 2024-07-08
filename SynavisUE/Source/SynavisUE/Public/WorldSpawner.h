@@ -81,9 +81,12 @@ UPROPERTY(EditAnywhere)
 double RandomScaleMax = 1.1;
 
   // a function that returns a StaticClass from a name
+  UFUNCTION(BlueprintCallable)
   UClass* GetClassFromName(FString ClassName);
 
+  
   UTexture2D* CreateTexture2DFromData(uint8* Data, uint64 Size, int Width, int Height);
+  UFUNCTION(BlueprintCallable)
   UMaterialInstanceDynamic* GenerateInstanceFromName(FString InstanceName, bool NewOnly = true);
 
   // This function spawns a pre-registered object from a JSON description

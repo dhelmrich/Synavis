@@ -1589,44 +1589,55 @@ UObject* ASynavisDrone::GetObjectFromJSON(TSharedPtr<FJsonObject> JSON)
   FString Name = JSON->GetStringField(TEXT("object"));
   TArray<AActor*> FoundActors;
   UGameplayStatics::GetAllActorsOfClass(GetWorld(), AActor::StaticClass(), FoundActors);
+
+  FString ActorName, ComponentName;
+  if (Name.Contains(TEXT(".")))
+  {
+    ActorName = Name.Left(Name.Find(TEXT(".")));
+    ComponentName = Name.Right(Name.Len() - Name.Find(TEXT(".")) - 1);
+  }
+  else
+  {
+    ActorName = Name;
+  }
+
+  AActor* MatchedActor = nullptr;
+
   // iterate over all actors
   for (auto* Actor : FoundActors)
   {
     // check if the actor has the same name as the JSON object
-    FString ActorName = Actor->GetName();
-    if (!VagueMatchProperties && ActorName == Name)
+    FString ItActorName = Actor->GetName();
+    if (!VagueMatchProperties && ItActorName == ActorName)
     {
-      return Actor;
+      MatchedActor = Actor;
     }
-    else if (VagueMatchProperties && ActorName.Contains(Name))
+    else if (VagueMatchProperties && ItActorName.Contains(ActorName))
     {
-      return Actor;
+      MatchedActor = Actor;
     }
   }
-  // if no actor was found, check if the object is a component
-  if (Name.Contains(TEXT(".")))
+
+  // check if componentname is set
+  if (ComponentName.Len() > 0 && MatchedActor)
   {
-    FString ActorName = Name.Left(Name.Find(TEXT(".")));
-    FString ComponentName = Name.Right(Name.Len() - Name.Find(TEXT(".")) - 1);
-    // iterate over all actors
-    for (auto* Actor : FoundActors)
+    // search component by name
+    for (auto* Component : MatchedActor->GetComponents())
     {
-      // check if the actor has the same name as the JSON object
-      if (Actor->GetName() == ActorName)
+      if (!VagueMatchProperties && Component->GetName() == ComponentName)
       {
-        // iterate over all components
-        for (auto* Component : Actor->GetComponents())
+        return Component;
+      }
+      else
+      {
+        if (VagueMatchProperties && Component->GetName().Contains(ComponentName))
         {
-          // check if the component has the same name as the JSON object
-          if (Component->GetName() == ComponentName)
-          {
-            return Component;
-          }
+          return Component;
         }
       }
     }
   }
-  return nullptr;
+  return MatchedActor;
 }
 
 FString ASynavisDrone::GetJSONFromObjectProperty(UObject* Object, FString PropertyName)
