@@ -63,10 +63,18 @@ class NoLog() :
 #endclass
 
 class Logger() :
-  def __init__ (self):
+  def __init__ (self, lazy = True):
     colorama_init()
     self.light_mode = False
     # also open a log file
+    self.unique_file()
+    if not lazy :
+      self.log_file = open(self.fname, "w")
+    else :
+      self.log_file = NoLog()
+    #endif
+  #enddef
+  def unique_file(self):
     i = 0
     timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
     self.fname = "sig_"+timestamp+"_"+str(i)+".log"
@@ -74,7 +82,8 @@ class Logger() :
     while os.path.exists(self.fname) :
       i += 1
       self.fname = "sig_"+timestamp+"_"+str(i)+".log"
-    self.log_file = open(self.fname, "w")
+    #endwhile
+    return self.fname
   #enddef
   # desctructor
   def __del__(self) :
@@ -350,7 +359,7 @@ async def connection(websocket, path) :
     await connection.send(json.dumps({"type": "id", "id": connection.id}))
     servers = [id for id in connections if connections[id].role == "server"]
     least_used = None
-    usage_min = np.argmin([len(connections[id]) for id in servers])
+    usage_min = np.argmin([len(connections[id]) for id in servers]) if len(servers) > 0 else None
     if len(servers) > 0 and usage_min < len(servers) :
       least_used = connections[servers[usage_min]]
     #endif
@@ -412,6 +421,7 @@ async def main() :
   global connections, glog, cluster_mode, server_port, client_port, target_ip, global_options
   # flag for whether a custom IP was provided
   custom_ip = False
+  logfile_parameter = False
   # checking if we have command line arguments
   if len(sys.argv) > 1 :
     # checking if we have lightmode enabled
@@ -447,12 +457,14 @@ async def main() :
       target_ip = sys.argv[sys.argv.index("--target-ip") + 1]
     elif any(p in a for a in sys.argv for p in ["--log-file", "-f"]) :
       glog.set_log_file(sys.argv[sys.argv.index("--log-file") + 1])
+      logfile_parameter = True
     elif any(p in a for a in sys.argv for p in ["--cluster", "-j"]) :
       # cluster mode, communicate that certain ICE candidates are preffered to UE
       glog.info("Cluster mode enabled")
       cluster_mode = True
     elif "--no-log" in sys.argv :
       glog.set_log_(NoLog())
+      logfile_parameter = True
     elif "--loopback" in sys.argv :
       lo = get_loopback_interface()
       if lo != None :
@@ -476,6 +488,9 @@ async def main() :
     else :
       glog.info("No infiniband interface detected")
     # endif
+  #endif
+  if not logfile_parameter :
+    glog.set_log_file(glog.unique_file())
   #endif
   if target_ip == None :
     target_ip = "0.0.0.0"

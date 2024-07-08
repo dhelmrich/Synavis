@@ -6,7 +6,7 @@ if errorlevel 1 (
     exit /b 1
 )
 REM STart signalling server with fixed log file to not overburden the folder
-python signalling_server.py --log-file signalling_server.log
+python signalling_server.py --log-file logfile_signalling.log
 
 :EOF
 ```
