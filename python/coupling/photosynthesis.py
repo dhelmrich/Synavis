@@ -167,6 +167,18 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "build"))
 import PySynavis as rtc
 
+def SendGeometry(plant, dataconnector) :
+  # get the geometry from the plant
+  vis = pb.PlantVisualiser(plant)
+  # get the geometry
+  vis.computeGeometry()
+  p,t,n = vis.GetGeometry(), vis.GetGeometryIndices(), vis.GetGeometryNormals()
+  # get the center points
+  c = plant.getNodes()
+  # send the geometry
+  dataconnector.SendGeometry(p, t, n)
+  dataconnector.SendFloat32Buffer(c)
+
 # modelparameters
 parameter_file = os.path.join(cplantbox_dir, "modelparameter", "structural", "Triticum_aestivum_adapted_2023.xml")
 
