@@ -135,7 +135,7 @@ public:
 
   void ApplyJSONToObject(UObject* Object, FJsonObject* JSON);
 
-  UObject* GetObjectFromJSON(TSharedPtr<FJsonObject> JSON);
+  UObject* GetObjectFromJSON(TSharedPtr<FJsonObject> JSON) const;
 
   FString GetJSONFromObjectProperty(UObject* Object, FString PropertyName);
 

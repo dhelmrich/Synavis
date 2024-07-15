@@ -287,7 +287,28 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
     }
     else if (type == "query")
     {
-      if (!Jason->HasField(TEXT("object")))
+      if(Jason->HasField(TEXT("all")))
+      {
+        // get array field
+        auto all = Jason->GetArrayField(TEXT("all"));
+        FString Response = TEXT("{\"type\":\"query\",\"name\":\"all\",\"data\":{");
+        for (int i = 0; i < all.Num(); ++i)
+        {
+          auto entry = all[i]->AsObject();
+          auto name = entry->GetStringField(TEXT("object"));
+          auto property = entry->GetStringField(TEXT("property"));
+          auto object = GetObjectFromJSON(entry);
+          auto result = GetJSONFromObjectProperty(object, property);
+          Response += FString::Printf(TEXT("\"%s\":{\"property\":\"%s\",\"data\":%s}"), *name, *property, *result);
+          if (i < all.Num() - 1)
+          {
+            Response += TEXT(",");
+          }
+        }
+        Response += TEXT("}}");
+        this->SendResponse(Response, unixtime_start, pid);
+      }
+      else if (!Jason->HasField(TEXT("object")))
       {
         if (Jason->HasField(TEXT("spawn")))
         {
@@ -746,14 +767,13 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
       // required: object, material, parameter, dtype
 
       // extract fields
-      FString ObjectName = Jason->GetStringField(TEXT("object"));
       FString MaterialSlot = Jason->GetStringField(TEXT("slot"));
       FString ParameterName = Jason->GetStringField(TEXT("parameter"));
       FString dtype = Jason->GetStringField(TEXT("dtype"));
       FString Value = Jason->GetStringField(TEXT("value"));
 
       auto Object = this->GetObjectFromJSON(Jason);
-      auto Instance = this->WorldSpawner->GenerateInstanceFromName(ObjectName, false);
+      auto Instance = this->WorldSpawner->GenerateInstanceFromName(MaterialSlot, false);
 
       if (dtype == TEXT("scalar"))
       {
@@ -1479,7 +1499,7 @@ FProperty* FindPropertyThatHasName(UObject* Object, FString Name)
   for (TFieldIterator<FProperty> It(Object->GetClass(), EFieldIteratorFlags::IncludeSuper); It; ++It)
   {
     FProperty* Property = *It;
-    if (Property->GetName() == Name)
+    if (Property->GetName().Contains(Name))
     {
       return Property;
     }
@@ -1491,6 +1511,7 @@ void ASynavisDrone::ApplyJSONToObject(UObject* Object, FJsonObject* JSON)
 {
   // received a parameter update
   FString Name = JSON->GetStringField(TEXT("property"));
+  FString ObjectName = JSON->GetStringField(TEXT("object"));
 
   USceneComponent* ComponentIdentity = Cast<USceneComponent>(Object);
   AActor* ActorIdentity = Cast<AActor>(Object);
@@ -1576,6 +1597,14 @@ void ASynavisDrone::ApplyJSONToObject(UObject* Object, FJsonObject* JSON)
         }
       }
     }
+    if(ObjectName.Contains("Light"))
+    {
+      UE_LOG(LogActor, Warning, TEXT("Lighting scenario change detected"));
+      ULightComponent* light = Cast<ULightComponent>(ComponentIdentity);
+      light->PropagateLightingScenarioChange();
+      light->InvalidateLightingCacheDetailed(true, false);
+      light->UpdateLightGUIDs();
+    }
   }
   else
   {
@@ -1584,7 +1613,7 @@ void ASynavisDrone::ApplyJSONToObject(UObject* Object, FJsonObject* JSON)
   }
 }
 
-UObject* ASynavisDrone::GetObjectFromJSON(TSharedPtr<FJsonObject> JSON)
+UObject* ASynavisDrone::GetObjectFromJSON(TSharedPtr<FJsonObject> JSON) const
 {
   FString Name = JSON->GetStringField(TEXT("object"));
   TArray<AActor*> FoundActors;
@@ -1645,6 +1674,10 @@ FString ASynavisDrone::GetJSONFromObjectProperty(UObject* Object, FString Proper
   USceneComponent* ComponentIdentity = Cast<USceneComponent>(Object);
   AActor* ActorIdentity = Cast<AActor>(Object);
   auto* Property = Object->GetClass()->FindPropertyByName(*PropertyName);
+  if (!Property && VagueMatchProperties)
+  {
+    Property = FindPropertyThatHasName(Object, PropertyName);
+  }
   if (ActorIdentity)
   {
     ComponentIdentity = ActorIdentity->GetRootComponent();
