@@ -39,15 +39,15 @@ public:
 	UPROPERTY()
 	class UProceduralMeshComponent* Mesh;
 
-	UPROPERTY(VisibleAnywhere, Category = "Stem")
+	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Stem")
 	UMaterialInstanceDynamic* StemMaterial;
 	UMaterial* StemMaterialBase;
 
-	UPROPERTY(VisibleAnywhere, Category = "Leaf")
+	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Leaf")
 	UMaterialInstanceDynamic* LeafMaterial;
 	UMaterial* LeafMaterialBase;
 
-	UPROPERTY(VisibleAnywhere, Category = "Root")
+	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Root")
 	UMaterialInstanceDynamic* RootMaterial;
 	UMaterial* RootMaterialBase;
 
