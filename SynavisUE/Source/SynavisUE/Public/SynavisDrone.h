@@ -68,7 +68,54 @@ static inline FString PrintFormattedTransform(UObject* Object)
   }
 }
 
+inline FString GetStringFieldOr(TSharedPtr<FJsonObject> Json, const FString& Field, const FString& Default)
+{
+  if (Json.IsValid() && Json->HasTypedField<EJson::String>(Field))
+  {
+    return Json->GetStringField(Field);
+  }
+  return Default;
+}
 
+inline int32 GetIntFieldOr(TSharedPtr<FJsonObject> Json, const FString& Field, int32 Default)
+{
+  if (Json.IsValid() && Json->HasTypedField<EJson::Number>(Field))
+  {
+    return Json->GetIntegerField(Field);
+  }
+  return Default;
+}
+
+inline double GetDoubleFieldOr(TSharedPtr<FJsonObject> Json, const FString& Field, double Default)
+{
+  if (Json.IsValid() && Json->HasTypedField<EJson::Number>(Field))
+  {
+    return Json->GetNumberField(Field);
+  }
+  return Default;
+}
+
+inline bool GetBoolFieldOr(TSharedPtr<FJsonObject> Json, const FString& Field, bool Default)
+{
+  if (Json.IsValid() && Json->HasTypedField<EJson::Boolean>(Field))
+  {
+    return Json->GetBoolField(Field);
+  }
+  return Default;
+}
+
+template < typename T > TArray<T> GetArrayField(TSharedPtr<FJsonObject> Json, const FString& Field)
+{
+  TArray<T> Result;
+  if (Json.IsValid() && Json->HasTypedField<EJson::Array>(Field))
+  {
+    const FString& Content = Json->GetStringField(Field);
+    auto Base64decodesize = FBase64::GetDecodedDataSize(Content);
+    Result.SetNumZeroed(Base64decodesize / sizeof(T));
+    FBase64::Decode(*Content, Content.Len(), reinterpret_cast<uint8*>(Result.GetData()));
+  }
+  return Result;
+}
 
 USTRUCT(BlueprintType)
 struct FTransmissionTarget

@@ -33,13 +33,13 @@ void APlantParts::Clear()
   Mesh->ClearAllMeshSections();
 }
 
-void APlantParts::AddMesh(const TArray<FVector>& Points,
+int32 APlantParts::AddMesh(const TArray<FVector>& Points,
   const TArray<FVector>& Normals,
   const TArray<int>& Triangles,
   const TArray<FVector2D>& UV,
   const TArray<FColor>& VertexColors,
   const TArray<FProcMeshTangent>& Tangents,
-  FString MeshRole)
+  int32 organType)
 {
   auto MeshSection = Mesh->GetNumSections();
   Mesh->CreateMeshSection(MeshSection,
@@ -47,19 +47,20 @@ void APlantParts::AddMesh(const TArray<FVector>& Points,
     Triangles,
     Normals,
     UV, VertexColors,
-    Tangents, true);
-  if (MeshRole == "Stem")
+    Tangents, false);
+  if (organType == 3) // stem
   {
     Mesh->SetMaterial(MeshSection, StemMaterial);
   }
-  else if (MeshRole == "Leaf")
+  else if (organType == 4) // leaf
   {
     Mesh->SetMaterial(MeshSection, LeafMaterial);
   }
-  else if (MeshRole == "Root")
+  else if (organType == 2) // root
   {
     Mesh->SetMaterial(MeshSection, RootMaterial);
   }
+  return MeshSection;
 }
 
 void APlantParts::VaryProperty(FString ValRole, FString PropertyName, float Value, float StdDev)

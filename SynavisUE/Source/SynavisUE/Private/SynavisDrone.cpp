@@ -76,42 +76,6 @@ inline void JsonToFile(TSharedPtr<FJsonObject> Json, FString FileName = FString(
   WriteStringToSave(OutputString, FileName);
 }
 
-inline FString GetStringFieldOr(TSharedPtr<FJsonObject> Json, const FString& Field, const FString& Default)
-{
-  if (Json.IsValid() && Json->HasTypedField<EJson::String>(Field))
-  {
-    return Json->GetStringField(Field);
-  }
-  return Default;
-}
-
-inline int32 GetIntFieldOr(TSharedPtr<FJsonObject> Json, const FString& Field, int32 Default)
-{
-  if (Json.IsValid() && Json->HasTypedField<EJson::Number>(Field))
-  {
-    return Json->GetIntegerField(Field);
-  }
-  return Default;
-}
-
-inline double GetDoubleFieldOr(TSharedPtr<FJsonObject> Json, const FString& Field, double Default)
-{
-  if (Json.IsValid() && Json->HasTypedField<EJson::Number>(Field))
-  {
-    return Json->GetNumberField(Field);
-  }
-  return Default;
-}
-
-inline bool GetBoolFieldOr(TSharedPtr<FJsonObject> Json, const FString& Field, bool Default)
-{
-  if (Json.IsValid() && Json->HasTypedField<EJson::Boolean>(Field))
-  {
-    return Json->GetBoolField(Field);
-  }
-  return Default;
-}
-
 void ASynavisDrone::AppendToMesh(TSharedPtr<FJsonObject> Jason)
 {
   auto* Object = this->GetObjectFromJSON(Jason);

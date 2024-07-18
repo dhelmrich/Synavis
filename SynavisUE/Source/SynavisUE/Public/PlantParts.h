@@ -18,13 +18,13 @@ public:
 	void Clear();
 
 	UFUNCTION(BlueprintCallable, Category = "Stem")
-	void AddMesh(const TArray<FVector>& Points,
+	int32 AddMesh(const TArray<FVector>& Points,
 	                 const TArray<FVector>& Normals,
 									 const TArray<int>& Triangles,
 									 const TArray<FVector2D>& UV,
 									 const TArray<FColor>& VertexColors,
 									 const TArray<FProcMeshTangent>& Tangents,
-									 FString MeshRole = "Stem");
+									 int32 organType = 3);
 
 	void VaryProperty(FString ValRole, FString PropertyName, float Value, float StdDev = 0.0);
 
