@@ -1,3 +1,4 @@
+import base64
 import os
 import sys
 import warnings
@@ -35,13 +36,21 @@ else:
   print("The path has been added to the sys path for this session")
 #endif
 
+import plantbox as pb
+
+# load MPI environment
+from mpi4py import MPI
+comm = MPI.COMM_WORLD
+MPIRank = comm.Get_rank()
+MPISize = comm.Get_size()
+
 class Soil :
   def __init__(self) :
-    source = pd.read_csv("Soil_parameter.csv")
+    self.source = pd.read_csv("Soil_parameter.csv")
   #enddef
   def get_pressure_head(self, depth) :
-    hydroprop = source["Hyprop"]
-    measuredepth = source["Depth"]
+    hydroprop = self.source["Hyprop"]
+    measuredepth = self.source["Depth"]
     return np.interp(depth, measuredepth, hydroprop)
   #enddef
 #endclass
@@ -159,19 +168,117 @@ class Weather :
     eddy_covariance_canopy = 0.1 # m2 s-1
 #endclass
 
+class Field :
+  def __init__(self, Lat, Long, Time, Size, MPIRank, MPISize, density = 1.0) :
+    # initialize all
+    self.Lat = Lat
+    self.Long = Long
+    self.Time = Time
+    self.Size = Size
+    self.LocalSize = Size // MPISize
+    self.MPIRank = MPIRank
+    self.MPISize = MPISize
+    # strategy of placement
+    self.strategy = "square" # "random"
+    # field is always square, so our part depends on the rank
+    self.sidelength = np.floor(np.sqrt(Size)) / np.floor(np.sqrt(MPISize))
+    start_p = MPISize % np.floor(np.sqrt(MPISize))
+    start_q = np.floor(np.sqrt(MPISize))
+    start_i = start_p * self.sidelength
+    start_j = start_q * self.sidelength
+    # make a map of the field indices
+    self.field = np.zeroes((self.sidelength, self.sidelength,2))
+    for i in range(self.sidelength) :
+      for j in range(self.sidelength) :
+        self.field[i,j,0] = start_i + i
+        self.field[i,j,1] = start_j + j
+      #endfor
+    #endfor
+    # calculate partition size (p,q) in world units from density and MPI size
+    self.partition_size = np.floor(np.sqrt(Size)) / np.floor(np.sqrt(MPISize)) * density
+    # with this, create the seed position array
+    self.seed_positions = self.field * self.partition_size * np.array([self.p, self.q])
+    self.plant_initalized = False
+  #enddef
+  def get_position_from_local(self, local_id) :
+    i = local_id // self.sidelength
+    j = local_id % self.sidelength
+    return self.seed_positions[i,j]
+  #enddef
+  def get_position_from_global(self, global_id) :
+    return self.field[global_id[0], global_id[1]]
+  #enddef
+  def get_global_from_local(self, local_id) :
+    i = local_id // self.sidelength
+    j = local_id % self.sidelength
+    return self.field[i,j]
+  #enddef
+  def global_id_value(self, global_id) :
+    # combine two 32 bit integers to one 64 bit integer
+    value = global_id[0] << 32 | global_id[1]
+    return value
+  #enddef
+  def init_plants(self, parameter_file) :
+    self.plants = [pb.MappedPlant() for i in range(self.LocalSize)]
+    self.plant_initalized = True
+    for i,p in enumerate(self.plants) :
+      p.readParameters(parameter_file)
+      p.setSeed(self.global_id_value(self.get_global_from_local(i)))
+      sdf = pb.SDF_PlantBox(np.Inf, np.Inf, 40)
+      p.setGeometry(sdf)
+      p.initialize()
+    #endfor
+  #enddef
+  def simulate(self, simtime, dt, verbose = False) :
+    if not self.plant_initalized :
+      raise Exception("Plants not initialized")
+    for i,p in enumerate(self.plants) :
+      p.simulate(simtime, verbose = verbose)
+    #endfor
+  #enddef
+  def get_plant(self, local_id) :
+    return self.plants[local_id]
+  #enddef
+  def get_plants(self) :
+    return self.plants
+  #enddef
+  def send_plant(self, local_id, dataconnector) :
+    plant = self.get_plant(local_id)
+    vis = pb.PlantVisualiser(plant)
+    # get organs
+    organs = plant.getOrgans()
+    # send all stem or leaf organs
+    for organ in organs :
+      if organ.organType() == pb.Stem or organ.organType() == pb.Leaf :
+        vis.ComputeGeometryForOrgan(organ)
+        p,i,n = vis.GetGeometry(), vis.GetGeometryIndices(), vis.GetGeometryNormals()
+        t = vis.GetGeometryTextureCoordinates()
+        message = {"type":"do"}
+        message["p"] = base64.b64encode(p.astype("float64")).decode("utf-8")
+        message["i"] = base64.b64encode(i.astype("int32")).decode("utf-8")
+        message["n"] = base64.b64encode(n.astype("float64")).decode("utf-8")
+        message["t"] = base64.b64encode(t.astype("float64")).decode("utf-8")
+        message["l"] = local_id
+        message["o"] = int(organ.organType())
+      #endif
+    #endfor
+  #enddef
+#endclass
 
-import plantbox as pb
 
 # add Synavis (some parent directory to this) to path
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "build_unix"))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "build"))
 import PySynavis as rtc
 
-def SendGeometry(plant, dataconnector) :
+def SendGeometry(plant, dataconnector, organ = -1) :
   # get the geometry from the plant
   vis = pb.PlantVisualiser(plant)
   # get the geometry
-  vis.computeGeometry()
+  if organ >= 0 :
+    vis.computeGeometryForOrgan(organ)
+  else :
+    vis.computeGeometry()
   p,t,n = vis.GetGeometry(), vis.GetGeometryIndices(), vis.GetGeometryNormals()
   # get the center points
   c = plant.getNodes()
@@ -248,8 +355,11 @@ def resistance2conductance(resistance, r, TairK):
                 1 / 10000)  # [s cm2 mmol−1] * [mmol/mol] * [m2/cm2] = [s m2 mol−1]
     return 1 / resistance
 
-r.oldciEq = True
+"""
+CONSTANTS
+"""
 
+r.oldciEq = True
 r.g0 = 8e-3
 r.VcmaxrefChl1 = 1.1#1.28
 r.VcmaxrefChl2 = 4#8.33
@@ -307,3 +417,4 @@ for t in np.arange(0, simtime, dt):
   es = weather.saturated_vapour_pressure(t)
   ea = weather.actual_vapour_pressure(t)
   rbl = weather.rbl(t)
+
