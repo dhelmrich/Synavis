@@ -12,6 +12,15 @@ from scipy import constants
 import pandas as pd
 import datetime
 
+# if the runtime folder is not the python script folder, switch there
+if os.path.dirname(os.path.abspath(__file__)) != os.getcwd():
+  os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
+# add Synavis (some parent directory to this) to path
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "build_unix"))
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "build"))
+import PySynavis as rtc
+
 cplantbox_dir = ""
 
 # check if we have a CPLANTBOX_PATH in the environment
@@ -44,13 +53,19 @@ comm = MPI.COMM_WORLD
 MPIRank = comm.Get_rank()
 MPISize = comm.Get_size()
 
+field_size = 1000
+cmd_man = rtc.CommandLineParser(sys.argv)
+if cmd_man.HasArgument("fs"):
+  field_size = cmd_man.GetArgument("fs")
+# endif
+
 class Soil :
   def __init__(self) :
     self.source = pd.read_csv("Soil_parameter.csv")
   #enddef
   def get_pressure_head(self, depth) :
     hydroprop = self.source["Hyprop"]
-    measuredepth = self.source["Depth"]
+    measuredepth = self.source["depth"]
     return np.interp(depth, measuredepth, hydroprop)
   #enddef
 #endclass
@@ -60,23 +75,24 @@ class Weather :
     self.Lat = Lat
     self.Long = Long
     self.Time = Time
-    self.Day = self.Time.tm_yday
+    self.Day = self.Time.day
     with open ("SE_EC_001.1711883710395.csv", "r") as f :
       # get line 93
       for i in range(92) :
         f.readline()
       # get the column data
       line = f.readline()[1:]
-      line = line.split(",")
+      line = [c.strip() for c in line.split(",")]
       self.columns = line
     # endwith
     self.data = pd.read_csv("SE_EC_001.1711883710395.csv", skiprows = 93, names = self.columns)
     for col in self.data.columns:
-    if "QualityFlag" in col:
-      self.data[col] = self.data[col].str.split("_", expand=True)[1]
-      # convert the values to numeric
-      self.data[col] = pd.to_numeric(self.data[col], errors='coerce')
-    # endif
+      if "QualityFlag" in col:
+        self.data[col] = self.data[col].str.split("_", expand=True)[1]
+        # convert the values to numeric
+        self.data[col] = pd.to_numeric(self.data[col], errors='coerce')
+      # endif
+    # endfor
     # exchange "noData" with NaN
     self.data = self.data.replace("noData", np.nan)
     # convert the time to datetime
@@ -85,7 +101,7 @@ class Weather :
     self.quality_flags = self.data.filter(like="QualityFlag")
     self.data = self.data.drop(columns = self.quality_flags.columns)
     self.data = self.data.drop(columns="feature")
-    data = data.apply(pd.to_numeric, errors='coerce')
+    self.data = self.data.apply(pd.to_numeric, errors='coerce')
     self.data.sort_index(inplace=True)
     self.data.index = pd.to_datetime(self.data.index, format="%Y-%m-%dT%H:%M:%S%z", utc=True)
     self.quality_flags.index = self.data.index
@@ -266,11 +282,6 @@ class Field :
 #endclass
 
 
-# add Synavis (some parent directory to this) to path
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "build_unix"))
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "build"))
-import PySynavis as rtc
-
 def SendGeometry(plant, dataconnector, organ = -1) :
   # get the geometry from the plant
   vis = pb.PlantVisualiser(plant)
@@ -287,7 +298,7 @@ def SendGeometry(plant, dataconnector, organ = -1) :
   dataconnector.SendFloat32Buffer(c)
 
 # modelparameters
-parameter_file = os.path.join(cplantbox_dir, "modelparameter", "structural", "Triticum_aestivum_adapted_2023.xml")
+parameter_file = os.path.join(cplantbox_dir, "modelparameter", "structural", "plant", "Triticum_aestivum_adapted_2023.xml")
 
 # model parameters
 simtime = 26 # days
@@ -295,7 +306,7 @@ depth = 40 # cm
 dt = 0.1 # hours
 verbose = False
 
-weather = Weather(55.7, 13.2, datetime.datetime(2023, 1, 1, 0, 0, 0))
+weather = Weather(55.7, 13.2, datetime.datetime(2021, 6, 21, 13, 0, 0, 0))
 soil = Soil()
 
 plant = pb.MappedPlant(seednum = 2)
@@ -331,7 +342,7 @@ cell_number = [int(6 * rez), int(24 * rez), int(40 * rez)]  # 1cm3?
 layers = depth;
 soilvolume = (depth / layers) * 3 * 12
 k_soil = []
-initial =   # mean matric potential [cm] pressure head
+initial = soil.get_pressure_head(0)  # mean matric potential [cm] pressure head
 
 p_mean = initial
 p_bot = p_mean + depth / 2
