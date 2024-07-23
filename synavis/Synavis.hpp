@@ -545,6 +545,7 @@ namespace Synavis
   {
   public:
     CommandLineParser(int argc, char** argv);
+    CommandLineParser(std::vector<std::string> args);
     std::string GetArgument(std::string Name);
     bool HasArgument(std::string Name);
   private:

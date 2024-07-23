@@ -12,6 +12,12 @@ set(PLAINSOURCES ${RECEIVERSOURCES})
 list(FILTER PLAINSOURCES EXCLUDE REGEX ".*PySynavis.cpp$")
 if(NOT BUILD_WITH_DECODING)
   list(FILTER PLAINSOURCES EXCLUDE REGEX "FrameDecodeAV.*$")
+  list(FILTER RECEIVERSOURCES EXCLUDE REGEX "FrameDecodeAV.*$")
+  list(FILTER RECEIVERHEADERS EXCLUDE REGEX "FrameDecodeAV.*$")
+else()
+  # export flag to C++ code
+  add_definitions(-DBUILD_WITH_DECODING)
+  
 endif()
 # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -openmp:llvm -openmp:experimental")
 

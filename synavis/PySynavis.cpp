@@ -19,7 +19,11 @@
 
 #include "DataConnector.hpp"
 #include "MediaReceiver.hpp"
+
+#ifdef BUILD_WITH_DECODING
 #include "FrameDecodeAV.hpp"
+#endif
+
 namespace py = pybind11;
 
 #include "UnrealReceiver.hpp"
@@ -349,10 +353,18 @@ namespace Synavis
       .def("OnSignallingMessage", (void(Provider::*)(std::string)) & PyProvider<>::OnSignallingMessage, py::arg("Message"))
     ;
 
+#ifdef BUILD_WITH_DECODING
     py::class_<FrameDecode, std::shared_ptr<FrameDecode>>(m, "FrameDecode")
       .def(py::init<>())
       .def("CreateAcceptor", &FrameDecode::CreateAcceptor)
       .def("SetFrameCallback", &FrameDecode::SetFrameCallback)
+    ;
+#endif
+
+    py::class_<CommandLineParser, std::shared_ptr<CommandLineParser>>(m, "CommandLineParser")
+      .def(py::init<const std::vector<std::string>&>())
+      .def("HasArgument", &CommandLineParser::HasArgument, py::arg("Argument"))
+      .def("GetArgument", &CommandLineParser::GetArgument, py::arg("Argument"))
     ;
   }
 

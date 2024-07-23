@@ -476,6 +476,31 @@ Synavis::CommandLineParser::CommandLineParser(int argc, char** argv)
   }
 }
 
+Synavis::CommandLineParser::CommandLineParser(std::vector<std::string> args)
+{
+  for (int i = 0; i < args.size(); i++)
+  {
+    std::string arg = args[i];
+    if (arg[0] == '-')
+    {
+      // remove all leading dashes
+      while (arg[0] == '-')
+      {
+        arg.erase(0, 1);
+      }
+      if (i + 1 < args.size() && args[i + 1][0] != '-')
+      {
+        std::string value = args[i + 1];
+        this->Arguments[arg] = value;
+      }
+      else
+      {
+        this->Arguments[arg] = "";
+      }
+    }
+  }
+}
+
 std::string Synavis::CommandLineParser::GetArgument(std::string Name)
 {
   if (Arguments.find(Name) != Arguments.end())
