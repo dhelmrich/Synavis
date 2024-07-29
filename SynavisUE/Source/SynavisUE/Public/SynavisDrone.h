@@ -107,7 +107,7 @@ inline bool GetBoolFieldOr(TSharedPtr<FJsonObject> Json, const FString& Field, b
 template < typename T > TArray<T> GetArrayField(TSharedPtr<FJsonObject> Json, const FString& Field)
 {
   TArray<T> Result;
-  if (Json.IsValid() && Json->HasTypedField<EJson::Array>(Field))
+  if (Json.IsValid() && Json->HasTypedField<EJson::String>(Field))
   {
     const FString& Content = Json->GetStringField(Field);
     auto Base64decodesize = FBase64::GetDecodedDataSize(Content);

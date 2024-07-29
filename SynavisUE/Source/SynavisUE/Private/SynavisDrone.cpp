@@ -1999,6 +1999,7 @@ void ASynavisDrone::BeginPlay()
   auto* Controller = GetWorld()->GetFirstPlayerController();
   if (Controller)
   {
+    // Explanation: UE currently logs the absence of a video codec as an error, which is wrong for Synavis::DataConnector
     Controller->ConsoleCommand(TEXT("Log LogPixelStreaming off"));
   }
 
