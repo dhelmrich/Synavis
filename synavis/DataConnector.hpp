@@ -124,6 +124,8 @@ protected:
 
   inline void DataChannelMessageHandling(rtc::message_variant Data);
 
+  inline void RegisterRemoteCandidate(const json& content);
+
   ELogVerbosity LogVerbosity = ELogVerbosity::Warning;
 
   EConnectionState state_;
@@ -148,6 +150,9 @@ protected:
     {"SignallingPort",int()}
   };
   WorkerThread SubmissionHandler;
+
+  // Communication queue to allow for UE to retain the correct state
+  std::deque<json> EarlyMessages;
 };
 
 }

@@ -139,30 +139,30 @@ bool Synavis::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, 
       }
     });
   auto WaitTimeout = [&MessageState, &StateTracker, this](bool bFail = true, double failtime = 2.0)
-  {
-    auto start_time = std::chrono::system_clock::now();
-    auto failtime_seconds = std::chrono::duration<double>(failtime);
-    auto waittime = failtime_seconds / 10.0;
-    while (MessageState < StateTracker)
     {
-      if (this->LogVerbosity >= ELogVerbosity::Verbose)
+      auto start_time = std::chrono::system_clock::now();
+      auto failtime_seconds = std::chrono::duration<double>(failtime);
+      auto waittime = failtime_seconds / 10.0;
+      while (MessageState < StateTracker)
       {
-        std::this_thread::sleep_for(waittime);
-        lconnector(ELogVerbosity::Verbose) << "Waiting for message " << StateTracker << " time " << std::chrono::duration<double>(std::chrono::system_clock::now() - start_time).count() << " of " << failtime_seconds.count() << "." << std::endl;
+        if (this->LogVerbosity >= ELogVerbosity::Verbose)
+        {
+          std::this_thread::sleep_for(waittime);
+          lconnector(ELogVerbosity::Verbose) << "Waiting for message " << StateTracker << " time " << std::chrono::duration<double>(std::chrono::system_clock::now() - start_time).count() << " of " << failtime_seconds.count() << "." << std::endl;
+        }
+        else
+        {
+          std::this_thread::yield();
+        }
+        if (bFail && (std::chrono::duration<double>(std::chrono::system_clock::now() - start_time) > failtime_seconds))
+        {
+          lconnector(ELogVerbosity::Debug) << "Message reception timed out" << std::endl;
+          MessageState = -1;
+          break;
+        }
       }
-      else
-      {
-        std::this_thread::yield();
-      }
-      if (bFail && (std::chrono::duration<double>(std::chrono::system_clock::now() - start_time) > failtime_seconds))
-      {
-        lconnector(ELogVerbosity::Debug) << "Message reception timed out" << std::endl;
-        MessageState = -1;
-        break;
-      }
-    }
-    StateTracker++;
-  };
+      StateTracker++;
+    };
   std::size_t chunk_size{}, chunks{}, total_size{};
   const uint8_t* Source = nullptr;
   bool NeedToDelete = false;
@@ -185,7 +185,11 @@ bool Synavis::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, 
   }
   else if (Format == "ascii")
   {
-
+    const char* cstr = reinterpret_cast<const char*>(Buffer.data());
+    total_size = Buffer.size();
+    chunk_size = this->MaxMessageSize - 4;
+    chunks = total_size / chunk_size + 1;
+    Source = reinterpret_cast<const uint8_t*>(cstr);
   }
   if (!Source)
   {
@@ -233,14 +237,14 @@ bool Synavis::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, 
     }
   }
   this->SendJSON({ {"type","buffer"},{"stop",Name} });
-    if (!DontWaitForAnswer) WaitTimeout(this->FailIfNotComplete, TimeOut);
-    lconnector(ELogVerbosity::Info) << "Sent stop message" << std::endl;
-    // restore the original callback
-      MessageReceptionCallback = msg_callback;
-    if (NeedToDelete)
-    {
-      delete[] Source;
-    }
+  if (!DontWaitForAnswer) WaitTimeout(this->FailIfNotComplete, TimeOut);
+  lconnector(ELogVerbosity::Info) << "Sent stop message" << std::endl;
+  // restore the original callback
+  MessageReceptionCallback = msg_callback;
+  if (NeedToDelete)
+  {
+    delete[] Source;
+  }
   return this->DontWaitForAnswer || MessageState > 0;
 }
 
@@ -424,7 +428,7 @@ void Synavis::DataConnector::LockUntilConnected(unsigned additional_wait)
   {
     std::this_thread::yield();
   }
-  if(additional_wait > 0)
+  if (additional_wait > 0)
     std::this_thread::sleep_for(std::chrono::milliseconds(additional_wait));
 }
 
@@ -450,13 +454,13 @@ void Synavis::DataConnector::WriteSDPsToFile(std::string Filename)
 {
   lconnector(ELogVerbosity::Debug) << "Set Writing SDPs to file; Note that you need to call this function AFTER setting the RemoteInformation Callback." << std::endl;
   this->OnRemoteDescriptionCallback = [f_ = this->OnRemoteDescriptionCallback, Filename](std::string sdp)
-  {
-    std::ofstream file(Filename);
-    file << sdp;
-    file.close();
-    if (f_.has_value())
-      f_.value()(sdp);
-  };
+    {
+      std::ofstream file(Filename);
+      file << sdp;
+      file.close();
+      if (f_.has_value())
+        f_.value()(sdp);
+    };
 }
 
 void Synavis::DataConnector::exp__DeactivateCallbacks()
@@ -471,7 +475,7 @@ inline void Synavis::DataConnector::DataChannelMessageHandling(rtc::message_vari
   {
     auto data = std::get<rtc::binary>(messageordata);
     std::byte message_byte = data[0];
-    if(message_byte == 0_b)
+    if (message_byte == 0_b)
     {
       // Quality control ownership
       lconnector(ELogVerbosity::Verbose) << "Received quality control ownership" << std::endl;
@@ -480,7 +484,7 @@ inline void Synavis::DataConnector::DataChannelMessageHandling(rtc::message_vari
     {
       lconnector(ELogVerbosity::Verbose) << "Received response" << std::endl;
     }
-    else if(message_byte == 2_b)
+    else if (message_byte == 2_b)
     {
       lconnector(ELogVerbosity::Verbose) << "Received command" << std::endl;
     }
@@ -496,7 +500,7 @@ inline void Synavis::DataConnector::DataChannelMessageHandling(rtc::message_vari
     {
       lconnector(ELogVerbosity::Verbose) << "Received unfreeze frame" << std::endl;
     }
-    else if(message_byte == 5_b)
+    else if (message_byte == 5_b)
     {
       lconnector(ELogVerbosity::Verbose) << "Received video encoder AVgQP" << std::endl;
     }
@@ -608,6 +612,40 @@ inline void Synavis::DataConnector::DataChannelMessageHandling(rtc::message_vari
   }
 }
 
+inline void Synavis::DataConnector::RegisterRemoteCandidate(const json& content)
+{
+  // {"type": "iceCandidate", "candidate": {"candidate": "candidate:1 1 UDP 2122317823 172.26.15.227 42835 typ host", "sdpMLineIndex": "0", "sdpMid": "0"}}
+  lconnector(ELogVerbosity::Debug) << "Parsing ice candidate" << std::endl;
+  std::string sdpMid, candidate_string;
+  int sdpMLineIndex;
+  try
+  {
+    sdpMid = content["candidate"]["sdpMid"].get<std::string>();
+    sdpMLineIndex = content["candidate"]["sdpMLineIndex"].get<int>();
+    candidate_string = content["candidate"]["candidate"].get<std::string>();
+  }
+  catch (std::exception e)
+  {
+    lconnector(ELogVerbosity::Warning) << "Could not parse candidate: " << e.what() << std::endl;
+    return;
+  }
+  lconnector(ELogVerbosity::Debug) << "I received a candidate for " << sdpMid << " with index " << sdpMLineIndex << " and candidate " << candidate_string << std::endl;
+  rtc::Candidate ice(candidate_string, sdpMid);
+  try
+  {
+    PeerConnection->addRemoteCandidate(ice);
+    lconnector(ELogVerbosity::Debug) << "Added remote candidate" << std::endl;
+    // remove from required candidates if succeeded
+    RequiredCandidate.erase(std::remove_if(RequiredCandidate.begin(), RequiredCandidate.end(), [sdpMid](auto s) {return s == sdpMid; }), RequiredCandidate.end());
+  }
+  catch (std::exception e)
+  {
+    lconnector(ELogVerbosity::Error) << "Could not add remote candidate: " << e.what() << std::endl;
+    lconnector(ELogVerbosity::Debug) << "Candidate was: " << ice << std::endl;
+  }
+
+}
+
 void Synavis::DataConnector::Initialize()
 {
   if (IP.has_value()) rtcconfig_.bindAddress = IP.value();
@@ -636,10 +674,10 @@ void Synavis::DataConnector::Initialize()
     });
   PeerConnection->onLocalCandidate([this](auto candidate)
     {
-      json ice_message = { {"type","iceCandidate"},
-        {"candidate", {{"candidate", candidate.candidate()},
-                           "sdpMid", candidate.mid()}} };
-  SignallingServer->send(ice_message.dump());
+      //json ice_message = { {"type","iceCandidate"},
+      //  {"candidate", {{"candidate", candidate.candidate()},
+      //                     "sdpMid", candidate.mid()}} };
+      //SignallingServer->send(ice_message.dump());
     });
   PeerConnection->onDataChannel([this](auto datachannel)
     {
@@ -691,7 +729,7 @@ void Synavis::DataConnector::Initialize()
         lconnector(ELogVerbosity::Warning) << "****************************************************************************" << std::endl;
       }
       this->MaxMessageSize = std::min(DataChannel->maxMessageSize(), static_cast<std::size_t>(std::numeric_limits<uint16_t>::max() - 3));
-    
+
       state_ = EConnectionState::CONNECTED;
     });
   DataChannel->onMessage(std::bind(&DataConnector::DataChannelMessageHandling, this, std::placeholders::_1));
@@ -802,60 +840,68 @@ void Synavis::DataConnector::Initialize()
             }
             l << std::endl;
             InitializedRemote = true;
+            if (EarlyMessages.size() > 0)
+            {
+              RegisterRemoteCandidate(content);
+              // if we have no more required candidates, we can send an answer
+              if (RequiredCandidate.size() == 0)
+              {
+                lconnector(ELogVerbosity::Info) << "I have received all required candidates" << std::endl;
+                if (!TakeFirstStep && PeerConnection->localDescription().has_value() && state_ < EConnectionState::OFFERED)
+                {
+                  this->state_ = EConnectionState::OFFERED;
+                  SubmissionHandler.AddTask(std::bind(&DataConnector::CommunicateSDPs, this));
+                }
+                if (OnIceGatheringFinished.has_value())
+                {
+                  OnIceGatheringFinished.value()();
+                }
+              }
+              else
+              {
+                auto& l = lconnector(ELogVerbosity::Debug) << "I still have " << RequiredCandidate.size() << " required candidates: ";
+                for (auto i = 0; i < RequiredCandidate.size(); ++i)
+                {
+                  l << RequiredCandidate[i] << " ";
+                }
+                l << std::endl;
+              }
+            }
           }
         }
         else if (content["type"] == "iceCandidate")
         {
-          // {"type": "iceCandidate", "candidate": {"candidate": "candidate:1 1 UDP 2122317823 172.26.15.227 42835 typ host", "sdpMLineIndex": "0", "sdpMid": "0"}}
-          lconnector(ELogVerbosity::Debug) << "Parsing ice candidate" << std::endl;
-          std::string sdpMid, candidate_string;
-          int sdpMLineIndex;
-          try
+          if (!InitializedRemote)
           {
-            sdpMid = content["candidate"]["sdpMid"].get<std::string>();
-            sdpMLineIndex = content["candidate"]["sdpMLineIndex"].get<int>();
-            candidate_string = content["candidate"]["candidate"].get<std::string>();
-          }
-          catch (std::exception e)
-          {
-            lconnector(ELogVerbosity::Warning) << "Could not parse candidate: " << e.what() << std::endl;
-            return;
-          }
-          lconnector(ELogVerbosity::Debug) << "I received a candidate for " << sdpMid << " with index " << sdpMLineIndex << " and candidate " << candidate_string << std::endl;
-          rtc::Candidate ice(candidate_string, sdpMid);
-          try
-          {
-            PeerConnection->addRemoteCandidate(ice);
-            // remove from required candidates if succeeded
-            RequiredCandidate.erase(std::remove_if(RequiredCandidate.begin(), RequiredCandidate.end(), [sdpMid](auto s) {return s == sdpMid; }), RequiredCandidate.end());
-          }
-          catch (std::exception e)
-          {
-            lconnector(ELogVerbosity::Error) << "Could not add remote candidate: " << e.what() << std::endl;
-            lconnector(ELogVerbosity::Debug) << "Candidate was: " << content.dump() << std::endl;
-          }
-          // if we have no more required candidates, we can send an answer
-          if (RequiredCandidate.size() == 0)
-          {
-            lconnector(ELogVerbosity::Info) << "I have received all required candidates" << std::endl;
-            if (!TakeFirstStep && PeerConnection->localDescription().has_value() && state_ < EConnectionState::OFFERED)
-            {
-              this->state_ = EConnectionState::OFFERED;
-              SubmissionHandler.AddTask(std::bind(&DataConnector::CommunicateSDPs, this));
-            }
-            if (OnIceGatheringFinished.has_value())
-            {
-              OnIceGatheringFinished.value()();
-            }
+            EarlyMessages.push_back(content);
+            lconnector(ELogVerbosity::Debug) << "Storing ICE for after remote was initialized" << std::endl;
           }
           else
           {
-            auto& l = lconnector(ELogVerbosity::Debug) << "I still have " << RequiredCandidate.size() << " required candidates: ";
-            for (auto i = 0; i < RequiredCandidate.size(); ++i)
+            RegisterRemoteCandidate(content);
+            // if we have no more required candidates, we can send an answer
+            if (RequiredCandidate.size() == 0)
             {
-              l << RequiredCandidate[i] << " ";
+              lconnector(ELogVerbosity::Info) << "I have received all required candidates" << std::endl;
+              if (!TakeFirstStep && PeerConnection->localDescription().has_value() && state_ < EConnectionState::OFFERED)
+              {
+                this->state_ = EConnectionState::OFFERED;
+                SubmissionHandler.AddTask(std::bind(&DataConnector::CommunicateSDPs, this));
+              }
+              if (OnIceGatheringFinished.has_value())
+              {
+                OnIceGatheringFinished.value()();
+              }
             }
-            l << std::endl;
+            else
+            {
+              auto& l = lconnector(ELogVerbosity::Debug) << "I still have " << RequiredCandidate.size() << " required candidates: ";
+              for (auto i = 0; i < RequiredCandidate.size(); ++i)
+              {
+                l << RequiredCandidate[i] << " ";
+              }
+              l << std::endl;
+            }
           }
         }
         else if (content["type"] == "control")
