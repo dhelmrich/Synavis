@@ -11,6 +11,7 @@ from scipy.integrate import odeint
 from scipy import constants
 import pandas as pd
 import datetime
+import numpy as np
 
 # if the runtime folder is not the python script folder, switch there
 if os.path.dirname(os.path.abspath(__file__)) != os.getcwd():
@@ -47,7 +48,8 @@ else:
 #endif
 
 import plantbox as pb
-from functional.phloem_flux import PhloemFluxPython
+from functional.xylem_flux import XylemFluxPython
+from functional.Leuning import Leuning
 
 # load MPI environment
 from mpi4py import MPI
@@ -69,6 +71,9 @@ class Soil :
     hydroprop = self.source["Hyprop"]
     measuredepth = self.source["depth"]
     return np.interp(depth, measuredepth, hydroprop)
+  #enddef
+  def soil_matric_potential(self, depth) :
+    return self.get_pressure_head(depth)
   #enddef
 #endclass
 
@@ -247,11 +252,11 @@ class Field :
       p.initialize()
     #endfor
   #enddef
-  def simulate(self, simtime, dt, verbose = False) :
+  def simulate(self, dt, verbose = False) :
     if not self.plant_initalized :
       raise Exception("Plants not initialized")
     for i,p in enumerate(self.plants) :
-      p.simulate(simtime, verbose = verbose)
+      p.simulate(dt, verbose = verbose)
     #endfor
   #enddef
   def get_plant(self, local_id) :
@@ -278,29 +283,31 @@ class Field :
         message["t"] = base64.b64encode(t.astype("float64")).decode("utf-8")
         message["l"] = local_id
         message["o"] = int(organ.organType())
+        dataconnector.send(message)
       #endif
     #endfor
   #enddef
+  def init_photo(self) :
+    self.photo = [Leuning(plant) for plant in self.plants]
+    for r in self.photo :
+      r.setKr([[1.728e-4], [1.e-20], [0.004]])  # gmax will be changed by the leuning function
+      r.setKx([[4.32e-1]])
+      # leaf_nodes = r.get_nodes_index(4)
+    #endfor
+  #enddef
+  def measureLight(self, local_id, dataconnector) :
+    message = {"type":"mm", "l":local_id}
+    leaf_nodes = self.photo[local_id].get_nodes_index(pb.leaf)
+    leaf_nodes = self.plant[local_id].getNodes()[leaf_nodes]
 #endclass
 
-
-def SendGeometry(plant, dataconnector, organ = -1) :
-  # get the geometry from the plant
-  vis = pb.PlantVisualiser(plant)
-  # get the geometry
-  if organ >= 0 :
-    vis.computeGeometryForOrgan(organ)
-  else :
-    vis.computeGeometry()
-  p,t,n = vis.GetGeometry(), vis.GetGeometryIndices(), vis.GetGeometryNormals()
-  # get the center points
-  c = plant.getNodes()
-  # send the geometry
-  dataconnector.SendGeometry(p, t, n)
-  dataconnector.SendFloat32Buffer(c)
-
-# modelparameters
-parameter_file = os.path.join(cplantbox_dir, "modelparameter", "structural", "plant", "Triticum_aestivum_adapted_2023.xml")
+""" Parameters """
+kz = 4.32e-1  # axial conductivity [cm^3/day]
+kr = 1.728e-4  # radial conductivity of roots [1/day]
+kr_stem = 1.e-20  # radial conductivity of stem  [1/day], set to almost 0
+gmax = 0.004  #  cm3/day radial conductivity of leaves = stomatal conductivity [1/day]
+p_a = -1000  # static air water potential
+k_soil = []
 
 # model parameters
 simtime = 26 # days
@@ -310,127 +317,60 @@ verbose = False
 
 start_time = datetime.datetime(2021, 6, 21, 13, 0, 0, 0)
 end_time = start_time + datetime.timedelta(days = simtime)
+timerange_numeric = np.arange(0, simtime, dt)
+timerange = [start_time + datetime.timedelta(hours = t) for t in timerange_numeric]
+
+
+parameter_file = os.path.join(cplantbox_dir, "modelparameter", "structural", "plant", "Triticum_aestivum_adapted_2023.xml")
 
 weather = Weather(55.7, 13.2, start_time)
 soil = Soil()
+field = Field(55.7, 13.2, start_time, 1000, MPIRank, MPISize, density = 1.0)
+field.init_plants(parameter_file)
 
-plant = pb.MappedPlant(seednum = 2)
-plant.readParameters(parameter_file)
+# Numerical solution
+results = []
+resultsAn = []
+resultsgco2 = []
+resultsVc = []
+resultsVj = []
+resultscics = []
+resultsfw = []
+resultspl = []
 
-sdf = pb.SDF_PlantBox(np.Inf, np.Inf, depth)
-plant.setGeometry(sdf)
-plant.initialize(verbose = verbose)
+dataconnector = rtc.DataConnector()
+dataconnector.SetTakeFirstStep(False)
 
-plant.simulate(simtime, verbose = verbose)
+for i,t in enumerate(timerange_numeric):
+  field.simulate(dt, verbose = False)
+  time_string_ue = timerange[i].strftime("%Y.%m.%d-%H:%M:%S")
+  dataconnector.SendJson({"type":"t", "s":time_string_ue})
+  for l_i in range(field.LocalSize) :
+    field.send_plant(l_i, dataconnector)
+    Q_input = field.measureLight(l_i, dataconnector)
+    RH_input = weather.relative_humidity(timerange[i])
+    Tair_input = weather.temperature(timerange[i])
+    p_s_input = soil.soil_matric_potential(0.1)
+    N_input = 4.4  # nitrogen satisfaction for small wheat plants
+    cs_input = weather.molar_fraction_co2(timerange[i])
+    var = [Q_input, RH_input, Tair_input, p_s_input, N_input, cs_input]
+    es = 0.61078 * np.exp(17.27 * Tair_input / (Tair_input + 237.3))  # FAO56
+    ea = es * RH_input
+    VPD = es - ea
+    r.Param['Patm'] = df['Pair'][i]
+    rx = r.solve_leuning(sim_time = simtime, sxx = [p_s_input], cells = True, Qlight = Q_input, VPD = VPD, Tl = Tair_input + 273.15, p_linit = p_s_input,
+    ci_init = cs_input * 0.7, cs = cs_input, soil_k = [], N = N_input, log = False, verbose = False)
+    fluxes = r.radial_fluxes(simtime, rx, [p_s_input], k_soil, True)  # cm3/day
+    organTypes = np.array(r.rs.organTypes)
+    results.append(sum(np.where(organTypes == 4, fluxes, 0)))
+    resultsAn.append(np.mean(r.An) * 1e6)
+    resultsVc.append(np.mean(r.Vc) * 1e6)
+    resultsVj.append(np.mean(r.Vj) * 1e6)
+    resultsgco2.append(np.mean(r.gco2))
+    resultscics.append(np.mean(r.ci) / cs_input)
+    resultsfw.append(np.mean(r.fw))
+    resultspl.append(np.mean(r.x[leaf_nodes]))
 
-"""
-TairC : air temperature in *C
-TairK: air tempreature in *K
-Pair : air pressure [hPa]
-es: saturation vapour pressure [hPa],
-ea: actual vapour pressure [hPa],
-Qlight: absorbded photosynthetically active radiation (mol m-2 s-1)
-rbl, rcanopy, rair: resistivity to the water vapour flow in , respectivelly, the leaf boundary layer, the canopy, the distance between the canopy and the point of air humidity measurment (assumed to be 2m above ground) [s/m]
-cs : molar fraction of CO2 in the air [mol/mol]
-RH: relative air humidity [-]
-p_mean: mean soil water potential [cm[
-vg: soil van genuchten parameters
-"""
+timePlot = df[t_init:t_end]['time']
 
-# raise Exception
-""" Coupling to soil """
-
-min_b = [-3. / 2, -12. / 2, -41.]  # distance between wheat plants
-max_b = [3. / 2, 12. / 2, 0.]
-rez = 0.5
-cell_number = [int(6 * rez), int(24 * rez), int(40 * rez)]  # 1cm3?
-layers = depth;
-soilvolume = (depth / layers) * 3 * 12
-k_soil = []
-initial = soil.get_pressure_head(0)  # mean matric potential [cm] pressure head
-
-p_mean = initial
-p_bot = p_mean + depth / 2
-p_top = initial - depth / 2
-sx = np.linspace(p_top, p_bot, depth)
-picker = lambda x, y, z: max(int(np.floor(-z)), -1)
-sx_static_bu = sx
-plant.setSoilGrid(picker)  # maps segment
-
-""" Parameters phloem and photosynthesis """
-r = PhloemFluxPython(plant, psiXylInit=min(sx),
-                      ciInit=weather.molar_fraction_co2() * 0.5)  # XylemFluxPython(pl)#
-# r2 = PhloemFluxPython(#pl2,psiXylInit = min(sx),ciInit = weatherInit["cs"]*0.5) #XylemFluxPython(pl)#
-
-r = setKrKx_phloem(r)
-
-def resistance2conductance(resistance, r, TairK):
-    resistance = resistance * (1 / 100)  # [s/m] * [m/cm] = [s/cm]
-    resistance = resistance * r.R_ph * TairK / r.Patm  # [s/cm] * [K] * [hPa cm3 K−1 mmol−1] * [hPa] = [s] * [cm2 mmol−1]
-    resistance = resistance * (1000) * (
-                1 / 10000)  # [s cm2 mmol−1] * [mmol/mol] * [m2/cm2] = [s m2 mol−1]
-    return 1 / resistance
-
-"""
-CONSTANTS
-"""
-
-r.oldciEq = True
-r.g0 = 8e-3
-r.VcmaxrefChl1 = 1.1#1.28
-r.VcmaxrefChl2 = 4#8.33
-r.a1 = 0.6 / 0.4  # 0.7/0.3#0.6/0.4 #ci/(cs - ci) for ci = 0.6*cs
-r.a3 = 2
-r.alpha =0.4# 0.2#/2
-r.theta = 0.6#0.9#/2
-r.k_meso = 1e-3  # 1e-4
-r.setKrm2([[2e-5]])
-r.setKrm1([[10e-2]])  # ([[2.5e-2]])
-r.setRhoSucrose([[0.51], [0.65], [0.56]])  # 0.51
-# ([[14.4,9.0,0,14.4],[5.,5.],[15.]])
-rootFact = 2
-r.setRmax_st(
-    [[2.4 * rootFact, 1.5 * rootFact, 0.6 * rootFact, 2.4 * rootFact], [2., 2.],
-      [8.]])  # 6.0#*6 for roots, *1 for stem, *24/14*1.5 for leaves
-# r.setRmax_st([[12,9.0,6.0,12],[5.,5.],[15.]])
-r.KMrm = 0.1  # VERY IMPORTANT TO KEEP IT HIGH
-# r.exud_k = np.array([2.4e-4])#*10#*(1e-1)
-# r.k_gr = 1#0
-r.sameVolume_meso_st = False
-r.sameVolume_meso_seg = True
-r.withInitVal = True
-r.initValST = 0.  # 0.6#0.0
-r.initValMeso = 0.  # 0.9#0.0
-r.beta_loading = 0.6
-r.Vmaxloading = 0.05  # mmol/d, needed mean loading rate:  0.3788921068507634
-r.Mloading = 0.2
-r.Gr_Y = 0.8
-r.CSTimin = 0.4
-r.surfMeso = 0.0025
-r.leafGrowthZone = 2  # cm
-r.StemGrowthPerPhytomer = True  #
-r.psi_osmo_proto = -10000 * 1.0197  # schopfer2006
-r.fwr = 0
-
-r.cs = weather.molar_fraction_co2()
-
-r.expression = 6
-r.update_viscosity = True
-r.solver = 1
-r.atol = 1e-10
-r.rtol = 1e-6
-# r.doNewtonRaphson = False;r.doOldEq = False
-SPAD = 31.0
-chl_ = (0.114 * (SPAD ** 2) + 7.39 * SPAD + 10.6) / 10
-r.Chl = np.array([chl_])
-r.Csoil = 1e-4
-hp = max([tempnode[2] for tempnode in r.get_nodes()]) / 100
-
-for t in np.arange(0, simtime, dt):
-  TairC = weather.temperature(t)
-  QLight = weather.radiation(t)
-  Pair = weather.air_pressure(t)
-  es = weather.saturated_vapour_pressure(t)
-  ea = weather.actual_vapour_pressure(t)
-  rbl = weather.rbl(t)
 
