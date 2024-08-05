@@ -26,6 +26,9 @@ APlantParts::APlantParts()
   //  RootMaterialBase = RootMaterialBaseFinder.Object;
   //}
   RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("RootComponent"));
+
+  Mesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("Mesh"));
+  Mesh->SetupAttachment(RootComponent);
 }
 
 void APlantParts::Clear()
