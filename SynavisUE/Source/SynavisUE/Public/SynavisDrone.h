@@ -180,7 +180,7 @@ public:
   UFUNCTION(BlueprintCallable, Category = "View")
     void StoreCameraBuffer(int BufferNumber, FString NameBase);
 
-  void ApplyJSONToObject(UObject* Object, FJsonObject* JSON);
+  void ApplyJSONToObject(UObject* Object, TSharedPtr<FJsonObject> JSON, bool NotFoundError = true);
 
   UObject* GetObjectFromJSON(TSharedPtr<FJsonObject> JSON) const;
 
