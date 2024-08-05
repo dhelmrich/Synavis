@@ -386,7 +386,7 @@ FString AWorldSpawner::SpawnObject(TSharedPtr<FJsonObject> Description)
       if (Description->HasField(TEXT("parameters")))
       {
         auto parameters = Description->GetObjectField(TEXT("parameters"));
-        this->DroneRef->ApplyJSONToObject(Spawned, parameters.Get());
+        this->DroneRef->ApplyJSONToObject(Spawned, parameters);
       }
       return Spawned->GetName();
     }

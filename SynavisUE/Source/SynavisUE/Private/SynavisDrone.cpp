@@ -233,7 +233,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
         if (!Jason->HasField(TEXT("append")) && !Jason->HasField(TEXT("hold")))
         {
           auto mesh = WorldSpawner->SpawnProcMesh(Points, Normals, Triangles, {}, 0.0, 1.0, UVs, {});
-          ApplyJSONToObject(mesh, Jason.Get());
+          ApplyJSONToObject(mesh, Jason);
         }
       }
       // we consumed the input, delete the file
@@ -246,7 +246,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
     else if (type == "parameter")
     {
       auto* Target = this->GetObjectFromJSON(Jason);
-      ApplyJSONToObject(Target, Jason.Get());
+      ApplyJSONToObject(Target, Jason);
       SendResponse("{\"type\":\"parameter\",\"name\":\"" + Target->GetName() + "\"}", unixtime_start, pid);
     }
     else if (type == "query")
@@ -1471,11 +1471,11 @@ FProperty* FindPropertyThatHasName(UObject* Object, FString Name)
   return nullptr;
 }
 
-void ASynavisDrone::ApplyJSONToObject(UObject* Object, FJsonObject* JSON)
+void ASynavisDrone::ApplyJSONToObject(UObject* Object, TSharedPtr<FJsonObject> JSON, bool NotFoundError)
 {
   // received a parameter update
   FString Name = JSON->GetStringField(TEXT("property"));
-  FString ObjectName = JSON->GetStringField(TEXT("object"));
+  FString ObjectName = GetStringFieldOr(JSON, TEXT("object"), FString(Object->GetName()));
 
   USceneComponent* ComponentIdentity = Cast<USceneComponent>(Object);
   AActor* ActorIdentity = Cast<AActor>(Object);
@@ -1570,7 +1570,7 @@ void ASynavisDrone::ApplyJSONToObject(UObject* Object, FJsonObject* JSON)
       light->UpdateLightGUIDs();
     }
   }
-  else
+  else if (NotFoundError)
   {
     UE_LOG(LogTemp, Warning, TEXT("Property %s not found"), *Name);
     SendResponse(FString::Printf(TEXT("{\"type\":\"error\",\"message\":\"Property not found\", \"properties\":%s}"), *ListObjectPropertiesAsJSON(Object)));
