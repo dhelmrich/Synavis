@@ -11,7 +11,6 @@ from scipy.integrate import odeint
 from scipy import constants
 import pandas as pd
 import datetime
-import numpy as np
 
 # if the runtime folder is not the python script folder, switch there
 if os.path.dirname(os.path.abspath(__file__)) != os.getcwd():
@@ -57,7 +56,7 @@ comm = MPI.COMM_WORLD
 MPIRank = comm.Get_rank()
 MPISize = comm.Get_size()
 
-field_size = 1000
+field_size = 20
 cmd_man = rtc.CommandLineParser(sys.argv)
 if cmd_man.HasArgument("fs"):
   field_size = cmd_man.GetArgument("fs")
@@ -192,7 +191,7 @@ class Weather :
 #endclass
 
 class Field :
-  def __init__(self, Lat, Long, Time, Size, MPIRank, MPISize, density = 1.0) :
+  def __init__(self, Lat, Long, Time, Size, MPIRank, MPISize, spacing = 1.0) :
     # initialize all
     self.Lat = Lat
     self.Long = Long
@@ -204,37 +203,33 @@ class Field :
     # strategy of placement
     self.strategy = "square" # "random"
     # field is always square, so our part depends on the rank
-    self.sidelength = np.floor(np.sqrt(Size)) / np.floor(np.sqrt(MPISize))
-    start_p = MPISize % np.floor(np.sqrt(MPISize))
-    start_q = np.floor(np.sqrt(MPISize))
-    start_i = start_p * self.sidelength
-    start_j = start_q * self.sidelength
-    # make a map of the field indices
-    self.field = np.zeroes((self.sidelength, self.sidelength,2))
-    for i in range(self.sidelength) :
-      for j in range(self.sidelength) :
-        self.field[i,j,0] = start_i + i
-        self.field[i,j,1] = start_j + j
-      #endfor
+    self.side_length = int(np.floor(np.sqrt(Size)))
+    rank_per_side = int(np.floor(np.sqrt(MPISize)))
+    self.local_side_length = self.side_length // rank_per_side
+    start_i = MPIRank % rank_per_side
+    start_j = MPIRank // rank_per_side
+    self.field = np.zeros((self.LocalSize, 2))
+    for k in range(self.LocalSize) :
+      i = k // self.local_side_length
+      j = k % self.local_side_length
+      self.field[k] = np.array([start_i * self.local_side_length + i, start_j * self.local_side_length + j])
     #endfor
-    # calculate partition size (p,q) in world units from density and MPI size
-    self.partition_size = np.floor(np.sqrt(Size)) / np.floor(np.sqrt(MPISize)) * density
+    self.field = self.field.astype(int)
     # with this, create the seed position array
-    self.seed_positions = self.field * self.partition_size * np.array([self.p, self.q])
+    self.seed_positions = self.field * spacing + [start_i * self.local_side_length * spacing, start_j * self.local_side_length * spacing]
     self.plant_initalized = False
   #enddef
   def get_position_from_local(self, local_id) :
-    i = local_id // self.sidelength
-    j = local_id % self.sidelength
-    return self.seed_positions[i,j]
+    return self.seed_positions[local_id]
   #enddef
   def get_position_from_global(self, global_id) :
-    return self.field[global_id[0], global_id[1]]
+    k = global_id[0] * self.local_side_length + global_id[1]
+    return self.get_position_from_local(k)
   #enddef
   def get_global_from_local(self, local_id) :
-    i = local_id // self.sidelength
-    j = local_id % self.sidelength
-    return self.field[i,j]
+    i = local_id // self.local_side_length
+    j = local_id % self.local_side_length
+    return [i, j]
   #enddef
   def global_id_value(self, global_id) :
     # combine two 32 bit integers to one 64 bit integer
@@ -246,10 +241,11 @@ class Field :
     self.plant_initalized = True
     for i,p in enumerate(self.plants) :
       p.readParameters(parameter_file)
-      p.setSeed(self.global_id_value(self.get_global_from_local(i)))
+      sp = p.getOrganRandomParameter(1)[0]
+      sp.seedPos = pb.Vector3d(self.get_position_from_local(i)[0], self.get_position_from_local(i)[1], sp.seedPos.z)
       sdf = pb.SDF_PlantBox(np.Inf, np.Inf, 40)
       p.setGeometry(sdf)
-      p.initialize()
+      p.initialize(False,True)
     #endfor
   #enddef
   def simulate(self, dt, verbose = False) :
@@ -325,8 +321,7 @@ parameter_file = os.path.join(cplantbox_dir, "modelparameter", "structural", "pl
 
 weather = Weather(55.7, 13.2, start_time)
 soil = Soil()
-field = Field(55.7, 13.2, start_time, 1000, MPIRank, MPISize, density = 1.0)
-field.init_plants(parameter_file)
+field = Field(55.7, 13.2, start_time, field_size, MPIRank, MPISize, spacing = 10.0)
 
 # Numerical solution
 results = []
@@ -338,39 +333,47 @@ resultscics = []
 resultsfw = []
 resultspl = []
 
-dataconnector = rtc.DataConnector()
-dataconnector.SetTakeFirstStep(False)
+Testing = True
 
-for i,t in enumerate(timerange_numeric):
-  field.simulate(dt, verbose = False)
-  time_string_ue = timerange[i].strftime("%Y.%m.%d-%H:%M:%S")
-  dataconnector.SendJson({"type":"t", "s":time_string_ue})
-  for l_i in range(field.LocalSize) :
-    field.send_plant(l_i, dataconnector)
-    Q_input = field.measureLight(l_i, dataconnector)
-    RH_input = weather.relative_humidity(timerange[i])
-    Tair_input = weather.temperature(timerange[i])
-    p_s_input = soil.soil_matric_potential(0.1)
-    N_input = 4.4  # nitrogen satisfaction for small wheat plants
-    cs_input = weather.molar_fraction_co2(timerange[i])
-    var = [Q_input, RH_input, Tair_input, p_s_input, N_input, cs_input]
-    es = 0.61078 * np.exp(17.27 * Tair_input / (Tair_input + 237.3))  # FAO56
-    ea = es * RH_input
-    VPD = es - ea
-    r.Param['Patm'] = df['Pair'][i]
-    rx = r.solve_leuning(sim_time = simtime, sxx = [p_s_input], cells = True, Qlight = Q_input, VPD = VPD, Tl = Tair_input + 273.15, p_linit = p_s_input,
-    ci_init = cs_input * 0.7, cs = cs_input, soil_k = [], N = N_input, log = False, verbose = False)
-    fluxes = r.radial_fluxes(simtime, rx, [p_s_input], k_soil, True)  # cm3/day
-    organTypes = np.array(r.rs.organTypes)
-    results.append(sum(np.where(organTypes == 4, fluxes, 0)))
-    resultsAn.append(np.mean(r.An) * 1e6)
-    resultsVc.append(np.mean(r.Vc) * 1e6)
-    resultsVj.append(np.mean(r.Vj) * 1e6)
-    resultsgco2.append(np.mean(r.gco2))
-    resultscics.append(np.mean(r.ci) / cs_input)
-    resultsfw.append(np.mean(r.fw))
-    resultspl.append(np.mean(r.x[leaf_nodes]))
+if Testing :
+  print("Testing whether the plant inits work...")
+  field.init_plants(parameter_file)
+  print("Testing whether the initialization worked")
+  for i in range(field.LocalSize) :
+    print(str(field.get_plant(i).getOrganRandomParameter(1)[0].seedPos))
+else :
+  field.init_plants(parameter_file)
+  dataconnector = rtc.DataConnector()
+  dataconnector.SetTakeFirstStep(False)
+  for i,t in enumerate(timerange_numeric):
+    field.simulate(dt, verbose = False)
+    time_string_ue = timerange[i].strftime("%Y.%m.%d-%H:%M:%S")
+    dataconnector.SendJson({"type":"t", "s":time_string_ue})
+    for l_i in range(field.LocalSize) :
+      field.send_plant(l_i, dataconnector)
+      Q_input = field.measureLight(l_i, dataconnector)
+      RH_input = weather.relative_humidity(timerange[i])
+      Tair_input = weather.temperature(timerange[i])
+      p_s_input = soil.soil_matric_potential(0.1)
+      N_input = 4.4  # nitrogen satisfaction for small wheat plants
+      cs_input = weather.molar_fraction_co2(timerange[i])
+      var = [Q_input, RH_input, Tair_input, p_s_input, N_input, cs_input]
+      es = 0.61078 * np.exp(17.27 * Tair_input / (Tair_input + 237.3))  # FAO56
+      ea = es * RH_input
+      VPD = es - ea
+      field.photo[l_i].Param['Patm'] = weather.air_pressure(timerange[i]) * 100.0 # mbar to Pa
+      rx = field.photo[l_i].solve_leuning(sim_time = simtime, sxx = [p_s_input], cells = True, Qlight = Q_input, VPD = VPD, Tl = Tair_input + 273.15, p_linit = p_s_input,
+      ci_init = cs_input * 0.7, cs = cs_input, soil_k = [], N = N_input, log = False, verbose = False)
+      fluxes = field.photo[l_i].radial_fluxes(simtime, rx, [p_s_input], k_soil, True)  # cm3/day
+      organTypes = np.array(field.photo[l_i].rs.organTypes)
+      results.append(sum(np.where(organTypes == 4, fluxes, 0)))
+      resultsAn.append(np.mean(field.photo[l_i].An) * 1e6)
+      resultsVc.append(np.mean(field.photo[l_i].Vc) * 1e6)
+      resultsVj.append(np.mean(field.photo[l_i].Vj) * 1e6)
+      resultsgco2.append(np.mean(field.photo[l_i].gco2))
+      resultscics.append(np.mean(field.photo[l_i].ci) / cs_input)
+      resultsfw.append(np.mean(field.photo[l_i].fw))
 
-timePlot = df[t_init:t_end]['time']
+
 
 
