@@ -50,7 +50,7 @@ int32 APlantParts::AddMesh(const TArray<FVector>& Points,
     Triangles,
     Normals,
     UV, VertexColors,
-    Tangents, false);
+    Tangents, true);
   if (organType == 3) // stem
   {
     Mesh->SetMaterial(MeshSection, StemMaterial);
