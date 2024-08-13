@@ -29,6 +29,9 @@ APlantParts::APlantParts()
 
   Mesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("Mesh"));
   Mesh->SetupAttachment(RootComponent);
+  Mesh->bUseComplexAsSimpleCollision = true;
+  Mesh->SetCollisionEnabled(ECollisionEnabled::QueryAndProbe);
+  Mesh->SetCollisionResponseToChannel(ECollisionChannel::ECC_WorldDynamic, ECollisionResponse::ECR_Block);
 }
 
 void APlantParts::Clear()

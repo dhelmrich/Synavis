@@ -11,6 +11,8 @@ from scipy.integrate import odeint
 from scipy import constants
 import pandas as pd
 import datetime
+import time
+import json
 
 # if the runtime folder is not the python script folder, switch there
 if os.path.dirname(os.path.abspath(__file__)) != os.getcwd():
@@ -19,7 +21,7 @@ if os.path.dirname(os.path.abspath(__file__)) != os.getcwd():
 # add Synavis (some parent directory to this) to path
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "build_unix"))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "build"))
-import PySynavis as rtc
+import PySynavis as syn
 
 cplantbox_dir = ""
 
@@ -57,7 +59,7 @@ MPIRank = comm.Get_rank()
 MPISize = comm.Get_size()
 
 field_size = 20
-cmd_man = rtc.CommandLineParser(sys.argv)
+cmd_man = syn.CommandLineParser(sys.argv)
 if cmd_man.HasArgument("fs"):
   field_size = cmd_man.GetArgument("fs")
 # endif
@@ -139,8 +141,11 @@ class Weather :
   def air_pressure(self, time) :
     return self(time, "AirPressure_1m_Avg10min [mbar]")
   #enddef
-  def radiation(self, time) :
+  def radiation_watts(self, time) :
     return self(time, "RadiationGlobal_Avg10min [W*m-2]")
+  #enddef
+  def radiation_lux(self, time) :
+    return self(time, "RadiationGlobal_Avg10min [W*m-2]") / 0.0079
   #enddef
   def precipitation(self, time) :
     return self(time, "Precipitation_Avg10min [mm]")
@@ -238,6 +243,7 @@ class Field :
   #enddef
   def init_plants(self, parameter_file) :
     self.plants = [pb.MappedPlant() for i in range(self.LocalSize)]
+    self.visualisers = [pb.PlantVisualiser(p) for p in self.plants]
     self.plant_initalized = True
     for i,p in enumerate(self.plants) :
       p.readParameters(parameter_file)
@@ -297,6 +303,64 @@ class Field :
     leaf_nodes = self.plant[local_id].getNodes()[leaf_nodes]
 #endclass
 
+class Signal :
+  def __init__(self, args, callback) :
+    self.args = args
+    self.callback = callback
+  #enddef
+  def __call__(self, msg) :
+    self.callback(msg)
+  #enddef
+  # equal operator
+  def __eq__(self, args:dict) :
+    return all([self.args[key] == args[key] for key in args])
+  #enddef
+#endclass
+
+message_buffer = []
+signal_relay = []
+
+def reset_message() :
+  global message_buffer
+  message_buffer = []
+#enddef
+
+def get_message() :
+  global message_buffer
+  while len(message_buffer) == 0 :
+    time.sleep(0.1)
+  #endwhile
+  message = message_buffer.pop(0)
+  return message
+#enddef
+
+def message_callback(msg) :
+  global message_buffer
+  try :
+    msg = json.loads(msg)
+    if "type" in msg :
+      handler = next((h for h in signal_relay if h == msg), None)
+      if handler is not None :
+        handler(msg)
+      else :
+        message_buffer.append(msg)
+  except :
+    print("Skipping message of size ", len(msg), " for failing to convert to JSON")
+  #endtry
+#enddef
+
+from signalling_server import SignallingServer
+dc = syn.DataConnector()
+dc.Initialize()
+dc.SetMessageCallback(message_callback)
+dataconnector.SetConfig({"SignallingIP": "172.20.16.1", "SignallingPort": 8080})
+dataconnector.SetTakeFirstStep(True)
+dataconnector.StartSignalling()
+dataconnector.SetMessageCallback(message_callback)
+dataconnector.SetRetryOnErrorResponse(True)
+dataconnector.LockUntilConnected(500)
+
+
 """ Parameters """
 kz = 4.32e-1  # axial conductivity [cm^3/day]
 kr = 1.728e-4  # radial conductivity of roots [1/day]
@@ -311,7 +375,7 @@ depth = 40 # cm
 dt = 0.1 # hours
 verbose = False
 
-start_time = datetime.datetime(2021, 6, 21, 13, 0, 0, 0)
+start_time = datetime.datetime(2019, 6, 1, 6, 0, 0, 0)
 end_time = start_time + datetime.timedelta(days = simtime)
 timerange_numeric = np.arange(0, simtime, dt)
 timerange = [start_time + datetime.timedelta(hours = t) for t in timerange_numeric]
@@ -349,6 +413,12 @@ else :
     field.simulate(dt, verbose = False)
     time_string_ue = timerange[i].strftime("%Y.%m.%d-%H:%M:%S")
     dataconnector.SendJson({"type":"t", "s":time_string_ue})
+    dataconnector.SendJSON({
+      "type": "parameter",
+      "object": "SunSky_C_1.DirectionalLight",
+      "property": "Intensity",
+      "value": weather.radiation_lux(timerange[i])
+    })
     for l_i in range(field.LocalSize) :
       field.send_plant(l_i, dataconnector)
       Q_input = field.measureLight(l_i, dataconnector)
