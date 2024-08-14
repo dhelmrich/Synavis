@@ -23,6 +23,7 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "build"))
 import PySynavis as syn
 
+
 cplantbox_dir = ""
 
 # check if we have a CPLANTBOX_PATH in the environment
@@ -119,45 +120,48 @@ class Weather :
   def fill_nans(self) :
     self.data = self.data.interpolate(method="time")
   #enddef
-  def __call__(self, time, column) :
+  def __call__(self, tp, column) :
     # get the closest time point
-    time = pd.Timestamp(time)
-    time = self.data.index.get_loc(time, method="nearest")
-    return self.data[column][time]
+    timest = pd.Timestamp(tp, tz="UTC")
+    timed = self.data.index.get_indexer([timest], method="nearest")
+    return self.data[column][timed]
+  #enddef
+  def print_columns(self) :
+    print(self.data.columns)
   #enddef
   def relative_humidity(self, time) :
-    absolute_humidity = self(time, "AirHumidity_2m_Avg10min [g*m-3]")
-    temperature = self(time, "AirTemperature_2m_Avg10min [degC]")
+    absolute_humidity = self.__call__(time, "AirHumidity_2m_Avg10min [g*m-3]")
+    temperature = self.__call__(time, "AirTemperature_2m_Avg30min [°C]")
     # calculate the relative humidity
     es = 6.1078 * 10 ** (7.5 * temperature / (237.3 + temperature))
     return absolute_humidity / es
   #enddef
   def wind_speed(self, time) :
-    return self(time, "WindSpeed_10m_Avg10min [m/s]")
+    return self.__call__(time, "WindSpeed_10m_Avg10min [m/s]")
   #enddef
   def wind_direction(self, time) :
-    return self(time, "WindDirection_2.52m_Avg10min [°N]")
+    return self.__call__(time, "WindDirection_2.52m_Avg10min [°N]")
   #enddef
   def air_pressure(self, time) :
-    return self(time, "AirPressure_1m_Avg10min [mbar]")
+    return self.__call__(time, "AirPressure_1m_Avg10min [mbar]")
   #enddef
   def radiation_watts(self, time) :
-    return self(time, "RadiationGlobal_Avg10min [W*m-2]")
+    return self.__call__(time, "RadiationGlobal_Avg10min [W*m-2]")
   #enddef
   def radiation_lux(self, time) :
-    return self(time, "RadiationGlobal_Avg10min [W*m-2]") / 0.0079
+    return self.__call__(time, "RadiationGlobal_Avg10min [W*m-2]") / 0.0079
   #enddef
   def precipitation(self, time) :
-    return self(time, "Precipitation_Avg10min [mm]")
+    return self.__call__(time, "Precipitation_Avg10min [mm]")
   #enddef
   def temperature(self, time) :
-    return self(time, "AirTemperature_2m_Avg10min [degC]")
+    return self.__call__(time, "AirTemperature_2m_Avg30min [°C]")
   #enddef
   def temperature_k(self, time) :
-    return self(time, "AirTemperature_2m_Avg10min [degC]") + 273.15
+    return self.__call__(time, "AirTemperature_2m_Avg30min [°C]") + 273.15
   #enddef
   def saturated_vapour_pressure(self, time) :
-    temperature = self(time, "AirTemperature_2m_Avg10min [degC]")
+    temperature = self.__call__(time, "AirTemperature_2m_Avg30min [°C]")
     e0 = 6.1078
     L = 2.5 * 10 ** 6
     R0 = 461.5
@@ -169,12 +173,12 @@ class Weather :
     return relative_humidity * saturated_vapour_pressure
   #enddef
   def mean_metric_potential(self, time) :
-    soil_moisture = self(time, "SoilMoisture_10cm_Avg10min [m3*m-3]")
+    soil_moisture = self.__call__(time, "SoilMoisture_10cm_Avg10min [m3*m-3]")
     # water content 0% -> -10kPa, 100% -> -1500kPa
     return -10.0 + soil_moisture * (-1500.0 + 10.0)
   #enddef
   def molar_fraction_co2(self, time) :
-    co2_molar = self(time, "AirConcentration_CO2_2m_Avg30min [mmol*m-3]")
+    co2_molar = self.__call__(time, "AirConcentration_CO2_2m_Avg30min [mmol*m-3]")
     air_pressure = self.air_pressure(time)
     air_molar = (air_pressure * 100.0) / (8.314 * self.temperature_k(time)) * 1000.0
     return co2_molar / air_molar
@@ -249,7 +253,7 @@ class Field :
       p.readParameters(parameter_file)
       sp = p.getOrganRandomParameter(1)[0]
       sp.seedPos = pb.Vector3d(self.get_position_from_local(i)[0], self.get_position_from_local(i)[1], sp.seedPos.z)
-      sdf = pb.SDF_PlantBox(np.Inf, np.Inf, 40)
+      sdf = pb.SDF_PlantBox(np.inf, np.inf, 40)
       p.setGeometry(sdf)
       p.initialize(False,True)
     #endfor
@@ -335,31 +339,21 @@ def get_message() :
 #enddef
 
 def message_callback(msg) :
-  global message_buffer
+  global message_buffer, signal_relay
   try :
     msg = json.loads(msg)
     if "type" in msg :
       handler = next((h for h in signal_relay if h == msg), None)
-      if handler is not None :
+      if not handler is None :
         handler(msg)
       else :
         message_buffer.append(msg)
+      #endif
+    #endif
   except :
     print("Skipping message of size ", len(msg), " for failing to convert to JSON")
   #endtry
 #enddef
-
-from signalling_server import SignallingServer
-dc = syn.DataConnector()
-dc.Initialize()
-dc.SetMessageCallback(message_callback)
-dataconnector.SetConfig({"SignallingIP": "172.20.16.1", "SignallingPort": 8080})
-dataconnector.SetTakeFirstStep(True)
-dataconnector.StartSignalling()
-dataconnector.SetMessageCallback(message_callback)
-dataconnector.SetRetryOnErrorResponse(True)
-dataconnector.LockUntilConnected(500)
-
 
 """ Parameters """
 kz = 4.32e-1  # axial conductivity [cm^3/day]
@@ -387,6 +381,22 @@ weather = Weather(55.7, 13.2, start_time)
 soil = Soil()
 field = Field(55.7, 13.2, start_time, field_size, MPIRank, MPISize, spacing = 10.0)
 
+weather.print_columns()
+initial_pressure = weather.actual_vapour_pressure(start_time)
+
+sys.path.append("../modules")
+from signalling_server import get_interface_ip
+dataconnector = syn.DataConnector()
+dataconnector.Initialize()
+dataconnector.SetMessageCallback(message_callback)
+dataconnector.SetConfig({"SignallingIP": "172.20.32.1", "SignallingPort": 8080})
+dataconnector.SetTakeFirstStep(True)
+dataconnector.StartSignalling()
+dataconnector.SetMessageCallback(message_callback)
+dataconnector.SetRetryOnErrorResponse(True)
+dataconnector.LockUntilConnected(500)
+
+
 # Numerical solution
 results = []
 resultsAn = []
@@ -397,7 +407,7 @@ resultscics = []
 resultsfw = []
 resultspl = []
 
-Testing = True
+Testing = False
 
 if Testing :
   print("Testing whether the plant inits work...")
@@ -407,12 +417,10 @@ if Testing :
     print(str(field.get_plant(i).getOrganRandomParameter(1)[0].seedPos))
 else :
   field.init_plants(parameter_file)
-  dataconnector = rtc.DataConnector()
-  dataconnector.SetTakeFirstStep(False)
   for i,t in enumerate(timerange_numeric):
     field.simulate(dt, verbose = False)
     time_string_ue = timerange[i].strftime("%Y.%m.%d-%H:%M:%S")
-    dataconnector.SendJson({"type":"t", "s":time_string_ue})
+    dataconnector.SendJSON({"type":"t", "s":time_string_ue})
     dataconnector.SendJSON({
       "type": "parameter",
       "object": "SunSky_C_1.DirectionalLight",
