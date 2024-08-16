@@ -55,3 +55,4 @@ SynavisUE/Binaries/*
 SynavisUE/Saved/*
 SynavisUE/Build/*
 
+/python/coupling/output

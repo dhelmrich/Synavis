@@ -1,0 +1,13 @@
+{
+  "exclude": [
+    "**/build_win/**",
+    "**/build_unix/**",
+    "**/.vs/**",
+    "**/.vscode/**",
+    "**/out/**",
+    "**/unix/**",
+    "**/native_modules/**",
+    "**/synavis/**",
+    "**/SynavisUE/**",
+  ]
+}

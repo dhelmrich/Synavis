@@ -153,6 +153,24 @@ namespace Synavis
 
   };
 
+  class SynavisLogger
+  {
+    public:
+      SynavisLogger(){
+
+      }
+      void log(std::string message)
+      {
+        lp(Synavis::ELogVerbosity::Silent) << message << std::endl;
+      }
+      void logjson(nlohmann::json message)
+      {
+        lp(Synavis::ELogVerbosity::Silent) << message.dump() << std::endl;
+      }
+    private:
+    Synavis::Logger::LoggerInstance lp{Synavis::Logger::Get()->LogStarter("Python")};
+  };
+
   PYBIND11_MODULE(PySynavis, m)
   {
     py::enum_<EConnectionState>(m, "EConnectionState")
@@ -163,6 +181,12 @@ namespace Synavis
       .value("CLOSED", EConnectionState::CLOSED)
       .value("RTCERROR", EConnectionState::RTCERROR)
       .export_values()
+    ;
+
+    py::class_<SynavisLogger>(m, "Logger")
+      .def(py::init<>())
+      .def("log", &SynavisLogger::log, py::arg("Message"))
+      .def("logjson", &SynavisLogger::logjson, py::arg("Message"))
     ;
 
     py::enum_<ELogVerbosity>(m, "LogVerbosity")
@@ -255,6 +279,7 @@ namespace Synavis
       .def("SendString", &DataConnector::SendString, py::arg("Message"))
       .def("SendJSON", &DataConnector::SendJSON, py::arg("Message"))
       .def("SetOnRemoteDescriptionCallback", &DataConnector::SetOnRemoteDescriptionCallback, py::arg("Callback"))
+      .def("SetOnSignallingServerOnlineCallback", &DataConnector::SetOnSignallingServerOnlineCallback, py::arg("Callback"))
       .def("SetDataCallback", &DataConnector::SetDataCallback,py::arg("Callback"))
       .def("SetMessageCallback", &DataConnector::SetMessageCallback,py::arg("Callback"))
       .def("SetOnDataChannelAvailableCallback", &DataConnector::SetOnDataChannelAvailableCallback,py::arg("Callback"))
@@ -281,6 +306,7 @@ namespace Synavis
       .def_readwrite("IP", &DataConnector::IP)
       .def_readwrite("PortRange", &DataConnector::IP)
       .def("LockUntilConnected", &DataConnector::LockUntilConnected, py::arg("additional_wait") = 0)
+      .def("SendToSignallingServer", &DataConnector::SendToSignallingServer, py::arg("Message"))
     ;
 
     py::class_<MediaReceiver, PyMediaReceiver<>, std::shared_ptr<MediaReceiver>>(m, "MediaReceiver")

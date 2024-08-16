@@ -13,6 +13,7 @@ import pandas as pd
 import datetime
 import time
 import json
+from enum import Enum
 
 # if the runtime folder is not the python script folder, switch there
 if os.path.dirname(os.path.abspath(__file__)) != os.getcwd():
@@ -20,8 +21,12 @@ if os.path.dirname(os.path.abspath(__file__)) != os.getcwd():
 
 # add Synavis (some parent directory to this) to path
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "build_unix"))
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "build"))
 import PySynavis as syn
+syn.SetGlobalLogVerbosity(syn.LogVerbosity.LogError)
+pylog = syn.Logger()
+
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "modules"))
+import signalling_server as ss
 
 
 cplantbox_dir = ""
@@ -58,8 +63,10 @@ from mpi4py import MPI
 comm = MPI.COMM_WORLD
 MPIRank = comm.Get_rank()
 MPISize = comm.Get_size()
+MPIRank = 0
+MPISize = 1
 
-field_size = 20
+field_size = 1
 cmd_man = syn.CommandLineParser(sys.argv)
 if cmd_man.HasArgument("fs"):
   field_size = cmd_man.GetArgument("fs")
@@ -124,7 +131,7 @@ class Weather :
     # get the closest time point
     timest = pd.Timestamp(tp, tz="UTC")
     timed = self.data.index.get_indexer([timest], method="nearest")
-    return self.data[column][timed]
+    return self.data[column][timed].values[0]
   #enddef
   def print_columns(self) :
     print(self.data.columns)
@@ -199,6 +206,12 @@ class Weather :
     eddy_covariance_canopy = 0.1 # m2 s-1
 #endclass
 
+class SamplingState(Enum) :
+  IDLE = 0
+  SAMPLE = 1
+  FINISHED = 2
+#endclass
+
 class Field :
   def __init__(self, Lat, Long, Time, Size, MPIRank, MPISize, spacing = 1.0) :
     # initialize all
@@ -209,6 +222,7 @@ class Field :
     self.LocalSize = Size // MPISize
     self.MPIRank = MPIRank
     self.MPISize = MPISize
+    self.spacing = spacing
     # strategy of placement
     self.strategy = "square" # "random"
     # field is always square, so our part depends on the rank
@@ -226,6 +240,7 @@ class Field :
     self.field = self.field.astype(int)
     # with this, create the seed position array
     self.seed_positions = self.field * spacing + [start_i * self.local_side_length * spacing, start_j * self.local_side_length * spacing]
+    self.measurements = [[] for i in range(self.LocalSize)]
     self.plant_initalized = False
   #enddef
   def get_position_from_local(self, local_id) :
@@ -248,6 +263,7 @@ class Field :
   def init_plants(self, parameter_file) :
     self.plants = [pb.MappedPlant() for i in range(self.LocalSize)]
     self.visualisers = [pb.PlantVisualiser(p) for p in self.plants]
+    self.sampling = [SamplingState.IDLE for i in range(self.LocalSize)]
     self.plant_initalized = True
     for i,p in enumerate(self.plants) :
       p.readParameters(parameter_file)
@@ -274,14 +290,15 @@ class Field :
   def send_plant(self, local_id, dataconnector) :
     plant = self.get_plant(local_id)
     vis = pb.PlantVisualiser(plant)
+    vis.SetVerbose(False)
     # get organs
     organs = plant.getOrgans()
     # send all stem or leaf organs
     for organ in organs :
-      if organ.organType() == pb.Stem or organ.organType() == pb.Leaf :
-        vis.ComputeGeometryForOrgan(organ)
-        p,i,n = vis.GetGeometry(), vis.GetGeometryIndices(), vis.GetGeometryNormals()
-        t = vis.GetGeometryTextureCoordinates()
+      if organ.organType() == pb.leaf.value or organ.organType() == pb.stem.value :
+        vis.ComputeGeometryForOrgan(organ.getId())
+        p,i,n = np.array(vis.GetGeometry()), np.array(vis.GetGeometryIndices()), np.array(vis.GetGeometryNormals())
+        t = np.array(vis.GetGeometryTextureCoordinates())
         message = {"type":"do"}
         message["p"] = base64.b64encode(p.astype("float64")).decode("utf-8")
         message["i"] = base64.b64encode(i.astype("int32")).decode("utf-8")
@@ -289,7 +306,8 @@ class Field :
         message["t"] = base64.b64encode(t.astype("float64")).decode("utf-8")
         message["l"] = local_id
         message["o"] = int(organ.organType())
-        dataconnector.send(message)
+        dataconnector.SendJSON(message)
+        vis.ResetGeometry()
       #endif
     #endfor
   #enddef
@@ -302,9 +320,32 @@ class Field :
     #endfor
   #enddef
   def measureLight(self, local_id, dataconnector) :
-    message = {"type":"mm", "l":local_id}
+    pylog.log("Requesting light data for plant " + str(local_id))
+    message = {"type":"mms", "l":local_id}
     leaf_nodes = self.photo[local_id].get_nodes_index(pb.leaf)
-    leaf_nodes = self.plant[local_id].getNodes()[leaf_nodes]
+    if len(leaf_nodes) == 0 :
+      self.sampling[local_id] = SamplingState.FINISHED
+      return
+    plant_nodes = np.array(self.plants[local_id].getNodes())
+    leaf_nodes = plant_nodes[leaf_nodes]
+    message["p"] = base64.b64encode(leaf_nodes.astype("float64")).decode("utf-8")
+    signal_relay.append(Signal({"type":"mm", "l":local_id}, lambda msg : self.setLight(local_id,msg["i"])))
+    dataconnector.SendJSON(message)
+    return len(leaf_nodes)
+  #enddef
+  def setLight(self, local_id, light) :
+    pylog.log("Received light data for plant " + str(local_id))
+    light = base64.b64decode(light)
+    light = np.frombuffer(light, dtype=np.float32)
+    self.measurements[local_id] = light
+    self.sampling[local_id] = SamplingState.FINISHED
+  #enddef
+  def getLight(self, local_id) :
+    return self.measurements[local_id]
+  #enddef
+  def reset_sampling_state(self) :
+    self.sampling = [SamplingState.IDLE for i in range(self.LocalSize)]
+  #enddef
 #endclass
 
 class Signal :
@@ -317,7 +358,10 @@ class Signal :
   #enddef
   # equal operator
   def __eq__(self, args:dict) :
-    return all([self.args[key] == args[key] for key in args])
+    return all([self.args[key] == args[key] for key in args if key in self.args])
+  #enddef
+  def __str__(self) :
+    return str(self.args)
   #enddef
 #endclass
 
@@ -339,19 +383,24 @@ def get_message() :
 #enddef
 
 def message_callback(msg) :
-  global message_buffer, signal_relay
+  global message_buffer, signal_relay, pylog
   try :
     msg = json.loads(msg)
     if "type" in msg :
+      pylog.log("Message received with parameters " + ", ".join([key + ": " + str(msg[key])[0:10] for key in msg]))
       handler = next((h for h in signal_relay if h == msg), None)
+      pylog.log("Handler is " + str(handler))
+      if msg["type"] == "mm" or msg["type"] == "mms" :
+        print("Received light data")
       if not handler is None :
         handler(msg)
       else :
+        pylog.log("Appended to message buffer (now " + str(len(message_buffer)) + " messages)")
         message_buffer.append(msg)
       #endif
     #endif
   except :
-    print("Skipping message of size ", len(msg), " for failing to convert to JSON")
+    pylog.log("Skipping message of size " + str(len(msg)) + " for failing to convert to JSON")
   #endtry
 #enddef
 
@@ -364,7 +413,7 @@ p_a = -1000  # static air water potential
 k_soil = []
 
 # model parameters
-simtime = 26 # days
+simtime = 16 # days
 depth = 40 # cm
 dt = 0.1 # hours
 verbose = False
@@ -384,18 +433,31 @@ field = Field(55.7, 13.2, start_time, field_size, MPIRank, MPISize, spacing = 10
 weather.print_columns()
 initial_pressure = weather.actual_vapour_pressure(start_time)
 
-sys.path.append("../modules")
-from signalling_server import get_interface_ip
 dataconnector = syn.DataConnector()
 dataconnector.Initialize()
 dataconnector.SetMessageCallback(message_callback)
-dataconnector.SetConfig({"SignallingIP": "172.20.32.1", "SignallingPort": 8080})
+dataconnector.SetConfig({"SignallingIP": "172.20.16.1", "SignallingPort": 8080})
 dataconnector.SetTakeFirstStep(True)
 dataconnector.StartSignalling()
-dataconnector.SetMessageCallback(message_callback)
 dataconnector.SetRetryOnErrorResponse(True)
 dataconnector.LockUntilConnected(500)
+dataconnector.SendJSON({"type":"delete"})
 
+time.sleep(1)
+
+dataconnector.SendJSON({"type":"spawnmeter", "number": 10, "calibrate": True})
+pylog.logjson({"type":"console", "command":"t.maxFPS 20"})
+m_ = {"type":"placeplant", 
+                        "number": field.LocalSize,
+                        "rule": "square",
+                        "mpi_world_size": field.MPISize,
+                        "mpi_rank": field.MPIRank,
+                        "spacing": field.spacing,
+                      }
+dataconnector.SendJSON(m_)
+pylog.logjson(m_)
+dataconnector.SendJSON({"type":"console", "command":"t.maxFPS 15"})
+time.sleep(2)
 
 # Numerical solution
 results = []
@@ -409,6 +471,7 @@ resultspl = []
 
 Testing = False
 
+
 if Testing :
   print("Testing whether the plant inits work...")
   field.init_plants(parameter_file)
@@ -417,19 +480,32 @@ if Testing :
     print(str(field.get_plant(i).getOrganRandomParameter(1)[0].seedPos))
 else :
   field.init_plants(parameter_file)
+  field.simulate(8, verbose = False)
+  field.init_photo()
   for i,t in enumerate(timerange_numeric):
     field.simulate(dt, verbose = False)
     time_string_ue = timerange[i].strftime("%Y.%m.%d-%H:%M:%S")
     dataconnector.SendJSON({"type":"t", "s":time_string_ue})
+    pylog.logjson({"type":"t", "s":time_string_ue})
     dataconnector.SendJSON({
       "type": "parameter",
       "object": "SunSky_C_1.DirectionalLight",
       "property": "Intensity",
       "value": weather.radiation_lux(timerange[i])
     })
+    pylog.log("Setting intensity to " + str(weather.radiation_lux(timerange[i])))
     for l_i in range(field.LocalSize) :
       field.send_plant(l_i, dataconnector)
-      Q_input = field.measureLight(l_i, dataconnector)
+      field.measureLight(l_i, dataconnector)
+    #endfor
+    pylog.log("Waiting for all plants to finish sampling")
+    while any([s != SamplingState.FINISHED for s in field.sampling]) :
+      time.sleep(0.1)
+    #endwhile
+    pylog.log("All plants finished sampling")
+    field.reset_sampling_state()
+    for l_i in range(field.LocalSize) :
+      Q_input = field.getLight(l_i)
       RH_input = weather.relative_humidity(timerange[i])
       Tair_input = weather.temperature(timerange[i])
       p_s_input = soil.soil_matric_potential(0.1)

@@ -49,6 +49,7 @@ public:
   std::shared_ptr<rtc::DataChannel> DataChannel;
   void SetConfigFile(std::string ConfigFile);
   void SetConfig(json Config);
+  void SendToSignallingServer(json Message);
   bool IsRunning();
   void SetTakeFirstStep(bool TakeFirstStep){this->TakeFirstStep=TakeFirstStep;}
   bool GetTakeFirstStep(){return this->TakeFirstStep;}
@@ -63,6 +64,7 @@ public:
   void SetOnRemoteDescriptionCallback(std::function<void(std::string)> Callback) { OnRemoteDescriptionCallback = Callback; }
   void SetOnDataChannelAvailableCallback(std::function<void(void)> Callback) { OnDataChannelAvailableCallback = Callback; }
   void SetRetryOnErrorResponse(bool Retry) { RetryOnErrorResponse = Retry; }
+  void SetOnSignallingServerOnlineCallback(std::function<void(void)> Callback) { OnSignallingServerOnlineCallback = Callback; }
 
   void LockUntilConnected(unsigned additional_wait = 0);
 
@@ -118,6 +120,7 @@ protected:
   std::optional<std::function<void(void)>> OnIceGatheringFinished;
   std::optional<std::function<void(std::string)>> OnRemoteDescriptionCallback;
   std::optional<std::function<void(void)>> OnDataChannelAvailableCallback;
+  std::optional<std::function<void(void)>> OnSignallingServerOnlineCallback;
 
   // mark as experimental; data channel message handling with many callbacks
   std::deque<std::function<void(std::string)>> exp__OnMessagecallbacks;

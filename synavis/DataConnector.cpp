@@ -73,6 +73,11 @@ void Synavis::DataConnector::SendData(rtc::binary Data)
   }
 }
 
+void Synavis::DataConnector::SendToSignallingServer(json Message)
+{
+  SignallingServer->send(Message.dump());
+}
+
 void Synavis::DataConnector::SendString(std::string Message)
 {
   if (this->state_ != EConnectionState::CONNECTED)
@@ -760,6 +765,10 @@ void Synavis::DataConnector::Initialize()
     {
       state_ = EConnectionState::SIGNUP;
       lconnector(ELogVerbosity::Info) << "Signalling server connected" << std::endl;
+      if (this->OnSignallingServerOnlineCallback.has_value())
+      {
+        this->OnSignallingServerOnlineCallback.value()();
+      }
       if (TakeFirstStep)
       {
         json role_request = { {"type","request"},{"request","role"} };
