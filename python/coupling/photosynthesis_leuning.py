@@ -56,7 +56,7 @@ else:
 
 import plantbox as pb
 from functional.xylem_flux import XylemFluxPython
-from functional.Leuning import Leuning
+from plantbox import Photosynthesis
 
 # load MPI environment
 from mpi4py import MPI
@@ -312,10 +312,35 @@ class Field :
     #endfor
   #enddef
   def init_photo(self) :
-    self.photo = [Leuning(plant) for plant in self.plants]
+    # using default initial psixyl and ci value. 
+    # should not have an effect on the outputs normally    
+    self.photo = [Photosynthesis(plant
+                    #,psiXylInit=min(sx),ciInit=weatherInit["cs"] * 0.5                    
+                    ) for plant in self.plants]
     for r in self.photo :
-      r.setKr([[1.728e-4], [1.e-20], [0.004]])  # gmax will be changed by the leuning function
+      # here we have constent Kr
+      # can update it to have decrease of Kr with length
+      # of root
+      r.setKr([[1.728e-4], [0], [3.83e-5]])  
       r.setKx([[4.32e-1]])
+      # copy of parameters used in dumux-CPB photosynthesis study (C3, pseudo-wheat)
+      r.g0 = 8e-6
+      r.VcmaxrefChl1 =1.28
+      r.VcmaxrefChl2 = 8.33
+      SPAD= 41.0
+      chl_ = (0.114 *(SPAD**2)+ 7.39 *SPAD+ 10.6)/10
+      r.Chl = np.array( [chl_]) 
+      r.a1 = 0.6/0.4
+      r.a3 = 1.5
+      r.alpha = 0.4 
+      r.theta = 0.6 
+      r.fwr = 1e-16
+      r.fw_cutoff = 0.04072 
+      r.gm =0.03
+      r.sh =5e-4
+      r.limMaxErr = 1/100
+      r.maxLoop = 10000
+      r.minLoop=900
       # leaf_nodes = r.get_nodes_index(4)
     #endfor
   #enddef
@@ -405,11 +430,9 @@ def message_callback(msg) :
 #enddef
 
 """ Parameters """
-kz = 4.32e-1  # axial conductivity [cm^3/day]
-kr = 1.728e-4  # radial conductivity of roots [1/day]
-kr_stem = 1.e-20  # radial conductivity of stem  [1/day], set to almost 0
-gmax = 0.004  #  cm3/day radial conductivity of leaves = stomatal conductivity [1/day]
-p_a = -1000  # static air water potential
+#kz = 4.32e-1  # axial conductivity [cm^3/day]
+#kr = 1.728e-4  # radial conductivity of roots [1/day]
+#kr_stem = 0  # radial conductivity of stem => 0
 k_soil = []
 
 # model parameters
@@ -505,28 +528,39 @@ else :
     pylog.log("All plants finished sampling")
     field.reset_sampling_state()
     for l_i in range(field.LocalSize) :
+      # NB: keeping default leaf chlorophyl content of 51 SPAD
       Q_input = field.getLight(l_i)
       RH_input = weather.relative_humidity(timerange[i])
       Tair_input = weather.temperature(timerange[i])
       p_s_input = soil.soil_matric_potential(0.1)
-      N_input = 4.4  # nitrogen satisfaction for small wheat plants
+      
       cs_input = weather.molar_fraction_co2(timerange[i])
-      var = [Q_input, RH_input, Tair_input, p_s_input, N_input, cs_input]
+      
       es = 0.61078 * np.exp(17.27 * Tair_input / (Tair_input + 237.3))  # FAO56
       ea = es * RH_input
-      VPD = es - ea
-      field.photo[l_i].Param['Patm'] = weather.air_pressure(timerange[i]) * 100.0 # mbar to Pa
-      rx = field.photo[l_i].solve_leuning(sim_time = simtime, sxx = [p_s_input], cells = True, Qlight = Q_input, VPD = VPD, Tl = Tair_input + 273.15, p_linit = p_s_input,
-      ci_init = cs_input * 0.7, cs = cs_input, soil_k = [], N = N_input, log = False, verbose = False)
+      
+      field.photo[l_i].Patm = weather.air_pressure(timerange[i]) * 100.0 # mbar to Pa
+      field.photo[l_i].cs = cs_input
+      if isinstance(Q_input, (float,int)):
+        field.photo[l_i].Qlight = Q_input # mean irradiance
+      else:
+        field.photo[l_i].vQlight = Q_input #  irradiance per leaf segment
+      
+      rx = field.photo[l_i].solve_photosynthesis(sim_time_=simtime, sxx_=[p_s_input],
+                                cells_=True,
+                               ea_=ea, es_=es,
+                               verbose_=False, doLog_=False, TairC_=Tair_input,
+                               outputDir_="./" )
+                               
       fluxes = field.photo[l_i].radial_fluxes(simtime, rx, [p_s_input], k_soil, True)  # cm3/day
       organTypes = np.array(field.photo[l_i].rs.organTypes)
       results.append(sum(np.where(organTypes == 4, fluxes, 0)))
-      resultsAn.append(np.mean(field.photo[l_i].An) * 1e6)
-      resultsVc.append(np.mean(field.photo[l_i].Vc) * 1e6)
-      resultsVj.append(np.mean(field.photo[l_i].Vj) * 1e6)
-      resultsgco2.append(np.mean(field.photo[l_i].gco2))
-      resultscics.append(np.mean(field.photo[l_i].ci) / cs_input)
-      resultsfw.append(np.mean(field.photo[l_i].fw))
+      resultsAn.append(np.mean(field.photo[l_i].An) * 1e6) # [mol CO2 m-2 s-1]
+      resultsVc.append(np.mean(field.photo[l_i].Vc) * 1e6) # [mol CO2 m-2 s-1]
+      resultsVj.append(np.mean(field.photo[l_i].Vj) * 1e6) # [mol CO2 m-2 s-1]
+      resultsgco2.append(np.mean(field.photo[l_i].gco2)) # [mol CO2 m-2 s-1] 
+      resultscics.append(np.mean(field.photo[l_i].ci) / cs_input) # [-]
+      resultsfw.append(np.mean(field.photo[l_i].fw)) # [-]
 
 
 
