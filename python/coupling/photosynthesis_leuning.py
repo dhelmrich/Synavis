@@ -338,7 +338,7 @@ class Field :
       r.fw_cutoff = 0.04072 
       r.gm =0.03
       r.sh =5e-4
-      r.limMaxErr = 1/100
+      #r.maxErrLim = 1/100
       r.maxLoop = 10000
       r.minLoop=900
       # leaf_nodes = r.get_nodes_index(4)
@@ -347,7 +347,7 @@ class Field :
   def measureLight(self, local_id, dataconnector) :
     pylog.log("Requesting light data for plant " + str(local_id))
     message = {"type":"mms", "l":local_id}
-    leaf_nodes = self.photo[local_id].get_nodes_index(pb.leaf)
+    leaf_nodes = self.photo[local_id].get_nodes_index()
     if len(leaf_nodes) == 0 :
       self.sampling[local_id] = SamplingState.FINISHED
       return
@@ -450,6 +450,7 @@ timerange = [start_time + datetime.timedelta(hours = t) for t in timerange_numer
 parameter_file = os.path.join(cplantbox_dir, "modelparameter", "structural", "plant", "Triticum_aestivum_adapted_2023.xml")
 
 weather = Weather(55.7, 13.2, start_time)
+weather.fill_nans()
 soil = Soil()
 field = Field(55.7, 13.2, start_time, field_size, MPIRank, MPISize, spacing = 10.0)
 
@@ -552,7 +553,7 @@ else :
                                verbose_=False, doLog_=False, TairC_=Tair_input,
                                outputDir_="./" )
                                
-      fluxes = field.photo[l_i].radial_fluxes(simtime, rx, [p_s_input], k_soil, True)  # cm3/day
+      fluxes = field.photo[l_i].outputFlux  # cm3/day
       organTypes = np.array(field.photo[l_i].rs.organTypes)
       results.append(sum(np.where(organTypes == 4, fluxes, 0)))
       resultsAn.append(np.mean(field.photo[l_i].An) * 1e6) # [mol CO2 m-2 s-1]
