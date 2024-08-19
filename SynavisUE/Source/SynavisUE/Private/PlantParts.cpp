@@ -45,9 +45,9 @@ int32 APlantParts::AddMesh(const TArray<FVector>& Points,
   const TArray<FVector2D>& UV,
   const TArray<FColor>& VertexColors,
   const TArray<FProcMeshTangent>& Tangents,
-  int32 organType)
+  int32 organType, int slot)
 {
-  auto MeshSection = Mesh->GetNumSections();
+  auto MeshSection = (slot >= 0) ? slot : Mesh->GetNumSections();
   Mesh->CreateMeshSection(MeshSection,
     Points,
     Triangles,

@@ -24,7 +24,8 @@ public:
 									 const TArray<FVector2D>& UV,
 									 const TArray<FColor>& VertexColors,
 									 const TArray<FProcMeshTangent>& Tangents,
-									 int32 organType = 3);
+									 int32 organType = 3,
+                   int slot = -1);
 
 	void VaryProperty(FString ValRole, FString PropertyName, float Value, float StdDev = 0.0);
 
