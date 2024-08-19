@@ -66,7 +66,7 @@ MPISize = comm.Get_size()
 MPIRank = 0
 MPISize = 1
 
-field_size = 1
+field_size = 4
 cmd_man = syn.CommandLineParser(sys.argv)
 if cmd_man.HasArgument("fs"):
   field_size = cmd_man.GetArgument("fs")
@@ -293,6 +293,9 @@ class Field :
     vis.SetVerbose(False)
     # get organs
     organs = plant.getOrgans()
+    slot = 0
+    dataconnector.SendJSON({"type":"reset", "l":local_id})
+    time.sleep(0.1)
     # send all stem or leaf organs
     for organ in organs :
       if organ.organType() == pb.leaf.value or organ.organType() == pb.stem.value :
@@ -305,9 +308,11 @@ class Field :
         message["n"] = base64.b64encode(n.astype("float64")).decode("utf-8")
         message["t"] = base64.b64encode(t.astype("float64")).decode("utf-8")
         message["l"] = local_id
+        message["s"] = slot
         message["o"] = int(organ.organType())
         dataconnector.SendJSON(message)
         vis.ResetGeometry()
+        slot += 1
       #endif
     #endfor
   #enddef
@@ -345,7 +350,6 @@ class Field :
     #endfor
   #enddef
   def measureLight(self, local_id, dataconnector) :
-    pylog.log("Requesting light data for plant " + str(local_id))
     message = {"type":"mms", "l":local_id}
     leaf_nodes = self.photo[local_id].get_nodes_index()
     if len(leaf_nodes) == 0 :
@@ -355,6 +359,7 @@ class Field :
     leaf_nodes = plant_nodes[leaf_nodes]
     message["p"] = base64.b64encode(leaf_nodes.astype("float64")).decode("utf-8")
     signal_relay.append(Signal({"type":"mm", "l":local_id}, lambda msg : self.setLight(local_id,msg["i"])))
+    pylog.log("Requesting light data for plant: " + str({"type":"mm", "l":local_id}))
     dataconnector.SendJSON(message)
     return len(leaf_nodes)
   #enddef
@@ -383,7 +388,9 @@ class Signal :
   #enddef
   # equal operator
   def __eq__(self, args:dict) :
-    return all([self.args[key] == args[key] for key in args if key in self.args])
+    return all(self.args[key] == args[key] for key in args if key in self.args)
+    # any formulation checks if the key is in the args and if the value is different
+    #return not any(self.args[key] != args[key] if key in self.args else True for key in args)
   #enddef
   def __str__(self) :
     return str(self.args)
@@ -415,8 +422,6 @@ def message_callback(msg) :
       pylog.log("Message received with parameters " + ", ".join([key + ": " + str(msg[key])[0:10] for key in msg]))
       handler = next((h for h in signal_relay if h == msg), None)
       pylog.log("Handler is " + str(handler))
-      if msg["type"] == "mm" or msg["type"] == "mms" :
-        print("Received light data")
       if not handler is None :
         handler(msg)
       else :
@@ -428,6 +433,31 @@ def message_callback(msg) :
     pylog.log("Skipping message of size " + str(len(msg)) + " for failing to convert to JSON")
   #endtry
 #enddef
+
+
+class Reporter :
+  def __init__(self, columns, output_graphs = True) :
+    self.max_idx = 99
+    self.data = np.zeros((self.max_idx + 1, len(columns)))
+    self.idx = 0
+    self.output_graphs = output_graphs
+    self.columns = columns
+  #enddef
+  def __call__(self, line) :
+    if self.idx + 1 > self.max_idx :
+      self.max_idx = int(self.max_ids * 1.2)
+      # extend data
+      self.data = np.concatenate((self.data, np.zeros((self.max_idx + 1 - self.idx, self.data.shape[1]))), axis = 0)
+    #endif
+    self.idx += 1
+    self.data[self.idx, :] = line
+  #enddef
+  def write(self, filename) :
+    tabledata = pd.DataFrame(self.data[:self.idx + 1], columns = self.columns)
+    tabledata.to_csv(filename)
+  #enddef
+#endclass
+
 
 """ Parameters """
 #kz = 4.32e-1  # axial conductivity [cm^3/day]
@@ -466,6 +496,9 @@ dataconnector.StartSignalling()
 dataconnector.SetRetryOnErrorResponse(True)
 dataconnector.LockUntilConnected(500)
 dataconnector.SendJSON({"type":"delete"})
+
+
+rep = Reporter(["Flux", "An", "Vc", "Vj", "gco2", "cics", "fw"])
 
 time.sleep(1)
 
@@ -529,7 +562,7 @@ else :
     pylog.log("All plants finished sampling")
     field.reset_sampling_state()
     for l_i in range(field.LocalSize) :
-      # NB: keeping default leaf chlorophyl content of 51 SPAD
+      # NB: keeping default leaf chlorophyl content of 41 SPAD
       Q_input = field.getLight(l_i)
       RH_input = weather.relative_humidity(timerange[i])
       Tair_input = weather.temperature(timerange[i])
@@ -552,17 +585,18 @@ else :
                                ea_=ea, es_=es,
                                verbose_=False, doLog_=False, TairC_=Tair_input,
                                outputDir_="./" )
-                               
       fluxes = field.photo[l_i].outputFlux  # cm3/day
       organTypes = np.array(field.photo[l_i].rs.organTypes)
-      results.append(sum(np.where(organTypes == 4, fluxes, 0)))
-      resultsAn.append(np.mean(field.photo[l_i].An) * 1e6) # [mol CO2 m-2 s-1]
-      resultsVc.append(np.mean(field.photo[l_i].Vc) * 1e6) # [mol CO2 m-2 s-1]
-      resultsVj.append(np.mean(field.photo[l_i].Vj) * 1e6) # [mol CO2 m-2 s-1]
-      resultsgco2.append(np.mean(field.photo[l_i].gco2)) # [mol CO2 m-2 s-1] 
-      resultscics.append(np.mean(field.photo[l_i].ci) / cs_input) # [-]
-      resultsfw.append(np.mean(field.photo[l_i].fw)) # [-]
+      rep([fluxes,
+           np.sum(np.where(organTypes == 4, fluxes, 0)),
+            np.mean(field.photo[l_i].An) * 1e6,
+            np.mean(field.photo[l_i].Vc) * 1e6,
+            np.mean(field.photo[l_i].Vj) * 1e6,
+            np.mean(field.photo[l_i].gco2),
+            np.mean(field.photo[l_i].ci) / cs_input,
+            np.mean(field.photo[l_i].fw)
+          ])
 
 
-
+rep.write("output_"+time.time()+".csv")
 
