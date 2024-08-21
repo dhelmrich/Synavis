@@ -53,7 +53,7 @@ def LeafNodeInformation(plant) :
     organids.extend([leaf.getId()]*len(leaf.getNodes()))
   return nodes, nodeids, organids
 
-sys.path.append("../../build_unix/")
+sys.path.append("./build_unix/")
 
 message_buffer = []
 
@@ -119,24 +119,30 @@ dataconnector.SendJSON({"type":"console", "command":"t.maxFPS 20"})
 #  "value": float(intensity)
 #})
 dataconnector.SendJSON({"type":"resetlights"})
-time.sleep(2)
+time.sleep(1)
 
 organs = p.getOrgans()
 organs.sort(key=lambda x: x.organType(), reverse=True)
 
-for o in organs :
-  if o.organType() == 2 :
+dataconnector.SendJSON({"type":"reset", "l":0})
+time.sleep(1)
+
+for slot,organ in enumerate(organs) :
+  if organ.organType() == 2 :
     continue
-  print("Organ ", o.getId(), " of type ", o.organType())
+  print("Organ ", organ.getId(), " of type ", organ.organType())
   v.ResetGeometry()
-  v.ComputeGeometryForOrgan(o.getId())
+  v.ComputeGeometryForOrgan(organ.getId())
   points,triangles,normals = np.array(v.GetGeometry())*scale, np.array(v.GetGeometryIndices()), np.array(v.GetGeometryNormals())
+  texture = np.array(v.GetGeometryTextureCoordinates())
   dataconnector.SendJSON({"type":"do",
                   "p":base64.b64encode(points.astype("float64")).decode('utf-8'),
                   "n":base64.b64encode(normals.astype("float64")).decode('utf-8'),
                   "i":base64.b64encode(triangles.astype("int32")).decode('utf-8'),
-                  "o":o.organType(),
+                  "t":base64.b64encode(texture.astype("float64")).decode('utf-8'),
+                  "o":organ.organType(),
                   "l":0,
+                  "s":slot
                   })
   time.sleep(0.5)
 # end for
