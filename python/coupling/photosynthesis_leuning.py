@@ -77,8 +77,8 @@ from mpi4py import MPI
 comm = MPI.COMM_WORLD
 MPIRank = comm.Get_rank()
 MPISize = comm.Get_size()
-MPIRank = 0
-MPISize = 1
+#MPIRank = 0
+#MPISize = 1
 
 # model parameters
 simtime = 1 # days
@@ -86,10 +86,10 @@ depth = 40 # cm
 # dt = 0.1 hours to days
 dt = 0.1 / 24.0
 
-headstart = 4 # days
+headstart = 8 # days
 verbose = False
 
-field_size = 1
+field_size = 4
 plant_relative_scaling = 10.0
 cmd_man = syn.CommandLineParser(sys.argv)
 if cmd_man.HasArgument("fs"):
@@ -492,9 +492,13 @@ class Reporter :
   def __call__(self, line) :
     self.data.append(line)
   #enddef
-  def write(self, filename) :
-    tabledata = pd.DataFrame(self.data, columns = self.columns)
-    tabledata.to_csv(filename, mode="a", header=False, index=False)
+  def write(self, filename, append = False) :
+    with open(filename, "a" if append else "w") as f :
+      f.write(",".join(self.columns) + "\n")
+      for line in self.data :
+        f.write(",".join([str(l) for l in line]) + "\n")
+      #endfor
+    #endwith
   #enddef
 #endclass
 
@@ -532,12 +536,12 @@ dataconnector.LockUntilConnected(500)
 dataconnector.SendJSON({"type":"delete"})
 
 
-rep = Reporter(["Timestamp","plant","light", "Flux", "An", "Vc", "Vj", "gco2", "cics", "fw"])
-headerstring = "Timestamp, plant [#], light [Q], Flux [cm3/day], An [umol/m2/s], Vc [umol/m2/s], Vj [umol/m2/s], gco2 [umol/m2/s], cics [-], fw [-]\n"
+rep = Reporter(["Systime","Timestamp","plant","light", "Flux", "An", "Vc", "Vj", "gco2", "cics", "fw"])
+headerstring = "Systime, Timestamp, plant [#], light [Q], Flux [cm3/day], An [umol/m2/s], Vc [umol/m2/s], Vj [umol/m2/s], gco2 [umol/m2/s], cics [-], fw [-]\n"
 
 time.sleep(1)
 
-dataconnector.SendJSON({"type":"spawnmeter", "number": 10, "calibrate": True})
+dataconnector.SendJSON({"type":"spawnmeter", "number": 40, "calibrate": True})
 pylog.logjson({"type":"console", "command":"t.maxFPS 20"})
 m_ = {"type":"placeplant", 
                         "number": field.LocalSize,
@@ -563,6 +567,19 @@ resultspl = []
 
 Testing = False
 
+rep([
+            time.time(),
+            start_time.strftime("%Y.%m.%d-%H:%M:%S"),
+            0,
+            0.0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ])
 
 if Testing :
   print("Testing whether the plant inits work...")
@@ -596,7 +613,8 @@ else :
     bar.set_description("Processing " + time_string_ue + " at I=" + str(intensity))
     for l_i in range(field.LocalSize) :
       field.send_plant(l_i, dataconnector)
-      time.sleep(0.1)
+    time.sleep(0.1)
+    for l_i in range(field.LocalSize) :
       field.measureLight(l_i, dataconnector)
     #endfor
     pylog.log("Waiting for all plants to finish sampling")
@@ -630,6 +648,7 @@ else :
       fluxes = field.photo[l_i].outputFlux  # cm3/day
       organTypes = np.array(field.photo[l_i].rs.organTypes)
       rep([
+            time.time(),
             time_string_ue,
             l_i,
             Q_ref,
