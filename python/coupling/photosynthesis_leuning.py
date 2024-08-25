@@ -77,19 +77,20 @@ from mpi4py import MPI
 comm = MPI.COMM_WORLD
 MPIRank = comm.Get_rank()
 MPISize = comm.Get_size()
-#MPIRank = 0
-#MPISize = 1
+MPIRank = 0
+MPISize = 1
 
 # model parameters
-simtime = 1 # days
+simtime = 4 # days
 depth = 40 # cm
 # dt = 0.1 hours to days
-dt = 0.1 / 24.0
+dt = 0.2 / 24.0
+spacing = 25
 
 headstart = 8 # days
 verbose = False
 
-field_size = 4
+field_size = 1
 plant_relative_scaling = 10.0
 cmd_man = syn.CommandLineParser(sys.argv)
 if cmd_man.HasArgument("fs"):
@@ -184,10 +185,12 @@ class Weather :
     Eqf = lambda l, I: 10 * constants.pi * I * l * constants.nano / (constants.h * constants.c * constants.Avogadro * constants.micro) # [umol/m2s = muE]
     # conversion to UE Lux
     lux = Eqf(555, irradiance) # [lux]
+    lux = max(1e-7, lux)
     return lux
   #enddef
   def radiation_par(self, time, deltaseconds = 10 * 60) :
     photo_radiation = self.__call__(time, "RadiationPhotosyntheticActive_2m_Avg10min [umol*m-2*s-1]")
+    photo_radiation = max(1e-7, photo_radiation)
     return photo_radiation * deltaseconds
   def precipitation(self, time) :
     return self.__call__(time, "Precipitation_Avg10min [mm]")
@@ -330,7 +333,6 @@ class Field :
     # get organs
     organs = plant.getOrgans()
     slot = 0
-    dataconnector.SendJSON({"type":"reset", "l":local_id})
     time.sleep(0.1)
     leaf_points = 0
     leaf_amount = 0
@@ -412,6 +414,9 @@ class Field :
     pylog.log("Received light data for plant " + str(local_id))
     light = base64.b64decode(light)
     light = np.frombuffer(light, dtype=np.float32)
+    # NaN -> 0
+    light = np.nan_to_num(light)
+    light[light<0] = 0.0
     self.measurements[local_id] = light
     self.sampling[local_id] = SamplingState.FINISHED
   #enddef
@@ -509,7 +514,7 @@ class Reporter :
 #kr_stem = 0  # radial conductivity of stem => 0
 k_soil = []
 
-start_time = datetime.datetime(2019, 6, 1, 0, 0, 0, 1)
+start_time = datetime.datetime(2019, 6, 1, 13, 0, 0, 1)
 end_time = start_time + datetime.timedelta(days = simtime)
 timerange_numeric = np.arange(0, simtime, dt)
 timerange = [start_time + datetime.timedelta(days = t) for t in timerange_numeric]
@@ -520,7 +525,7 @@ parameter_file = os.path.join(cplantbox_dir, "modelparameter", "structural", "pl
 weather = Weather(55.7, 13.2, start_time)
 weather.fill_nans()
 soil = Soil()
-field = Field(55.7, 13.2, start_time, field_size, MPIRank, MPISize, spacing = 10.0)
+field = Field(55.7, 13.2, start_time, field_size, MPIRank, MPISize, spacing = spacing)
 
 #weather.print_columns()
 initial_pressure = weather.actual_vapour_pressure(start_time)
@@ -528,7 +533,10 @@ initial_pressure = weather.actual_vapour_pressure(start_time)
 dataconnector = syn.DataConnector()
 dataconnector.Initialize()
 dataconnector.SetMessageCallback(message_callback)
-dataconnector.SetConfig({"SignallingIP": "172.20.16.1", "SignallingPort": 8080})
+dataconnector.SetConfig({
+    "SignallingIP": "172.20.16.1", #ss.get_interface_ip("ib0"),
+    "SignallingPort": 8080
+  })
 dataconnector.SetTakeFirstStep(True)
 dataconnector.StartSignalling()
 dataconnector.SetRetryOnErrorResponse(True)
@@ -536,8 +544,24 @@ dataconnector.LockUntilConnected(500)
 dataconnector.SendJSON({"type":"delete"})
 
 
-rep = Reporter(["Systime","Timestamp","plant","light", "Flux", "An", "Vc", "Vj", "gco2", "cics", "fw"])
+output = open("output_"+str(int(time.time()*1000))+".csv", "w")
 headerstring = "Systime, Timestamp, plant [#], light [Q], Flux [cm3/day], An [umol/m2/s], Vc [umol/m2/s], Vj [umol/m2/s], gco2 [umol/m2/s], cics [-], fw [-]\n"
+def rep(row) :
+  global output
+  output.write(",".join([str(r) for r in row]) + "\n")
+  output.flush()
+
+time.sleep(1)
+
+output.write("# field_size: " + str(field_size) + "\n")
+output.write("# plant_relative_scaling: " + str(plant_relative_scaling) + "\n")
+output.write("# spacing: " + str(spacing) + "\n")
+output.write("# simtime: " + str(simtime) + "\n")
+output.write("# dt: " + str(dt) + "\n")
+output.write("# headstart: " + str(headstart) + "\n")
+
+output.write(headerstring)
+output.flush()
 
 time.sleep(1)
 
@@ -552,7 +576,7 @@ m_ = {"type":"placeplant",
                       }
 dataconnector.SendJSON(m_)
 pylog.logjson(m_)
-dataconnector.SendJSON({"type":"console", "command":"t.maxFPS 60"})
+dataconnector.SendJSON({"type":"console", "command":"t.maxFPS 30s"})
 time.sleep(2)
 
 # Numerical solution
@@ -593,12 +617,16 @@ else :
     field.simulate(headstart, verbose = False)
   field.init_photo()
   bar = tqdm(total=len(timerange))
+  summed_intensity = 0.0
+  flux_sum = 0.0
   for i,t in enumerate(timerange_numeric):
+    dataconnector.SendJSON({"type":"resetlights"})
     field.simulate(dt, verbose = False)
     time_string_ue = timerange[i].strftime("%Y.%m.%d-%H:%M:%S")
     dataconnector.SendJSON({"type":"t", "s":time_string_ue})
     pylog.logjson({"type":"t", "s":time_string_ue})
     intensity = weather.radiation_lux(timerange[i])
+    radiation_par = weather.radiation_par(timerange[i])
     dataconnector.SendJSON({
       "type": "parameter",
       "object": "SunSky_C_1.DirectionalLight",
@@ -607,10 +635,11 @@ else :
     })
     dataconnector.SendJSON({
       "type":"calibrate",
-      "flux": weather.radiation_par(timerange[i])
+      "flux": radiation_par
     })
     pylog.log("Setting intensity to " + str(intensity))
-    bar.set_description("Processing " + time_string_ue + " at I=" + str(intensity))
+    floatprint = lambda x: "{:.2f}".format(x)
+    bar.set_description(time_string_ue + ": {:.2f}lux->!:{:.2f}/{:.2f}->{:.4f}mol".format(intensity, summed_intensity,radiation_par, flux_sum))
     for l_i in range(field.LocalSize) :
       field.send_plant(l_i, dataconnector)
     time.sleep(0.1)
@@ -623,10 +652,15 @@ else :
     #endwhile
     pylog.log("All plants finished sampling")
     field.reset_sampling_state()
+    summed_intensity = 0.0
+    flux_sum = 0.0
     for l_i in range(field.LocalSize) :
       # NB: keeping default leaf chlorophyl content of 41 SPAD
       Q_input = field.getLight(l_i)
+      # print the amount of nonzero entries
+      pylog.log("Amount of nonzero entries in light data: " + str(np.count_nonzero(Q_input)) + "/"+str(len(Q_input)))
       Q_ref = np.average(Q_input)
+      summed_intensity += Q_ref / field.LocalSize
       RH_input = weather.relative_humidity(timerange[i])
       Tair_input = weather.temperature(timerange[i])
       p_s_input = soil.soil_matric_potential(0.1)
@@ -639,7 +673,7 @@ else :
         field.photo[l_i].Qlight = Q_input # mean irradiance
       else:
         field.photo[l_i].vQlight = Q_input #  irradiance per leaf segment
-      
+      pylog.log("Computing photosynthesis for plant " + str(l_i) + " with Q=" + str(Q_ref) + " and cs=" + str(cs_input))
       rx = field.photo[l_i].solve_photosynthesis(sim_time_=simtime, sxx_=[p_s_input],
                                 cells_=True,
                                ea_=ea, es_=es,
@@ -647,12 +681,14 @@ else :
                                outputDir_="./" )
       fluxes = field.photo[l_i].outputFlux  # cm3/day
       organTypes = np.array(field.photo[l_i].rs.organTypes)
+      flux_sum_li = np.sum(np.where(organTypes == 4, fluxes, 0))
+      flux_sum += flux_sum_li / field.LocalSize
       rep([
             time.time(),
             time_string_ue,
             l_i,
             Q_ref,
-            np.sum(np.where(organTypes == 4, fluxes, 0)),
+            flux_sum_li,
             np.mean(field.photo[l_i].An) * 1e6,
             np.mean(field.photo[l_i].Vc) * 1e6,
             np.mean(field.photo[l_i].Vj) * 1e6,
@@ -666,12 +702,6 @@ else :
   bar.close()
 #endif
 
+dataconnector.SendJSON({"type":"quit"})
 
-output_file = "output_"+str(int(time.time()*1000))+".csv"
-# write starttime stamp to comment line
-with open(output_file, "w") as f:
-  f.write(headerstring)
-  # now write the data
-  rep.write(output_file)
-#endwith
-
+output.close()
