@@ -73,10 +73,10 @@ from functional.xylem_flux import XylemFluxPython
 from plantbox import Photosynthesis
 
 # load MPI environment
-from mpi4py import MPI
-comm = MPI.COMM_WORLD
-MPIRank = comm.Get_rank()
-MPISize = comm.Get_size()
+#from mpi4py import MPI
+#comm = MPI.COMM_WORLD
+#MPIRank = comm.Get_rank()
+#MPISize = comm.Get_size()
 MPIRank = 0
 MPISize = 1
 
@@ -238,6 +238,16 @@ class Weather :
   def rcanopy(self, time) :
     # resistivity to water vapour flow in the canopy
     eddy_covariance_canopy = 0.1 # m2 s-1
+    return 1.0 / eddy_covariance_canopy
+  #enddef
+  def generator_t(self, property, start_t, dt, end_time) :
+    t = start_t
+    while t < end_time :
+      p = self.__call__(t, property)
+      yield t, p
+      t += dt
+    #endwhile
+  #enddef
 #endclass
 
 class SamplingState(Enum) :
@@ -514,7 +524,7 @@ class Reporter :
 #kr_stem = 0  # radial conductivity of stem => 0
 k_soil = []
 
-start_time = datetime.datetime(2019, 6, 1, 13, 0, 0, 1)
+start_time = datetime.datetime(2019, 6, 1, 6, 0, 0, 1)
 end_time = start_time + datetime.timedelta(days = simtime)
 timerange_numeric = np.arange(0, simtime, dt)
 timerange = [start_time + datetime.timedelta(days = t) for t in timerange_numeric]
@@ -565,7 +575,7 @@ output.flush()
 
 time.sleep(1)
 
-dataconnector.SendJSON({"type":"spawnmeter", "number": 40, "calibrate": True})
+dataconnector.SendJSON({"type":"spawnmeter", "number": 5, "calibrate": False})
 pylog.logjson({"type":"console", "command":"t.maxFPS 20"})
 m_ = {"type":"placeplant", 
                         "number": field.LocalSize,
@@ -577,6 +587,7 @@ m_ = {"type":"placeplant",
 dataconnector.SendJSON(m_)
 pylog.logjson(m_)
 dataconnector.SendJSON({"type":"console", "command":"t.maxFPS 30s"})
+dataconnector.SendJSON({"type":"console", "command":"Log LogTemp off"})
 time.sleep(2)
 
 # Numerical solution
@@ -620,43 +631,54 @@ else :
   summed_intensity = 0.0
   flux_sum = 0.0
   for i,t in enumerate(timerange_numeric):
-    dataconnector.SendJSON({"type":"resetlights"})
-    field.simulate(dt, verbose = False)
     time_string_ue = timerange[i].strftime("%Y.%m.%d-%H:%M:%S")
-    dataconnector.SendJSON({"type":"t", "s":time_string_ue})
-    pylog.logjson({"type":"t", "s":time_string_ue})
     intensity = weather.radiation_lux(timerange[i])
     radiation_par = weather.radiation_par(timerange[i])
+    dataconnector.SendJSON({"type":"resetlights"})
+    field.simulate(dt, verbose = False)
+    dataconnector.SendJSON({"type":"t", "s":time_string_ue})
+    pylog.logjson({"type":"t", "s":time_string_ue})
     dataconnector.SendJSON({
       "type": "parameter",
       "object": "SunSky_C_1.DirectionalLight",
       "property": "Intensity",
       "value": intensity
     })
+    time.sleep(0.2)
     dataconnector.SendJSON({
       "type":"calibrate",
       "flux": radiation_par
     })
-    pylog.log("Setting intensity to " + str(intensity))
     floatprint = lambda x: "{:.2f}".format(x)
-    bar.set_description(time_string_ue + ": {:.2f}lux->!:{:.2f}/{:.2f}->{:.4f}mol".format(intensity, summed_intensity,radiation_par, flux_sum))
-    for l_i in range(field.LocalSize) :
-      field.send_plant(l_i, dataconnector)
-    time.sleep(0.1)
-    for l_i in range(field.LocalSize) :
-      field.measureLight(l_i, dataconnector)
-    #endfor
-    pylog.log("Waiting for all plants to finish sampling")
-    while any([s != SamplingState.FINISHED for s in field.sampling]) :
+    pylog.log("Setting intensity to " + str(intensity))
+    measured_in_ue = False
+    if intensity > 1e-7 and radiation_par > 1e-7 :
+      bar.set_description(time_string_ue + ": {:.2f}lux->UQ:{:.2f}/{:.2f}->{:.4f}mol".format(intensity, summed_intensity,radiation_par, flux_sum))
+      for l_i in range(field.LocalSize) :
+        field.send_plant(l_i, dataconnector)
       time.sleep(0.1)
-    #endwhile
+      for l_i in range(field.LocalSize) :
+        field.measureLight(l_i, dataconnector)
+      #endfor
+      pylog.log("Waiting for all plants to finish sampling")
+      while any([s != SamplingState.FINISHED for s in field.sampling]) :
+        time.sleep(0.1)
+      #endwhile#
+      measured_in_ue = True
+    else :
+      bar.set_description(time_string_ue + ": {:.2f}lux->PY:{:.2f}/{:.2f}->{:.4f}mol".format(intensity, summed_intensity,radiation_par, flux_sum))
+    #endif
     pylog.log("All plants finished sampling")
     field.reset_sampling_state()
     summed_intensity = 0.0
     flux_sum = 0.0
     for l_i in range(field.LocalSize) :
       # NB: keeping default leaf chlorophyl content of 41 SPAD
-      Q_input = field.getLight(l_i)
+      if measured_in_ue :
+        Q_input = field.getLight(l_i)
+      else :
+        leaf_node_ids = field.photo[l_i].get_nodes_index()
+        Q_input = np.zeros(len(leaf_node_ids))
       # print the amount of nonzero entries
       pylog.log("Amount of nonzero entries in light data: " + str(np.count_nonzero(Q_input)) + "/"+str(len(Q_input)))
       Q_ref = np.average(Q_input)
@@ -676,9 +698,9 @@ else :
       pylog.log("Computing photosynthesis for plant " + str(l_i) + " with Q=" + str(Q_ref) + " and cs=" + str(cs_input))
       rx = field.photo[l_i].solve_photosynthesis(sim_time_=simtime, sxx_=[p_s_input],
                                 cells_=True,
-                               ea_=ea, es_=es,
-                               verbose_=False, doLog_=False, TairC_=Tair_input,
-                               outputDir_="./" )
+                              ea_=ea, es_=es,
+                              verbose_=False, doLog_=False, TairC_=Tair_input,
+                              outputDir_="./" )
       fluxes = field.photo[l_i].outputFlux  # cm3/day
       organTypes = np.array(field.photo[l_i].rs.organTypes)
       flux_sum_li = np.sum(np.where(organTypes == 4, fluxes, 0))
