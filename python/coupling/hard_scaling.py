@@ -1,8 +1,10 @@
+from enum import Enum
 import time
 
 
 # MPI Environment
 from mpi4py import MPI
+import pandas as pd
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 size = comm.Get_size()
@@ -15,6 +17,7 @@ meter_addition_steps = [10, 40, 50, 100, 300, 500, 1000, 9000]
 
 def write_phase(f, phase) :
   f.write("Phase: %s - %f\n" % (phase, time.time() - start_time))
+  print("Phase: %s - %f" % (phase, time.time() - start_time))
   f.flush()
 #enddef
 
@@ -66,28 +69,69 @@ def LeafNodeInformation(plant) :
 
 sys.path.append("./build_unix/")
 
-message_buffer = []
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "modules"))
+import signalling_server as ss
 
-# a method to reset the message buffer
+
+message_buffer = []
+signal_relay = []
+
+
+class Signal :
+  def __init__(self, args, callback) :
+    self.args = args
+    self.callback = callback
+  #enddef
+  def __call__(self, msg) :
+    self.callback(msg)
+  #enddef
+  # equal operator
+  def __eq__(self, args:dict) :
+    return all(self.args[key] == args[key] for key in args if key in self.args)
+    # any formulation checks if the key is in the args and if the value is different
+    #return not any(self.args[key] != args[key] if key in self.args else True for key in args)
+  #enddef
+  def __str__(self) :
+    return str(self.args)
+  #enddef
+#endclass
+
+
 def reset_message() :
   global message_buffer
   message_buffer = []
-
-# a method to get the next message from the buffer
+#enddef
 def get_message() :
   global message_buffer
   while len(message_buffer) == 0 :
     time.sleep(0.1)
+  #endwhile
   message = message_buffer.pop(0)
   return message
-
-# a callback function for the data connector
+#enddef
 def message_callback(msg) :
-  global message_buffer
-  # decode from utf-8
-  message_buffer.append(str(msg))
-  if "error" in msg.lower() :
-    print("Error message: ", msg)
+  global message_buffer, signal_relay
+  try :
+    msg = json.loads(msg)
+    #print("Got message with params", ",".join([str(k) + ":" + str(v)[0:10] for k,v in msg.items()]))
+    if "type" in msg :
+      # ignore certain types
+      if msg["type"] == "parameter" :
+        return
+      handler = next((h for h in signal_relay if h == msg), None)
+      if not handler is None :
+        #print("Found handler for message")
+        handler(msg)
+      else :
+        #print("Found no handlers within any of these: ")
+        #print(signal_relay)
+        message_buffer.append(msg)
+      #endif
+    #endif
+  except :
+    pass
+  #endtry
+#enddef
 
 import PySynavis as rtc
 import signalling_server as ss
@@ -97,24 +141,35 @@ rtc.SetGlobalLogVerbosity(rtc.LogVerbosity.LogError)
 
 dataconnector = rtc.DataConnector()
 dataconnector.Initialize()
-dataconnector.SetConfig({"SignallingIP": infiniband, "SignallingPort": 8080})
+dataconnector.SetConfig({
+    "SignallingIP": "172.20.16.1", #ss.get_interface_ip("ib0"),
+    "SignallingPort": 8080
+  })
 dataconnector.SetTakeFirstStep(True)
 dataconnector.StartSignalling()
 dataconnector.SetMessageCallback(message_callback)
 dataconnector.SetRetryOnErrorResponse(True)
 dataconnector.LockUntilConnected(500)
 
+
+write_phase(f, "DataConnector")
+
 num_plants = 50000
 chunk_size = 6000
-plant_ids = np.arange(num_plants)
+
+sendbuf = None
+if rank == 0 :
+  plant_ids = np.arange(num_plants)
+  sendbuf = np.array_split(plant_ids, size)
+#end
+# Scatter plant ids to MPI ranks
+plant_ids = comm.scatter(sendbuf, root=0)
 
 # plant spacing
-spacing = 0.1
+spacing = 20
 # plant size
 plant_relative_scaling = 10.0
 
-# Scatter plant ids to MPI ranks
-plant_ids = comm.scatter(plant_ids, root=0)
 
 
 class SamplingState(Enum) :
@@ -151,6 +206,8 @@ class Field :
     self.field = self.field.astype(int)
     # with this, create the seed position array
     self.seed_positions = self.field * spacing + [self.start_i * self.local_side_length * spacing, self.start_j * self.local_side_length * spacing]
+    # pad the z component
+    self.seed_positions = np.concatenate((self.seed_positions, np.zeros((self.LocalSize, 1))), axis = 1)
     self.measurements = [[] for i in range(self.LocalSize)]
     self.plant_initalized = False
   #enddef
@@ -248,7 +305,9 @@ class Field :
         vis.ResetGeometry()
         vis.ComputeGeometryForOrgan(organ.getId())
         points,triangles,normals = np.array(vis.GetGeometry())*plant_relative_scaling, np.array(vis.GetGeometryIndices()), np.array(vis.GetGeometryNormals())
+        points = points.reshape(-1, 3)
         points += self.get_position_from_local(local_id)
+        points = points.flatten()
         if organ.organType() == pb.leaf.value :
           leaf_points += len(points)
           leaf_amount += 1
@@ -260,15 +319,15 @@ class Field :
         "i": base64.b64encode(triangles.astype("int32")).decode("utf-8"),
         "t": base64.b64encode(texture.astype("float64")).decode("utf-8"),
         "l": local_id,
-        "s": slot,
         "o": int(organ.organType()),
         }
+        if local_id >= 0 :
+          message["s"] = slot
         dataconnector.SendJSON(message)
         time.sleep(0.05)
         slot += 1
       #endif
     #endfor
-    pylog.log("Sent plant " + str(local_id) + " with " + str(leaf_amount) + " leaf organs and " + str(leaf_points) + " avg points")
   #enddef
   def numLeafnodes(self, local_id) :
     plant = self.get_plant(local_id)
@@ -279,87 +338,98 @@ class Field :
       #endif
     return length
   #enddef
-  def measureLight(self, local_id, dataconnector, meter_number) :
+  def measureLight(self, local_id, dataconnector) :
     message = {"type":"pms"}
     total_num = np.sum([self.numLeafnodes(i) for i in range(self.LocalSize)])
     leaf_nodes = np.zeros((total_num, 3))
     idx = 0
-    for plant in self.plants :
+    for i,plant in enumerate(self.plants) :
       nodes = LeafNodeInformation(plant)[0]
       nodes = np.array(nodes)
       nodes = nodes * plant_relative_scaling
-      nodes += self.get_position_from_local(local_id)
+      nodes += self.get_position_from_local(i)
       leaf_nodes[idx:idx+len(nodes)] = nodes
+      idx += len(nodes)
     #endfor
     num_chunks = len(leaf_nodes) // chunk_size + 1
+    self.measurements = [np.array([]) for i in range(num_chunks)]
+    self.sampling = [SamplingState.SAMPLE for i in range(num_chunks)]
     for i in range(num_chunks) :
       start = i*chunk_size
       end = min((i+1)*chunk_size, len(leaf_nodes))
       message["p"] = base64.b64encode(leaf_nodes[start:end].astype("float64")).decode("utf-8")
-      signal_relay.append(Signal({"type":"pms"}, self.light_callback))
       message["l"] = i
+      signal_relay.append(Signal({"type":"mm","l":i}, self.light_callback))
       dataconnector.SendJSON(message)
       time.sleep(0.1)
     #endfor
+  #enddef
+  def light_callback(self, msg) :
+    if "i" in msg :
+      data = np.frombuffer(base64.b64decode(msg["i"]), dtype="float64")
+      self.measurements[msg["l"]] = data
+      self.sampling[msg["l"]] = SamplingState.FINISHED
+    #endif
   #enddef
   def reset_sampling_state(self) :
     self.sampling = [SamplingState.IDLE for i in range(self.LocalSize)]
   #enddef
 #endclass
 
-class Signal :
-  def __init__(self, args, callback) :
-    self.args = args
-    self.callback = callback
-  #enddef
-  def __call__(self, msg) :
-    self.callback(msg)
-  #enddef
-  # equal operator
-  def __eq__(self, args:dict) :
-    return all(self.args[key] == args[key] for key in args if key in self.args)
-    # any formulation checks if the key is in the args and if the value is different
-    #return not any(self.args[key] != args[key] if key in self.args else True for key in args)
-  #enddef
-  def __str__(self) :
-    return str(self.args)
-  #enddef
-#endclass
+write_phase(f, "Classes")
 
-message_buffer = []
-signal_relay = []
+# create a field
+current_time = pd.Timestamp.now()
+field = Field(0, 0, current_time, num_plants, rank, size, spacing)
 
-def reset_message() :
-  global message_buffer
-  message_buffer = []
-#enddef
-def get_message() :
-  global message_buffer
-  while len(message_buffer) == 0 :
+
+m_ = {"type":"placeplant", 
+                        "number": field.LocalSize,
+                        "rule": "square",
+                        "mpi_world_size": field.MPISize,
+                        "mpi_rank": field.MPIRank,
+                        "spacing": field.spacing,
+                      }
+dataconnector.SendJSON(m_)
+#dataconnector.SendJSON({"type":"console", "command":"t.maxFPS 500"})
+dataconnector.SendJSON({"type":"console", "command":"Log LogTemp off"})
+dataconnector.SendJSON({"type":"console", "command":"Log LogActor off"})
+
+field.init_plants(parameter_file)
+
+write_phase(f, "Init")
+field.simulate(20, verbose = False)
+
+write_phase(f, "Simulate")
+
+# send the plants
+for i in range(field.LocalSize) :
+  field.send_plant(i, dataconnector)
+#endfor
+field.simulate_buffer_zone(20)
+
+write_phase(f, "Plants")
+
+
+write_phase(f, "Place")
+
+# go through the meter addition steps
+for meter in meter_addition_steps :
+  write_phase(f, "Meter %d" % meter)
+  dataconnector.SendJSON({"type":"spawnmeter", "number": meter
+                          })
+  write_phase(f, "Spawn Meter %d" % meter)
+  time.sleep(1)
+  write_phase(f, "Await Meter %d" % meter)
+  field.measureLight(0, dataconnector)
+  write_phase(f, "Measure Meter %d" % meter)
+  while any([s != SamplingState.FINISHED for s in field.sampling]) :
     time.sleep(0.1)
   #endwhile
-  message = message_buffer.pop(0)
-  return message
-#enddef
-def message_callback(msg) :
-  global message_buffer, signal_relay, pylog
-  try :
-    msg = json.loads(msg)
-    if "type" in msg :
-      pylog.log("Message received with parameters " + ", ".join([key + ": " + str(msg[key])[0:10] for key in msg]))
-      # ignore certain types
-      if msg["type"] == "parameter" :
-        return
-      handler = next((h for h in signal_relay if h == msg), None)
-      pylog.log("Handler is " + str(handler))
-      if not handler is None :
-        handler(msg)
-      else :
-        pylog.log("Appended to message buffer (now " + str(len(message_buffer)) + " messages)")
-        message_buffer.append(msg)
-      #endif
-    #endif
-  except :
-    pylog.log("Skipping message of size " + str(len(msg)) + " for failing to convert to JSON")
-  #endtry
-#enddef
+  write_phase(f, "Finished Meter %d" % meter)
+  field.reset_sampling_state()
+#endfor
+
+write_phase(f, "End")
+
+dataconnector.SendJSON({"type":"quit"})
