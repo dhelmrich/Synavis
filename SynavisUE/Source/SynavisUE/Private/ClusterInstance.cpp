@@ -72,12 +72,12 @@ void AClusterInstance::TakeCommand(FJsonObject* Command)
         FString ClassName, PropertyName;
         if (!Command->TryGetStringField(TEXT("From"), ClassName))
         {
-          UE_LOG(LogActor, Error, TEXT("No class name provided for aggregation"));
+          UE_LOG(LogTemp, Error, TEXT("No class name provided for aggregation"));
           return;
         }
         if(!Command->TryGetStringField(TEXT("Property"), PropertyName))
         {
-          UE_LOG(LogActor, Error ,TEXT("No property name provided for aggregation"));
+          UE_LOG(LogTemp, Error ,TEXT("No property name provided for aggregation"));
           return;
         }
         if (PropertyToAggregate == TEXT("Count"))

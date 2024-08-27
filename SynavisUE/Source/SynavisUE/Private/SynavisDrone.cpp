@@ -474,17 +474,17 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
         FString CameraToSwitchTo = Jason->GetStringField(TEXT("camera"));
         if (CameraToSwitchTo == "info")
         {
-          UE_LOG(LogActor, Warning, TEXT("Switching to info cam"));
+          UE_LOG(LogTemp, Warning, TEXT("Switching to info cam"));
           OnBlueprintSignalling.Broadcast(EBlueprintSignalling::SwitchToInfoCam);
         }
         else if (CameraToSwitchTo == TEXT("scene"))
         {
-          UE_LOG(LogActor, Warning, TEXT("Switching to scene cam"));
+          UE_LOG(LogTemp, Warning, TEXT("Switching to scene cam"));
           OnBlueprintSignalling.Broadcast(EBlueprintSignalling::SwitchToSceneCam);
         }
         else if (CameraToSwitchTo == "dual")
         {
-          UE_LOG(LogActor, Warning, TEXT("Switching to dual cam"));
+          UE_LOG(LogTemp, Warning, TEXT("Switching to dual cam"));
           OnBlueprintSignalling.Broadcast(EBlueprintSignalling::SwitchToBothCams);
         }
       }
@@ -1335,7 +1335,7 @@ void ASynavisDrone::ApplyFromJSON(TSharedPtr<FJsonObject> Jason)
       FNumericProperty* fprop = CastField<FNumericProperty>(prop);
       if (fprop)
       {
-        UE_LOG(LogActor, Warning, TEXT("Setting property %s to %f"), *fprop->GetFullName(), Key.Value->AsNumber());
+        UE_LOG(LogTemp, Warning, TEXT("Setting property %s to %f"), *fprop->GetFullName(), Key.Value->AsNumber());
         fprop->SetFloatingPointPropertyValue(fprop->ContainerPtrToValuePtr<void>(this), Key.Value->AsNumber());
       }
     }
@@ -1344,7 +1344,7 @@ void ASynavisDrone::ApplyFromJSON(TSharedPtr<FJsonObject> Jason)
       FNumericProperty* iprop = CastField<FNumericProperty>(prop);
       if (iprop)
       {
-        UE_LOG(LogActor, Warning, TEXT("Setting property %s to %d"), *iprop->GetFullName(), (int64)Key.Value->AsNumber());
+        UE_LOG(LogTemp, Warning, TEXT("Setting property %s to %d"), *iprop->GetFullName(), (int64)Key.Value->AsNumber());
         iprop->SetIntPropertyValue(iprop->ContainerPtrToValuePtr<void>(this), (int64)Key.Value->AsNumber());
       }
     }
@@ -1383,7 +1383,7 @@ void ASynavisDrone::ApplyFromJSON(TSharedPtr<FJsonObject> Jason)
       FBoolProperty* bprop = CastField<FBoolProperty>(prop);
       if (bprop)
       {
-        UE_LOG(LogActor, Warning, TEXT("Setting property %s to %d"), *bprop->GetFullName(), Key.Value->AsBool());
+        UE_LOG(LogTemp, Warning, TEXT("Setting property %s to %d"), *bprop->GetFullName(), Key.Value->AsBool());
         bprop->SetPropertyValue(bprop->ContainerPtrToValuePtr<void>(this), Key.Value->AsBool());
       }
     }
@@ -1563,7 +1563,7 @@ void ASynavisDrone::ApplyJSONToObject(UObject* Object, TSharedPtr<FJsonObject> J
     }
     if(ObjectName.Contains("Light"))
     {
-      UE_LOG(LogActor, Warning, TEXT("Lighting scenario change detected"));
+      UE_LOG(LogTemp, Warning, TEXT("Lighting scenario change detected"));
       ULightComponent* light = Cast<ULightComponent>(ComponentIdentity);
       light->PropagateLightingScenarioChange();
       light->InvalidateLightingCacheDetailed(true, false);
@@ -2259,8 +2259,8 @@ void ASynavisDrone::Tick(float DeltaTime)
     ReceptionBufferOffset++;
     if (LogResponses)
     {
-      UE_LOG(LogActor, Warning, TEXT("Sending chunk %d of %d"), ReceptionBufferOffset, ReceptionBufferSize);
-      UE_LOG(LogActor, Warning, TEXT("First and last 20 charactes of chunk %d: %s"), ReceptionBufferOffset, *(chunk.Mid(0, 20) + TEXT("...") + chunk.Mid(chunk.Len() - 20, 20)))
+      UE_LOG(LogTemp, Warning, TEXT("Sending chunk %d of %d"), ReceptionBufferOffset, ReceptionBufferSize);
+      UE_LOG(LogTemp, Warning, TEXT("First and last 20 charactes of chunk %d: %s"), ReceptionBufferOffset, *(chunk.Mid(0, 20) + TEXT("...") + chunk.Mid(chunk.Len() - 20, 20)))
     }
     SendResponse(Response);
   }
