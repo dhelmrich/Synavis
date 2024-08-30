@@ -167,6 +167,10 @@ namespace Synavis
       {
         lp(Synavis::ELogVerbosity::Silent) << message.dump() << std::endl;
       }
+      void setidentity(std::string identity)
+      {
+        lp = Synavis::Logger::Get()->LogStarter(identity);
+      }
     private:
     Synavis::Logger::LoggerInstance lp{Synavis::Logger::Get()->LogStarter("Python")};
   };
@@ -187,6 +191,7 @@ namespace Synavis
       .def(py::init<>())
       .def("log", &SynavisLogger::log, py::arg("Message"))
       .def("logjson", &SynavisLogger::logjson, py::arg("Message"))
+      .def("setidentity", &SynavisLogger::setidentity, py::arg("Identity"))
     ;
 
     py::enum_<ELogVerbosity>(m, "LogVerbosity")
@@ -234,6 +239,7 @@ namespace Synavis
     m.def("VerboseMode", &VerboseMode);
     m.def("SilentMode", &SilentMode);
     m.def("ExitWithMessage", &ExitWithMessage, py::arg("Message"), py::arg("Code"));
+
 
     py::class_<rtc::Configuration>(m, "PeerConnectionConfig")
         .def(py::init<>())
