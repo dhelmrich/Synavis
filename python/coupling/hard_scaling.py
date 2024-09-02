@@ -9,15 +9,19 @@ comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 size = comm.Get_size()
 
+
 start_time = time.time() if rank == 0 else 0
 # distribute start_time to all ranks
 start_time = comm.bcast(start_time, root=0)
 
-meter_addition_steps = [10, 40, 50, 100, 300, 500, 1000, 9000]
+meter_addition_steps = [9, 40, 50, 100, 300, 500, 1000, 9000]
+
+def logfun(*args) :
+  print(*args)
 
 def write_phase(f, phase) :
   f.write("Phase: %s - %f\n" % (phase, time.time() - start_time))
-  print("Phase: %s - %f" % (phase, time.time() - start_time))
+  logfun("Phase: %s - %f" % (phase, time.time() - start_time))
   f.flush()
 #enddef
 
@@ -137,6 +141,14 @@ import PySynavis as rtc
 import signalling_server as ss
 infiniband = ss.get_interface_ip("ib0")
 
+log = rtc.Logger()
+log.setidentity("Node %d" % rank)
+# make a stand-in for print
+def logfun(*args) :
+  log.log(" ".join([str(a) for a in args]))
+#enddef
+
+
 rtc.SetGlobalLogVerbosity(rtc.LogVerbosity.LogError)
 
 dataconnector = rtc.DataConnector()
@@ -149,12 +161,16 @@ dataconnector.SetTakeFirstStep(True)
 dataconnector.StartSignalling()
 dataconnector.SetMessageCallback(message_callback)
 dataconnector.SetRetryOnErrorResponse(True)
+write_phase(f, "Synavis")
 dataconnector.LockUntilConnected(500)
 
 
 write_phase(f, "DataConnector")
 
-num_plants = 50000
+dataconnector.SendJSON({"type":"spawnmeter", "number": 20
+                          })
+
+num_plants = 500
 chunk_size = 6000
 
 sendbuf = None
@@ -237,7 +253,8 @@ class Field :
         plant.simulate(time, False)
         self.send_plant(-1, dataconnector, plant)
       #endfor
-    # check 
+    # check
+  #enddef
   def get_position_from_local(self, local_id) :
     return self.seed_positions[local_id]
   #enddef
@@ -296,7 +313,7 @@ class Field :
     organs = plant.getOrgans()
     slot = 0
     dataconnector.SendJSON({"type":"reset", "l":local_id})
-    time.sleep(0.1)
+    #time.sleep(0.05)
     leaf_points = 0
     leaf_amount = 0
     # send all stem or leaf organs
@@ -384,7 +401,7 @@ field = Field(0, 0, current_time, num_plants, rank, size, spacing)
 
 
 m_ = {"type":"placeplant", 
-                        "number": field.LocalSize,
+                        "number": num_plants,
                         "rule": "square",
                         "mpi_world_size": field.MPISize,
                         "mpi_rank": field.MPIRank,
@@ -433,3 +450,6 @@ for meter in meter_addition_steps :
 write_phase(f, "End")
 
 dataconnector.SendJSON({"type":"quit"})
+
+# mpi barrier
+comm.barrier()

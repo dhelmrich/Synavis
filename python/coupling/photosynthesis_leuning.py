@@ -22,7 +22,7 @@ if os.path.dirname(os.path.abspath(__file__)) != os.getcwd():
   os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # add Synavis (some parent directory to this) to path
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "build_unix"))
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "build"))
 import PySynavis as syn
 syn.SetGlobalLogVerbosity(syn.LogVerbosity.LogError)
 pylog = syn.Logger()
@@ -73,12 +73,12 @@ from functional.xylem_flux import XylemFluxPython
 from plantbox import Photosynthesis
 
 # load MPI environment
-#from mpi4py import MPI
-#comm = MPI.COMM_WORLD
-#MPIRank = comm.Get_rank()
-#MPISize = comm.Get_size()
-MPIRank = 0
-MPISize = 1
+from mpi4py import MPI
+comm = MPI.COMM_WORLD
+MPIRank = comm.Get_rank()
+MPISize = comm.Get_size()
+#MPIRank = 0
+#MPISize = 1
 
 # model parameters
 simtime = 4 # days
@@ -90,7 +90,7 @@ spacing = 25
 headstart = 8 # days
 verbose = False
 
-field_size = 1
+field_size = 50
 plant_relative_scaling = 10.0
 cmd_man = syn.CommandLineParser(sys.argv)
 if cmd_man.HasArgument("fs"):
@@ -188,10 +188,11 @@ class Weather :
     lux = max(1e-7, lux)
     return lux
   #enddef
-  def radiation_par(self, time, deltaseconds = 10 * 60) :
+  def radiation_par(self, time) :
     photo_radiation = self.__call__(time, "RadiationPhotosyntheticActive_2m_Avg10min [umol*m-2*s-1]")
     photo_radiation = max(1e-7, photo_radiation)
-    return photo_radiation * deltaseconds
+    # umol to mol
+    return photo_radiation / 1e6
   def precipitation(self, time) :
     return self.__call__(time, "Precipitation_Avg10min [mm]")
   #enddef
@@ -436,6 +437,33 @@ class Field :
   def reset_sampling_state(self) :
     self.sampling = [SamplingState.IDLE for i in range(self.LocalSize)]
   #enddef
+  def simulate_buffer_zone(self, time) :
+    # buffer positions: start_i - 1, start_i + local_side_length, start_j - 1, start_j + local_side_length
+    # amount: 4* local_side_length + 4  
+    buffer_positions = []
+    buffer_plants = []
+    for i in range(self.local_side_length) :
+      buffer_positions.append([self.start_i - 1, self.start_j + i])
+      buffer_positions.append([self.start_i + self.local_side_length, self.start_j + i])
+      buffer_positions.append([self.start_i + i, self.start_j - 1])
+      buffer_positions.append([self.start_i + i, self.start_j + self.local_side_length])
+    #endfor
+    for pos in buffer_positions :
+      # create a plant
+      plant = pb.MappedPlant()
+      plant.readParameters(parameter_file)
+      sp = plant.getOrganRandomParameter(1)[0]
+      sp.seedPos = pb.Vector3d(pos[0] * self.spacing, pos[1] * self.spacing, sp.seedPos.z)
+      sdf = pb.SDF_PlantBox(np.inf, np.inf, 40)
+      plant.setGeometry(sdf)
+      plant.initialize(False,True)
+      buffer_plants.append(plant)
+    #endfor
+    for plant in buffer_plants :
+      plant.simulate(time, False)
+      self.send_plant(-1, dataconnector, plant)
+    #endfor
+  #enddef
 #endclass
 
 class Signal :
@@ -575,8 +603,9 @@ output.flush()
 
 time.sleep(1)
 
-dataconnector.SendJSON({"type":"spawnmeter", "number": 5, "calibrate": False})
-pylog.logjson({"type":"console", "command":"t.maxFPS 20"})
+dataconnector.SendJSON({"type":"spawnmeter", "number": 100, "calibrate": False})
+#pylog.logjson({"type":"console", "command":"t.maxFPS 20"})
+
 m_ = {"type":"placeplant", 
                         "number": field.LocalSize,
                         "rule": "square",
@@ -586,7 +615,7 @@ m_ = {"type":"placeplant",
                       }
 dataconnector.SendJSON(m_)
 pylog.logjson(m_)
-dataconnector.SendJSON({"type":"console", "command":"t.maxFPS 30s"})
+#dataconnector.SendJSON({"type":"console", "command":"t.maxFPS 30s"})
 dataconnector.SendJSON({"type":"console", "command":"Log LogTemp off"})
 time.sleep(2)
 
@@ -637,7 +666,7 @@ else :
     dataconnector.SendJSON({"type":"resetlights"})
     field.simulate(dt, verbose = False)
     dataconnector.SendJSON({"type":"t", "s":time_string_ue})
-    pylog.logjson({"type":"t", "s":time_string_ue})
+    #pylog.logjson({"type":"t", "s":time_string_ue})
     dataconnector.SendJSON({
       "type": "parameter",
       "object": "SunSky_C_1.DirectionalLight",
@@ -653,7 +682,7 @@ else :
     pylog.log("Setting intensity to " + str(intensity))
     measured_in_ue = False
     if intensity > 1e-7 and radiation_par > 1e-7 :
-      bar.set_description(time_string_ue + ": {:.2f}lux->UQ:{:.2f}/{:.2f}->{:.4f}mol".format(intensity, summed_intensity,radiation_par, flux_sum))
+      bar.set_description(time_string_ue + ": {:.2f}lux->UQ:{:.2f}/{:.2f}->{:.4f}mol".format(intensity, summed_intensity*1e6,radiation_par*1e6, flux_sum))
       for l_i in range(field.LocalSize) :
         field.send_plant(l_i, dataconnector)
       time.sleep(0.1)
@@ -666,7 +695,8 @@ else :
       #endwhile#
       measured_in_ue = True
     else :
-      bar.set_description(time_string_ue + ": {:.2f}lux->PY:{:.2f}/{:.2f}->{:.4f}mol".format(intensity, summed_intensity,radiation_par, flux_sum))
+      pass
+      #bar.set_description(time_string_ue + ": {:.2f}lux->PY:{:.2f}/{:.2f}->{:.4f}mol".format(intensity, summed_intensity,radiation_par, flux_sum))
     #endif
     pylog.log("All plants finished sampling")
     field.reset_sampling_state()
@@ -680,7 +710,7 @@ else :
         leaf_node_ids = field.photo[l_i].get_nodes_index()
         Q_input = np.zeros(len(leaf_node_ids))
       # print the amount of nonzero entries
-      pylog.log("Amount of nonzero entries in light data: " + str(np.count_nonzero(Q_input)) + "/"+str(len(Q_input)))
+      #pylog.log("Amount of nonzero entries in light data: " + str(np.count_nonzero(Q_input)) + "/"+str(len(Q_input)))
       Q_ref = np.average(Q_input)
       summed_intensity += Q_ref / field.LocalSize
       RH_input = weather.relative_humidity(timerange[i])
@@ -695,7 +725,7 @@ else :
         field.photo[l_i].Qlight = Q_input # mean irradiance
       else:
         field.photo[l_i].vQlight = Q_input #  irradiance per leaf segment
-      pylog.log("Computing photosynthesis for plant " + str(l_i) + " with Q=" + str(Q_ref) + " and cs=" + str(cs_input))
+      #pylog.log("Computing photosynthesis for plant " + str(l_i) + " with Q=" + str(Q_ref) + " and cs=" + str(cs_input))
       rx = field.photo[l_i].solve_photosynthesis(sim_time_=simtime, sxx_=[p_s_input],
                                 cells_=True,
                               ea_=ea, es_=es,
@@ -719,11 +749,15 @@ else :
             np.mean(field.photo[l_i].fw)
           ])
     #endfor
-    bar.update(1)
+    #bar.update(1)
   #endfor
-  bar.close()
+  #bar.close()
 #endif
 
 dataconnector.SendJSON({"type":"quit"})
 
 output.close()
+
+
+# mpi barrier
+comm.barrier()

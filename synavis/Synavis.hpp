@@ -368,10 +368,11 @@ namespace Synavis
   public:
     class LoggerInstance
     {
+    public:
       LoggerInstance(const LoggerInstance&) = delete;
       LoggerInstance& operator=(const LoggerInstance&) = delete;
       LoggerInstance(LoggerInstance&&) = delete;
-      LoggerInstance& operator=(LoggerInstance&&) = delete;
+      LoggerInstance& operator=(LoggerInstance&&) = default;
     private:
       friend class Logger;
       LoggerInstance(std::string Instigator)
