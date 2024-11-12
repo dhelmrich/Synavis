@@ -1013,6 +1013,22 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
         }
       }
     }
+    else if (type == "call")
+    {
+      auto Object = this->GetObjectFromJSON(Jason);
+      auto MethodName = Jason->GetStringField(TEXT("method"));
+      auto Method = Object->GetClass()->FindFunctionByName(*MethodName);
+
+
+      if (Method)
+      {
+        Object->ProcessEvent(Method, nullptr);
+      }
+      else
+      {
+        SendError("Method not found");
+      }
+    }
     else if (type == TEXT("apply"))
     {
       // this is mostly due to a previous texture buffer transmission
@@ -1674,6 +1690,7 @@ FString ASynavisDrone::GetJSONFromObjectProperty(UObject* Object, FString Proper
     // find out whether the property is a vector
     const auto StructProperty = CastField<FStructProperty>(Property);
     const auto FloatProperty = CastField<FFloatProperty>(Property);
+    const auto DoubleProperty = CastField<FDoubleProperty>(Property);
     const auto IntProperty = CastField<FIntProperty>(Property);
     const auto BoolProperty = CastField<FBoolProperty>(Property);
     const auto StringProperty = CastField<FStrProperty>(Property);
@@ -1695,6 +1712,14 @@ FString ASynavisDrone::GetJSONFromObjectProperty(UObject* Object, FString Proper
       if (FloatValue)
       {
         return FString::Printf(TEXT("{\"value\":%f}"), *FloatValue);
+      }
+    }
+    else if (DoubleProperty)
+    {
+      auto* DoubleValue = DoubleProperty->ContainerPtrToValuePtr<double>(Object);
+      if (DoubleValue)
+      {
+        return FString::Printf(TEXT("{\"value\":%f}"), *DoubleValue);
       }
     }
     else if (IntProperty)
