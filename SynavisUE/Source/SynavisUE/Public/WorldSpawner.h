@@ -75,10 +75,10 @@ public:
   TArray<USceneComponent*> SubComponents;
 
   UPROPERTY(EditAnywhere)
-    double RandomScaleMin = 0.9;
+  double RandomScaleMin = 0.9;
 
-UPROPERTY(EditAnywhere)
-double RandomScaleMax = 1.1;
+  UPROPERTY(EditAnywhere)
+  double RandomScaleMax = 1.1;
 
   // a function that returns a StaticClass from a name
   UFUNCTION(BlueprintCallable)
