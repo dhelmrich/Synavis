@@ -171,6 +171,10 @@ namespace Synavis
       {
         lp = Synavis::Logger::Get()->LogStarter(identity);
       }
+      void logFile(std::string filename)
+      {
+        Synavis::Logger::Get()->SetupLogfile(filename);
+      }
     private:
     Synavis::Logger::LoggerInstance lp{Synavis::Logger::Get()->LogStarter("Python")};
   };
@@ -192,6 +196,7 @@ namespace Synavis
       .def("log", &SynavisLogger::log, py::arg("Message"))
       .def("logjson", &SynavisLogger::logjson, py::arg("Message"))
       .def("setidentity", &SynavisLogger::setidentity, py::arg("Identity"))
+      .def("logFile", &SynavisLogger::logFile, py::arg("Filename"))
     ;
 
     py::enum_<ELogVerbosity>(m, "LogVerbosity")
