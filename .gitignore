@@ -56,3 +56,6 @@ SynavisUE/Saved/*
 SynavisUE/Build/*
 
 /python/coupling/output
+**/output*.txt
+*.vtp
+*.npy
