@@ -59,3 +59,4 @@ SynavisUE/Build/*
 **/output*.txt
 *.vtp
 *.npy
+*.mtl
