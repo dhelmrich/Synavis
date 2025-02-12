@@ -18,6 +18,13 @@ from enum import Enum
 # progress bar
 from tqdm import tqdm
 
+##################################################################################################
+# Initialization of the transport parts of the model
+# The transport parts are the xylem and phloem
+# The xylem is responsible for the transport of water and nutrients from the roots to the leaves
+# The phloem is responsible for the transport of sugars from the leaves to the roots
+# The xylem and phloem are connected to the mesophyll and the stem
+##################################################################################################
 
 def setKrKx_xylem(TairC, RH,r,kr_l): #inC
   #mg/cm3
@@ -129,6 +136,13 @@ def setKrKx_phloem(r): #inC
 if os.path.dirname(os.path.abspath(__file__)) != os.getcwd():
   os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
+##################################################################################################
+# Initialization of the soil and weather parts of the model
+# From the Selhausen below-ground experiment, we take the soil classification, particularly
+# matric potential. The weather data is takes from a nearby weather station.
+# This implementation is an implementation layer above the pandas dataframe, offering unit
+# conversion and interpolation.
+##################################################################################################
 
 class Soil :
   def __init__(self) :
@@ -151,7 +165,7 @@ class Weather :
     self.Long = Long
     self.Time = Time
     self.Day = self.Time.day
-    with open ("SE_EC_001.1711883710395.csv", "r") as f :
+    with open ("SE_EC_001.1730102615105.csv", "r") as f :
       # get line 93
       for i in range(92) :
         f.readline()
@@ -159,15 +173,20 @@ class Weather :
       line = f.readline()[1:]
       line = [c.strip() for c in line.split(",")]
       self.columns = line
+      # check if the data has as many columns as expected
+      dataline = f.readline()
+      dataline = [c.strip() for c in dataline.split(",")]
+      if len(dataline) > len(self.columns) :
+        self.columns = self.columns + ["feature" + str(i) for i in range(len(dataline) - len(self.columns))]
     # endwith
-    self.data = pd.read_csv("SE_EC_001.1711883710395.csv", skiprows = 93, names = self.columns)
-    for col in self.data.columns:
-      if "QualityFlag" in col:
-        self.data[col] = self.data[col].str.split("_", expand=True)[1]
-        # convert the values to numeric
-        self.data[col] = pd.to_numeric(self.data[col], errors='coerce')
-      # endif
-    # endfor
+    self.data = pd.read_csv("SE_EC_001.1730102615105.csv", skiprows = 93, names = self.columns)
+    #for col in self.data.columns:
+    #  if "QualityFlag" in col:
+    #    self.data[col] = self.data[col].str.split("_", expand=True)[1]
+    #    # convert the values to numeric
+    #    self.data[col] = pd.to_numeric(self.data[col], errors='coerce')
+    #  # endif
+    ## endfor
     # exchange "noData" with NaN
     self.data = self.data.replace("noData", np.nan)
     # convert the time to datetime
@@ -197,7 +216,7 @@ class Weather :
   #enddef
   def relative_humidity(self, time) :
     absolute_humidity = self.__call__(time, "AirHumidity_2m_Avg10min [g*m-3]")
-    temperature = self.__call__(time, "AirTemperature_2m_Avg30min [°C]")
+    temperature = self.__call__(time, "AirTemperature_2m_Avg10min_Sensor1 [°C]")
     # calculate the relative humidity
     es = 6.1078 * 10 ** (7.5 * temperature / (237.3 + temperature))
     return absolute_humidity / es
@@ -226,15 +245,15 @@ class Weather :
     photo_radiation = self.__call__(time, "RadiationPhotosyntheticActive_2m_Avg10min [umol*m-2*s-1]")
     photo_radiation = max(1e-7, photo_radiation)
     # umol to mol
-    return photo_radiation / 1e6
+    return photo_radiation
   def precipitation(self, time) :
     return self.__call__(time, "Precipitation_Avg10min [mm]")
   #enddef
   def temperature(self, time) :
-    return self.__call__(time, "AirTemperature_2m_Avg30min [°C]")
+    return self.__call__(time, "AirTemperature_2m_Avg10min_Sensor1 [°C]")
   #enddef
   def temperature_k(self, time) :
-    return self.__call__(time, "AirTemperature_2m_Avg30min [°C]") + 273.15
+    return self.__call__(time, "AirTemperature_2m_Avg10min_Sensor1 [°C]") + 273.15
   #enddef
   def saturated_vapour_pressure(self, time) :
     temperature = self.__call__(time, "AirTemperature_2m_Avg30min [°C]")
@@ -287,7 +306,12 @@ class Weather :
 
 soil = Soil()
 
-# PREAMBLE FOR SYNAVIS+CPLANTBOX COUPLING ###############################
+##################################################################################################
+# Initialization of the Synavis framework to communicate with the Unreal Engine
+# The Synavis framework is a Python library that allows communication with the Unreal Engine
+# In this instance, this is a coupling that uses only the WebRTC data channel to send and receive
+# data from the Unreal Engine. The data is sent as JSON objects.
+##################################################################################################
 
 # if the runtime folder is not the python script folder, switch there
 if os.path.dirname(os.path.abspath(__file__)) != os.getcwd():
@@ -336,13 +360,23 @@ import plantbox as pb
 from functional.xylem_flux import XylemFluxPython
 from functional.photosynthesis_cpp import PhotosynthesisPython as Photosynthesis
 
+##################################################################################################
+# Initialization of the simulation parameters, particularly the spacetime discretization
+# simtime is the total simulation time in days
+# depth is the depth of the soil in cm
+# dt is the time step in days
+# spacing is the spacing between the plants in cm
+# SPAD is an acronym for Soil Plant Analysis Development, a measure of chlorophyll content
+##################################################################################################
 
 # model parameters
-simtime = (1 / 24) * 2 # days
-depth = 100 # cm
+simtime = 0.58333333333 # days
+depth = 200 # cm
 # dt = 0.1 hours to days
-dt = 0.2 / 24.0
+dt = 0.5 / 24.0
+#dt = 2.0 / 24.0
 spacing = 25
+SPAD= 56.5
 
 
 class Signal :
@@ -386,12 +420,12 @@ def message_callback(msg) :
   try :
     msg = json.loads(msg)
     if "type" in msg :
-      pylog.log("Message received with parameters " + ", ".join([key + ": " + str(msg[key])[0:10] for key in msg]))
+      #pylog.log("Message received with parameters " + ", ".join([key + ": " + str(msg[key])[0:10] for key in msg]))
       # ignore certain types
       if msg["type"] == "parameter" :
         return
       handler = next((h for h in signal_relay if h == msg), None)
-      logfun("Handler is ", str(handler), " and not any of ", ",".join([str(h) for h in signal_relay]))
+      #logfun("Handler is ", str(handler), " and not any of ", ",".join([str(h) for h in signal_relay]))
       if not handler is None :
         handler(msg)
         # remove the handler
@@ -409,17 +443,16 @@ def message_callback(msg) :
 # END OF PREAMBLE ########################################################
 
 
-
-hours_dt = 0.5
-
-start_time = datetime.datetime(2016, 4, 20, 12, 13, 48, 0)
+start_time = datetime.datetime(2016, 4, 20, 5, 00, 00, 1)
 weather = Weather(55.7, 13.2, start_time)
 end_time = start_time + datetime.timedelta(days = simtime)
 timerange_numeric = np.arange(0, simtime, dt)
-delta_time = datetime.timedelta(hours = hours_dt)
+delta_time = datetime.timedelta(days = dt)
 timerange = [start_time]
 while timerange[-1] < end_time:
   timerange.append(timerange[-1] + delta_time)
+
+logfun("Will run thorugh " + str(len(timerange)) + " time points")
 
 parameter_file = os.path.join(cplantbox_dir, "modelparameter", "structural", "plant", "Triticum_aestivum_adapted_2021.xml")
 
@@ -429,22 +462,21 @@ dataconnector = syn.DataConnector()
 dataconnector.Initialize()
 dataconnector.SetMessageCallback(message_callback)
 dataconnector.SetConfig({
-    "SignallingIP": "172.20.16.1", #ss.get_interface_ip("ib0"),
+    "SignallingIP": "172.21.96.1", #ss.get_interface_ip("ib0"),
     "SignallingPort": 8080
   })
 dataconnector.SetTakeFirstStep(True)
 dataconnector.StartSignalling()
 dataconnector.SetRetryOnErrorResponse(True)
-if not any(".npy" in f for f in os.listdir(".")) :
-  dataconnector.LockUntilConnected(500)
+dataconnector.LockUntilConnected(500)
 #time.sleep(1000)
 dataconnector.SendJSON({"type":"delete"})
 
 
-dataconnector.SendJSON({"type":"command", "name":"cam", "camera": "scene"})
-dataconnector.SendJSON({"type":"console", "command":"t.maxFPS 18"})
+#dataconnector.SendJSON({"type":"command", "name":"cam", "camera": "scene"})
+dataconnector.SendJSON({"type":"console", "command":"t.maxFPS 40"})
 
-dataconnector.SendJSON({"type":"spawnmeter", "number": 20, "calibrate": False})
+dataconnector.SendJSON({"type":"spawnmeter", "number": 40, "calibrate": False})
 m_ = {"type":"placeplant", 
                         "number": 1,
                         "rule": "square",
@@ -453,6 +485,8 @@ m_ = {"type":"placeplant",
                         "spacing": 10,
                       }
 dataconnector.SendJSON(m_)
+
+
 
 # SETUP CPLANTBOX ########################################################
 
@@ -475,7 +509,7 @@ time_from_sowing = start_time - growing_time
 plant_relative_scaling = 10.0
 
 plant = pb.MappedPlant()
-plant.setSeed(1)
+#plant.setSeed(1)
 #seednum = 1
 plant.readParameters(parameter_file)
 #sp = plant.getOrganRandomParameter(1)[0]
@@ -490,7 +524,6 @@ r.setKx([[4.32e-1]])
 r.g0 = 8e-6
 r.VcmaxrefChl1 =1.28
 r.VcmaxrefChl2 = 8.33
-SPAD= 41.0
 chl_ = (0.114 *(SPAD**2)+ 7.39 *SPAD+ 10.6)/10
 r.Chl = np.array( [chl_]) 
 r.Csoil = 1e-4
@@ -563,27 +596,36 @@ def ReceiveMeasurement(msg) :
 
 logfun("Starting simulation")
 
+datafile = open("chamber"+str(time.time())+".csv", "w")
+datafile.write("time,rh,tair,par,qlight,qlightstd,flux,fw,gco2\n")
+
+CalibrateUnreal = False
+
 # start the measurement
 for t in timerange:
-  plant.simulate(hours_dt, False)
+  plant.simulate(dt, False)
   vis = pb.PlantVisualiser(plant)
-  vis.SetLeafResolution(20)
+  vis.SetVerbose(False)
+  vis.SetLeafResolution(30)
   vis.SetGeometryResolution(6)
   vis.SetComputeMidlineInLeaf(False)
-  vis.SetLeafMinimumWidth(1.0)
-  vis.SetRightPenalty(0.5)
-  vis.SetVerbose(False)
+  #vis.SetLeafMinimumWidth(0.025)
+  #vis.SetUseStemRadiusAsMin(True)
+  vis.SetRightPenalty(0.9)
+  vis.SetShapeFunction(lambda t : 1.0*((1 - t**0.6)**0.3))
+  vis.SetLeafWidthScaleFactor(0.66)
   time_string_ue = t.strftime("%Y.%m.%d-%H:%M:%S")
   file_time_string = t.strftime("%Y%m%d%H%M%S")
+  logfun("Time: " + time_string_ue)
   # check if we already have a numpy array stored in the file
-  if os.path.exists("light_" + file_time_string + ".npy") :
+  if os.path.exists("light_" + file_time_string + ".npy") and False :
     if not os.path.exists("light_" + file_time_string + ".txt") :
-      logfun("Writing measurement to file")
+      #logfun("Writing measurement to file")
       np.savetxt("light_" + file_time_string + ".txt", measurement)
     #endif
     measurement = np.load("light_" + file_time_string + ".npy")
     #measurement /= 1e6
-    logfun("Loaded measurement from file (avg=",str(np.mean(measurement)), " and std=", str(np.std(measurement)))
+    #logfun("Loaded measurement from file (avg=",str(np.mean(measurement)), " and std=", str(np.std(measurement)))
   else :
     # get organs
     organs = plant.getOrgans()
@@ -591,6 +633,7 @@ for t in timerange:
     time.sleep(0.1)
     leaf_points = 0
     leaf_amount = 0
+    dataconnector.SendJSON({"type":"resetlights"})
     # send all stem or leaf organs
     for organ in organs :
       if organ.organType() != 2 :
@@ -616,18 +659,18 @@ for t in timerange:
         slot += 1
       #endif
     #endfor
-    logfun("Sent " + str(leaf_amount) + " leaf organs with " + str(leaf_points) + " points")
+    #logfun("Sent " + str(leaf_amount) + " leaf organs with " + str(leaf_points) + " points")
     # surrounding variables
-    intensity = 120000.0      # from callibration (UE! CHECK WITH EXPERIMENT!)
-    radiation_par = 1549.310181  # from experiment!  micromole m-2 s-1
+    intensity = weather.radiation_lux(t)      # from callibration (UE! CHECK WITH EXPERIMENT!)
+    radiation_par = weather.radiation_par(t)*1.63731 # from experiment!  micromole m-2 s-1
     leaf_nodes = r.get_nodes_index(4)[0:-1]
     #plant_node_ids = field.photo[l_i].get_nodes_index(-1)
     if len(leaf_nodes) == 0 :
-      logfun("No leaf nodes found")
+      #logfun("No leaf nodes found")
       exit(-1)
     plant_nodes = np.array(plant.getNodes())
-    dataconnector.SendJSON({"type":"resetlights"})
     dataconnector.SendJSON({"type":"t", "s":time_string_ue})
+    logfun("Intensity: " + str(intensity) + " and PAR: " + str(radiation_par))
     #pylog.logjson({"type":"t", "s":time_string_ue})
     dataconnector.SendJSON({
       "type": "parameter",
@@ -635,31 +678,45 @@ for t in timerange:
       "property": "Intensity",
       "value": intensity
     })
-    time.sleep(0.2)
-    dataconnector.SendJSON({
-      "type":"calibrate",
-      "flux": radiation_par
-    })
+    time.sleep(0.4)
+    if CalibrateUnreal :
+      dataconnector.SendJSON({
+        "type":"calibrate",
+        "flux": radiation_par
+      })
+    else :
+      dataconnector.SendJSON({
+        "type":"calibrate",
+        "flux": 1.0
+      })
+    #endif
     leaf_nodes = plant_nodes[leaf_nodes]*plant_relative_scaling
-    message = {"type":"mms", "l":0, "p": base64.b64encode(leaf_nodes.tobytes()).decode("utf-8")}
+    message = {"type":"mms", "l":0, "d":1.0,"n":0.2, "p": base64.b64encode(leaf_nodes.tobytes()).decode("utf-8")}
     signal_relay.append(Signal({"type":"mm"}, ReceiveMeasurement))
-    logfun("Registered handler for measurement")
+    #logfun("Registered handler for measurement")
     dataconnector.SendJSON(message)
-    logfun("Sent measurement request, waiting now...")
+    #logfun("Sent measurement request, waiting now...")
     while not has_measured :
       time.sleep(0.1)
     has_measured = False
+    if not CalibrateUnreal :
+      measurement = np.array(measurement) / np.max(measurement)
+      measurement = measurement * radiation_par
+    else :
+      measurement = np.array([min(m, radiation_par) for m in measurement])
+    #endif
     measurement = measurement / 1e6 # mmol/m2s -> mol/m2s
-    logfun("Received measurement of avg=",str(np.mean(measurement)), " and std=", str(np.std(measurement)))
-    logfun("Saving measurement to file")
+    #logfun("Received measurement of avg=",str(np.mean(measurement)), " and std=", str(np.std(measurement)))
+    #logfun("Saving measurement to file")
     np.save("light_" + file_time_string, measurement)
-    logfun("Received measurement, starting photosynthesis")
+    #logfun("Received measurement, starting photosynthesis")
   # simulation data
   #p_s_input = soil.soil_matric_potential(0.1) # soil matric potential, lookup soil water potential [cm ~ pascal]
   p_s_input = np.linspace(-150, -250, depth)
-  #RH_input = weather.relative_humidity(t) # relative humidity, lookup
-  RH_input = 0.85 # from average historic data for april
+  RH_input = weather.relative_humidity(t) # relative humidity, lookup
+  #RH_input = 0.85 # from average historic data for april
   Tair_input = 19.19866943 # air temperature [°C], lookup
+  Tair_input = weather.temperature(t)
   kr_l = 3.83e-5
   #r = setKrKx_xylem(Tair_input, RH_input, r, kr_l)
   #p_air_input = 101.7164764 # air pressure, lookup Pa
@@ -667,12 +724,11 @@ for t in timerange:
   es = 6.112 * np.exp((17.67 * Tair_input) / (Tair_input + 243.5))
   ea = es * RH_input
   rh = ea / es
-  logfun("Relative humidity " + str(rh))
+  logfun("Relative humidity " + str(rh) + " and PAR: " + str(radiation_par))
   #Patm = 101.3 * ((293.0 - 0.0065 * depth) / 293.0) ** 5.26 # lookup air pressure at time
-  #r.vQlight = measurement
-  r.Qlight = 1549.310181 / 1e6
-  
-  rx = r.solve_photosynthesis(sim_time_ = hours_dt, sxx_= p_s_input, cells_= True, ea_ = ea, 
+  r.vQlight = measurement
+  r.Qlight = np.mean(measurement)
+  rx = r.solve_photosynthesis(sim_time_ = dt * 24.0, sxx_= p_s_input, cells_= True, ea_ = ea, 
   es_ = es, verbose_ = False, doLog_ = False, TairC_ = Tair_input, outputDir_="./")
   fluxes = np.array(r.An)[np.where(np.array(r.ci)> 0)] * 1e6 # cm3/day
   organTypes = np.array(r.rs.organTypes)
@@ -680,6 +736,20 @@ for t in timerange:
   logfun("Sum of fluxes " + str(flux_sum_li))
   logfun("r.fw", np.mean(r.fw))
   logfun("r.gco2", np.mean(r.gco2))
+  datafile.write((",".join([
+    time_string_ue,
+    str(RH_input),
+    str(Tair_input),
+    str(radiation_par),
+    str(np.mean(measurement)),
+    str(np.std(measurement)),
+    str(flux_sum_li),
+    str(np.mean(r.fw)),
+    str(np.mean(r.gco2))
+  ])) + "\n")
+  datafile.flush()
 #endfor
 
 dataconnector.SendJSON({"type":"quit"})
+
+logfun("Finished simulation")
