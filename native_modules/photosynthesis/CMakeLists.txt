@@ -1,4 +1,3 @@
-
 # Projectname: ${projectname}
 # PROJECTNAME: ${PROJECTNAME_UPPER}
 # path: ${librarypath}
@@ -25,6 +24,8 @@ find_package(MPI REQUIRED)
 if (UNIX)
   if(pkgconfig_FOUND)
     pkg_check_modules(TINYXML2 tinyxml2)
+  else()
+    find_package(tinyxml2 CONFIG REQUIRED)
   endif()
 else ()
   find_package(tinyxml2 CONFIG REQUIRED)
@@ -37,7 +38,7 @@ target_include_directories(${Folder}
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/include
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/deps/json/single_include/nlohmann/
   #${CMAKE_BINARY_DIR}/_deps/nlohmann_json-src/single_include/nlohmann/
-  ${CPLANTBOX_INCLUDE_DIRS}
+  ${CPlantBox_INCLUDE_DIRS}
   ${MPI_CXX_INCLUDE_PATH}
   ${tinyxml2_INCLUDE_DIRS}
 )
@@ -45,7 +46,9 @@ if(UNIX)
 
   target_link_directories(${Folder} 
     PRIVATE ${CMAKE_BINARY_DIR}/_deps/libdatachannel-build
-    PRIVATE ${CPlantBox_DIR}/../
+    PRIVATE ${CPlantBox_LIBRARY_DIR}
+    PRIVATE ${CPlantBox_LIBRARY_DIR}/src/external/suitsparse/lib
+    PRIVATE ${CPlantBox_LIBRARY_DIR}/src/external/sundials/lib
     PRIVATE ${tinyxml2_LIBRARIES}
   )
 else()
@@ -79,5 +82,10 @@ target_link_libraries(${Folder}
     CPlantBox
     ${tinyxml2_LIBRARIES}
     ${MPI_CXX_LIBRARIES}
+    amd
+    colamd
+    btf
+    suitesparseconfig
+    klu
 )
 

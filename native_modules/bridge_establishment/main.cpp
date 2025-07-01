@@ -19,7 +19,7 @@ using json = nlohmann::json;
  * Seeker Ports: In: 25553, Out 25552, Data: 25554
  * User Ports: Relay: 25555, Signalling: 8080
  */
-const json GeneralConfig = {
+static json GeneralConfig = {
   {"SignallingIP", "localhost"},
   {"SignallingPort", 8080},
   {"SeekerPort", 25552},

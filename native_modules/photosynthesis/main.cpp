@@ -19,9 +19,9 @@
 #undef max
 #endif
 
-#include "visualisation/PlantVisualiser.h"
-#include "structural/Plant.h"
-#include "structural/MappedOrganism.h"
+#include "PlantVisualiser.h"
+#include "Plant.h"
+#include "MappedOrganism.h"
 
 class TaggedPlantVisualiser : public CPlantBox::PlantVisualiser
 {
@@ -52,7 +52,6 @@ struct is_iterator
 };
 
 static const Synavis::Logger::LoggerInstance lmain = Synavis::Logger::Get()->LogStarter("main");
-
 
 
 namespace V
