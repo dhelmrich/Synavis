@@ -563,10 +563,12 @@ namespace Synavis
     std::size_t AddRTC(StreamVariant inRTC);
     std::size_t AddRTC(StreamVariant&& inRTC);
     void Run();
+    void Stop();
   private:
     std::future<void> Thread;
     std::map<std::size_t, StreamVariant> WebRTCTracks;
     std::shared_ptr<BridgeSocket> SocketConnection;
+    bool Running = true;
   };
 
   class SYNAVIS_EXPORT WorkerThread
@@ -592,7 +594,6 @@ namespace Synavis
     using json = nlohmann::json;
     Bridge();
     virtual ~Bridge();
-    virtual std::string Prefix();
     void SetTimeoutPolicy(EMessageTimeoutPolicy inPolicy, std::chrono::system_clock::duration inTimeout);
     EMessageTimeoutPolicy GetTimeoutPolicy();
     void UseConfig(std::string filename);

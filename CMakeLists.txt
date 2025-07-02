@@ -20,6 +20,7 @@ project (${projectname} VERSION 0.0.1)
 
 set(ROOTDIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 set(CMAKE_CXX_STANDARD 23)
+set(BUILD_SHARED_LIBS ON)
 
 # add an option to build with decoding support
 option(BUILD_WITH_DECODING "Build with decoding support" OFF)

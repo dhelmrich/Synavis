@@ -15,7 +15,7 @@ void Sender()
   using namespace std::chrono_literals;
   auto BridgeSocket = std::make_shared<Synavis::BridgeSocket>();
   BridgeSocket->Address = "127.0.0.1";
-  BridgeSocket->Port = 81;
+  BridgeSocket->Port = 5555;
   BridgeSocket->Outgoing = true;
   if(!BridgeSocket->Connect())
   {
@@ -41,7 +41,7 @@ void Receiver()
   using namespace std::chrono_literals;
   auto BridgeSocket = std::make_shared<Synavis::BridgeSocket>();
   BridgeSocket->Address = "127.0.0.1";
-  BridgeSocket->Port = 81;
+  BridgeSocket->Port = 5555;
   BridgeSocket->Outgoing = false;
   if(!BridgeSocket->Connect())
   {

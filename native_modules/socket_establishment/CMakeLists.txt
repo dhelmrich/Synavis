@@ -25,5 +25,5 @@ target_include_directories(${Folder}
 
 )
 
-target_link_libraries(${Folder} PRIVATE Synavis datachannel-static nlohmann_json::nlohmann_json datachannel-static)
+target_link_libraries(${Folder} PRIVATE Synavis datachannel-static nlohmann_json::nlohmann_json)
 

@@ -13,6 +13,9 @@
 
 #include "Connector.hpp"
 
+// Add logger instance for Seeker
+static auto lseeker = Synavis::Logger::Get()->LogStarter("Seeker");
+
 Synavis::Seeker::Seeker() : Bridge()
 {
 }
@@ -38,20 +41,19 @@ bool Synavis::Seeker::EstablishedConnection(bool Shallow)
   {
     int PingPongSuccessful = -1;
     std::chrono::system_clock::time_point precheck = std::chrono::system_clock::now();
-    std::cout << this->Prefix() << "Saving time point for ping" << std::endl;
+    lseeker(Synavis::ELogVerbosity::Info) << "Saving time point for ping" << std::endl;
     CreateTask([this, &PingPongSuccessful]
       {
-        std::cout << this->Prefix() << "Sending ping" << std::endl;
+        lseeker(Synavis::ELogVerbosity::Info) << "Sending ping" << std::endl;
         auto sent = BridgeConnection.Out->Send(json({ {"ping",int()} }).dump());
         if (!sent)
         {
-          std::cout << this->Prefix() << "I was too weak to send :( " << std::endl;
+          lseeker(Synavis::ELogVerbosity::Warning) << "I was too weak to send :( " << std::endl;
         }
         int reception{ 0 };
         std::chrono::system_clock::time_point resend_check = std::chrono::system_clock::now();
         while ((reception = BridgeConnection.In->Peek()) == 0)
         {
-          //std::this_thread::yield();
           std::this_thread::sleep_for(10ms);
           if (TimeSince(resend_check) > 10000)
           {
@@ -61,7 +63,7 @@ bool Synavis::Seeker::EstablishedConnection(bool Shallow)
 
         try
         {
-          std::cout << this->Prefix() << "Received something that might be a pong" << std::endl;
+          lseeker(Synavis::ELogVerbosity::Info) << "Received something that might be a pong" << std::endl;
           if (json::parse(BridgeConnection.In->StringData)["ping"] == 1)
           {
             PingPongSuccessful = 1;
@@ -89,7 +91,7 @@ bool Synavis::Seeker::EstablishedConnection(bool Shallow)
 
 void Synavis::Seeker::FindBridge()
 {
-  std::cout << this->Prefix() << "Find Bridge" << std::endl;
+  lseeker(Synavis::ELogVerbosity::Info) << "Find Bridge" << std::endl;
   // THis is a wait function.
   const std::lock_guard<std::mutex> lock(QueueAccess);
 #ifdef _WIN32
@@ -134,7 +136,7 @@ void Synavis::Seeker::FindBridge()
         // we are checking this for consistency reasons
         if (localutctime > remoteutctime)
         {
-          std::cout << this->Prefix() << "Found the connection successfully." << std::endl;
+          lseeker(Synavis::ELogVerbosity::Info) << "Found the connection successfully." << std::endl;
         }
       }
 #elif defined __linux__
@@ -147,7 +149,7 @@ void Synavis::Seeker::FindBridge()
         // we are checking this for consistency reasons
         if (timepoint > remotetime)
         {
-          std::cout << this->Prefix() << "Found the connection successfully." << std::endl;
+          lseeker(Synavis::ELogVerbosity::Info) << "Found the connection successfully." << std::endl;
         }
       }
 #endif
@@ -205,12 +207,12 @@ void Synavis::Seeker::OnSignallingMessage(std::string Message)
   int ID;
   if (!FindID(content, ID))
   {
-    std::cout << this->Prefix() << "From onMessage SignallingServer Thread: Could not identify player id from input, discarding this message." << std::endl;
+    lseeker(Synavis::ELogVerbosity::Warning) << "From onMessage SignallingServer Thread: Could not identify player id from input, discarding this message." << std::endl;
 
   }
   if (content["type"] == "offer")
   {
-    std::cout << this->Prefix() << "I received an offer and this is the most crucial step in bridge setup!" << std::endl;
+    lseeker(Synavis::ELogVerbosity::Info) << "I received an offer and this is the most crucial step in bridge setup!" << std::endl;
 
     // we MUST fail if this is not resolved as the sdp description
     // has to be SYNCHRONOUSLY valid on both ends of the bridge!
@@ -235,7 +237,7 @@ void Synavis::Seeker::OnSignallingMessage(std::string Message)
     }
     catch (...)
     {
-      std::cout << this->Prefix() << "From onMessage SS thread: Could not find Connector for ice candidate." << std::endl;
+      lseeker(Synavis::ELogVerbosity::Warning) << "From onMessage SS thread: Could not find Connector for ice candidate." << std::endl;
     }
     Endpoint->OnRemoteInformation(content);
   }
@@ -287,10 +289,5 @@ void Synavis::Seeker::RemoteMessage(json Message)
 void Synavis::Seeker::InitConnection()
 {
   Bridge::InitConnection();
-}
-
-std::string Synavis::Seeker::Prefix()
-{
-  return "[SeekerThread]: ";
 }
 

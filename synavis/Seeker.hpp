@@ -47,7 +47,6 @@ namespace Synavis
     uint32_t SignalNewEndpoint() override;
     void RemoteMessage(json Message) override;
     void InitConnection() override;
-    virtual std::string Prefix() override;
   }; 
   
 }

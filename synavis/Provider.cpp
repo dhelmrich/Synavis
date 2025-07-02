@@ -1,6 +1,7 @@
 #include "Provider.hpp"
 #include "UnrealConnector.hpp"
 
+
 #include <chrono>
 #ifdef __linux__
 #include <date/date.h>
@@ -16,9 +17,11 @@ std::string FormatTime(std::chrono::utc_time<std::chrono::system_clock::duration
 }
 #endif
 
+static auto lprovider = Synavis::Logger::Get()->LogStarter("Provider");
+
 void Synavis::Provider::FindBridge()
 {
-  std::cout << this->Prefix() << "Find Bridge" << std::endl;
+  lprovider(Synavis::ELogVerbosity::Info) << "Find Bridge" << std::endl;
   const std::lock_guard<std::mutex> lock(QueueAccess);
   // THis is the unreal bridge side, it would be expedient if we didn't have
   // to know the port here and could set it up automatically
@@ -40,7 +43,7 @@ void Synavis::Provider::FindBridge()
       result = ParseTimeFromString(timecode, remoteutctime);
       if(result)
       {
-        std::cout << Prefix() << "I received remote port info: " << Offer["Port"] << "." << std::endl;
+        lprovider(Synavis::ELogVerbosity::Info) << "I received remote port info: " << Offer["Port"] << "." << std::endl;
         Config["RemotePort"] = Offer["Port"];
         Config["RemoteAddr"] = Offer["Address"];
         std::chrono::utc_time<std::chrono::system_clock::duration> localutctime;
@@ -53,7 +56,7 @@ void Synavis::Provider::FindBridge()
       result = ParseTimeFromString(timecode, remotetime);
       if(result)
       {
-        std::cout << Prefix() << "I received remote port info: " << Offer["Port"] << "." << std::endl;
+        lprovider(Synavis::ELogVerbosity::Info) << "I received remote port info: " << Offer["Port"] << "." << std::endl;
         Config["RemotePort"] = Offer["Port"];
         Config["RemoteAddr"] = Offer["Address"];
         std::chrono::system_clock localsystemtime;
@@ -65,7 +68,7 @@ void Synavis::Provider::FindBridge()
     }
     catch(...)
     {
-      
+      lprovider(Synavis::ELogVerbosity::Warning) << "Exception while parsing Offer in FindBridge." << std::endl;
     }
   }
 }
@@ -138,7 +141,7 @@ bool Synavis::Provider::EstablishedConnection(bool Shallow)
   {
     int PingSuccessful = -1;
     std::chrono::system_clock::time_point precheck = std::chrono::system_clock::now();
-    std::cout << Prefix() << "Sending the request to wait for ping" << std::endl;
+    lprovider(Synavis::ELogVerbosity::Info) << "Sending the request to wait for ping" << std::endl;
     CreateTask([this,&PingSuccessful]
       {
         int reception{0};
@@ -149,11 +152,11 @@ bool Synavis::Provider::EstablishedConnection(bool Shallow)
         // }
         try
         {
-          std::cout << Prefix() << "Received something that might be a ping:" << std::endl;
-          std::cout << BridgeConnection.In->StringData << std::endl;
+          lprovider(Synavis::ELogVerbosity::Info) << "Received something that might be a ping:" << std::endl;
+          lprovider(Synavis::ELogVerbosity::Debug) << BridgeConnection.In->StringData << std::endl;
           if(json::parse(BridgeConnection.In->StringData)["ping"] == 0)
           {
-            std::cout << Prefix() << "Sending pong!" << std::endl;
+            lprovider(Synavis::ELogVerbosity::Info) << "Sending pong!" << std::endl;
             BridgeConnection.Out->Send(json({{"ping",int(1)}}).dump());
             PingSuccessful = 1;
           }
@@ -181,11 +184,6 @@ void Synavis::Provider::InitConnection()
   Bridge::InitConnection();
 }
 
-std::string Synavis::Provider::Prefix()
-{
-  return "[ProviderThread]: ";
-}
-
 void Synavis::Provider::OnSignallingMessage(std::string Message)
 {
   json Content;
@@ -195,6 +193,7 @@ void Synavis::Provider::OnSignallingMessage(std::string Message)
     int id;
     if (!FindID(Content, id))
     {
+      lprovider(Synavis::ELogVerbosity::Warning) << "Could not extract ID from SS response." << std::endl;
       throw std::runtime_error("Could not extract ID from SS response.");
     }
     else
@@ -226,7 +225,7 @@ void Synavis::Provider::OnSignallingMessage(std::string Message)
   }
   catch(...)
   {
-    
+    lprovider(Synavis::ELogVerbosity::Warning) << "Exception in OnSignallingMessage." << std::endl;
   }
 }
 

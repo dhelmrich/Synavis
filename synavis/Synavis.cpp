@@ -17,13 +17,13 @@ namespace std
 #endif
 
 #ifdef __linux__
+#include <dlfcn.h>
 #include <unistd.h>
 #endif
 
 
 
-// std::cout << "" << std::endl;
-
+static auto lbridge = Synavis::Logger::Get()->LogStarter("Bridge");
 
 
 int Synavis::BridgeSocket::Receive(bool invalidIsFailure)
@@ -34,7 +34,7 @@ int Synavis::BridgeSocket::Receive(bool invalidIsFailure)
   //auto size = recv(Sock,Reception,MAX_RTP_SIZE,0);
   if (size < 0)
   {
-    std::cout << "Encountered error!" << std::endl;
+    lbridge(Synavis::ELogVerbosity::Info) << "Encountered error!" << std::endl;
     return 0;
   }
   StringData = std::string_view(Reception, size);
@@ -45,7 +45,7 @@ int Synavis::BridgeSocket::Receive(bool invalidIsFailure)
   auto size = recvfrom(Sock, Reception, MAX_RTP_SIZE, 0, reinterpret_cast<struct sockaddr*>(&Remote), &length);
   if (size < 0)
   {
-    std::cout << "Encountered error!" << std::endl;
+    lbridge(Synavis::ELogVerbosity::Info) << "Encountered error!" << std::endl;
     return 0;
   }
   StringData = std::string_view(Reception, size);
@@ -55,7 +55,7 @@ int Synavis::BridgeSocket::Receive(bool invalidIsFailure)
 
 void Synavis::ExitWithMessage(std::string Message, int Code)
 {
-  std::cout << Message << std::endl;
+  lbridge(Synavis::ELogVerbosity::Info) << Message << std::endl;
   exit(Code);
 }
 
@@ -88,7 +88,7 @@ std::string Synavis::GetLocalIP()
     FormatMessage(
       FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
       0, error, 0, message.data(), 256, 0);
-    std::cout << message << std::endl;
+    lbridge(Synavis::ELogVerbosity::Info) << message << std::endl;
     return {};
   }
   else
@@ -282,7 +282,7 @@ bool Synavis::BridgeSocket::Connect()
   int state{ -1 };
   if (Sock < 0)
   {
-    std::cout << "[BridgeSocket]: failed at establishing the socket" << std::endl;
+    lbridge(Synavis::ELogVerbosity::Info) << "[BridgeSocket]: failed at establishing the socket" << std::endl;
     return false;
   }
   bzero((char*)&Addr, sizeof(Addr));
@@ -290,7 +290,7 @@ bool Synavis::BridgeSocket::Connect()
   //Addr.sin_addr.s_addr <-- via parsing
   if (inet_aton(Address.c_str(), &Addr.sin_addr) == 0)
   {
-    std::cout << "failed at parsing IP" << std::endl;
+    lbridge(Synavis::ELogVerbosity::Info) << "failed at parsing IP" << std::endl;
     return false;
   }
   Addr.sin_port = htons(Port);
@@ -298,7 +298,7 @@ bool Synavis::BridgeSocket::Connect()
   {
     if (connect(Sock, reinterpret_cast<sockaddr*>(&Addr), sizeof(sockaddr_in)) < 0)
     {
-      std::cout << "failed at connecting" << std::endl;
+      lbridge(Synavis::ELogVerbosity::Info) << "failed at connecting" << std::endl;
       return false;
     }
   }
@@ -310,7 +310,7 @@ bool Synavis::BridgeSocket::Connect()
 
     if (inet_aton(Address.c_str(), &Addr.sin_addr) == 0)
     {
-      std::cout << "failed at parsing IP" << std::endl;
+      lbridge(Synavis::ELogVerbosity::Info) << "failed at parsing IP" << std::endl;
       return false;
     }
 
@@ -320,7 +320,7 @@ bool Synavis::BridgeSocket::Connect()
     if ((state = bind(Sock, reinterpret_cast<struct sockaddr*>(&Remote),
       sizeof(sockaddr_in))) < 0)
     {
-      std::cout << "[Receiver Thread]: Failed at binding with state: " << strerror(errno) << std::endl;
+      lbridge(Synavis::ELogVerbosity::Info) << "[Receiver Thread]: Failed at binding with state: " << strerror(errno) << std::endl;
       return false;
     }
   }
@@ -519,7 +519,7 @@ bool Synavis::CommandLineParser::HasArgument(std::string Name)
 }
 
 Synavis::NoBufferThread::NoBufferThread(std::shared_ptr<BridgeSocket> inDataSource)
-  : SocketConnection(inDataSource)
+  : SocketConnection(inDataSource), Running(true)
 {
   Thread = std::async(&Synavis::NoBufferThread::Run, this);
 }
@@ -536,12 +536,17 @@ std::size_t Synavis::NoBufferThread::AddRTC(StreamVariant&& inRTC)
   return std::size_t();
 }
 
+void Synavis::NoBufferThread::Stop()
+{
+  Running = false;
+}
+
 void Synavis::NoBufferThread::Run()
 {
   // Consume buffer until close (this should never be empty but we never know)
 
   int Length;
-  while ((Length = SocketConnection->Receive()) > 0)
+  while (Running && (Length = SocketConnection->Receive()) > 0)
   {
     if (Length < sizeof(rtc::RtpHeader))
       continue;
@@ -575,6 +580,8 @@ void Synavis::NoBufferThread::Run()
   }
 }
 
+
+
 Synavis::WorkerThread::WorkerThread()
 {
   Thread = std::async(std::launch::async, &WorkerThread::Run, this);
@@ -592,7 +599,7 @@ void Synavis::WorkerThread::Run()
   while (Running)
   {
     TaskCondition.wait(lock, [this] {
-      //std::cout << "Task condition " << ((Tasks.size() > 0) || !Running) << std::endl;
+      //lbridge(Synavis::ELogVerbosity::Info) << "Task condition " << ((Tasks.size() > 0) || !Running) << std::endl;
       return (Tasks.size() > 0) || !Running;
       });
     if (!Running) return;
@@ -627,11 +634,11 @@ void Synavis::WorkerThread::AddTask(std::function<void()>&& Task)
 
 Synavis::Bridge::Bridge()
 {
-  std::cout << Prefix() << "An instance of the Synavis was started, we are starting the threads..." << std::endl;
+  lbridge(Synavis::ELogVerbosity::Info) << "An instance of the Synavis was started, we are starting the threads..." << std::endl;
   BridgeThread = std::async(std::launch::async, &Bridge::BridgeRun, this);
-  std::cout << Prefix() << "Bridge Thread started" << std::endl;
+  lbridge(Synavis::ELogVerbosity::Info) << "Bridge Thread started" << std::endl;
   ListenerThread = std::async(std::launch::async, &Bridge::Listen, this);
-  std::cout << Prefix() << "Listener Thread Started" << std::endl;
+  lbridge(Synavis::ELogVerbosity::Info) << "Listener Thread Started" << std::endl;
 
   BridgeConnection.In = std::make_shared<BridgeSocket>();
   BridgeConnection.Out = std::make_shared<BridgeSocket>();
@@ -646,11 +653,6 @@ Synavis::Bridge::~Bridge()
   {
     SignallingConnection->close();
   }
-}
-
-std::string Synavis::Bridge::Prefix()
-{
-  return "[Synavis]: ";
 }
 
 void Synavis::Bridge::SetTimeoutPolicy(EMessageTimeoutPolicy inPolicy,
@@ -741,35 +743,33 @@ void Synavis::Bridge::BridgeSubmit(Adapter* Instigator, StreamVariant origin, st
 
 void Synavis::Bridge::InitConnection()
 {
-  std::cout << Prefix() << "Init connection" << std::endl;
+  lbridge(Synavis::ELogVerbosity::Info) << "Init connection" << std::endl;
   BridgeConnection.In->Outgoing = false;
 
   BridgeConnection.In->Address = Config["RemoteAddress"].get<std::string>();
   BridgeConnection.In->Port = Config["RemotePort"].get<int>();
 
-  std::cout << Prefix() << "Init Bridge In" << std::endl;
+  lbridge(Synavis::ELogVerbosity::Info) << "Init Bridge In" << std::endl;
   if (!BridgeConnection.In->Connect())
   {
-    std::cout << Prefix() << "Unexpected error when connecting to an incoming socket:"
-      << std::endl << BridgeConnection.In->What() << std::endl;
+    lbridge(Synavis::ELogVerbosity::Error) << "Unexpected error when connecting to an incoming socket: " << BridgeConnection.In->What() << std::endl;
   }
   BridgeConnection.Out->Outgoing = true;
   BridgeConnection.Out->Address = Config["LocalAddress"].get<std::string>();
   BridgeConnection.Out->Port = Config["LocalPort"].get<int>();
-  std::cout << Prefix() << "Init Bridge Out" << std::endl;
+  lbridge(Synavis::ELogVerbosity::Info) << "Init Bridge Out" << std::endl;
   if (!BridgeConnection.Out->Connect())
   {
-    std::cout << Prefix() << "Unexpected error when connecting to an incoming socket:"
-      << std::endl << BridgeConnection.In->What() << std::endl;
+    lbridge(Synavis::ELogVerbosity::Error) << "Unexpected error when connecting to an outgoing socket: " << BridgeConnection.Out->What() << std::endl;
   }
   /*
   BridgeConnection.DataOut->Outgoing = true;
   BridgeConnection.DataOut->Address = Config["LocalAddress"].get<std::string>();
   BridgeConnection.DataOut->Port = Config["LocalPort"].get<int>();
-  std::cout << Prefix() << "Init Bridge Data Out" << std::endl;
+  lbridge(Synavis::ELogVerbosity::Info) << "Init Bridge Data Out" << std::endl;
   if(!BridgeConnection.DataOut->Connect())
   {
-    std::cout << Prefix() << "Unexpected error when connecting to an incoming socket:"
+    lbridge(Synavis::ELogVerbosity::Info) << Prefix() << "Unexpected error when connecting to an incoming socket:"
      << std::endl << BridgeConnection.In->What() << std::endl;
   }
   */
@@ -788,16 +788,20 @@ void Synavis::Bridge::BridgeRun()
   {
     // while((CommInstructQueue.size() == 0) && Run)
     // {
-    //   std::cout << Prefix() << "BridgeThread entered while Run loop" << std::endl;
+    //   lbridge(Synavis::ELogVerbosity::Info) << Prefix() << "BridgeThread entered while Run loop" << std::endl;
     //   lock.unlock(); // end critical section
     //   std::this_thread::sleep_for(10ms);
     //   lock.lock(); // enter critical section
     // }
     TaskAvaliable.wait(lock, [this] {
-      std::cout << Prefix() << "BridgeThread entered while Run loop" << std::endl;
+      lbridge(Synavis::ELogVerbosity::Info) << "BridgeThread entered while Run loop" << std::endl;
       return (CommInstructQueue.size() > 0) || !Run;
       });
-    if (!Run) return;
+    if (!Run)
+    {
+      lbridge(Synavis::ELogVerbosity::Verbose) << "BridgeThread exiting due to Run being false" << std::endl;
+      return;
+    }
     if (CommInstructQueue.size() > 0)
     {
       auto Task = std::move(CommInstructQueue.front());
@@ -809,7 +813,7 @@ void Synavis::Bridge::BridgeRun()
       lock.lock();
     }
   }
-  std::cout << Prefix() << "BridgeThread ended!" << std::endl;
+  lbridge(Synavis::ELogVerbosity::Info) << "BridgeThread ended!" << std::endl;
 }
 
 void Synavis::Bridge::Listen()
@@ -872,7 +876,7 @@ void Synavis::Bridge::StartSignalling(std::string IP, int Port, bool keepAlive, 
   auto Notifier = RunGuard.get_future();
   SignallingConnection->onOpen([this, &RunGuard]()
     {
-      std::cout << "Opened Signalling" << std::endl;
+      lbridge(Synavis::ELogVerbosity::Info) << "Opened Signalling" << std::endl;
       RunGuard.set_value();
     });
   SignallingConnection->onClosed([this, &RunGuard]() {});
@@ -897,12 +901,12 @@ void Synavis::Bridge::StartSignalling(std::string IP, int Port, bool keepAlive, 
   else
   {
     std::string signalling_url = "ws://" + IP + ":" + std::to_string(Port) + "//";
-    std::cout << Prefix() << "Opening Signalling Connection on " << signalling_url << std::endl;
+    lbridge(Synavis::ELogVerbosity::Info) << "Opening Signalling Connection on " << signalling_url << std::endl;
     SignallingConnection->open(signalling_url);
   }
-  std::cout << Prefix() << "Waiting for Signalling Websocket to Connect." << std::endl;
+  lbridge(Synavis::ELogVerbosity::Info) << "Waiting for Signalling Websocket to Connect." << std::endl;
   Notifier.wait();
-  std::cout << Prefix() << "Connected!" << std::endl;
+  lbridge(Synavis::ELogVerbosity::Info) << "Connected!" << std::endl;
 }
 
 void Synavis::Bridge::ConfigureTrackOutput(std::shared_ptr<rtc::Track> OutputStream, rtc::Description::Media* Media)
@@ -928,10 +932,31 @@ void Synavis::Bridge::SubmitToSignalling(json Message, Adapter* Endpoint)
 
 void Synavis::Bridge::Stop()
 {
-  std::cout << Prefix() << "Stopping Bridge" << std::endl;
+  lbridge(Synavis::ELogVerbosity::Info) << "Stopping Bridge" << std::endl;
   Run = false;
-  std::cout << Prefix() << "Stopping Bridge: Signalling" << std::endl;
-  SignallingConnection->close();
+  TaskAvaliable.notify_all();
+  CommandAvailable.notify_all();
+  lbridge(Synavis::ELogVerbosity::Info) << "Stopping Bridge: Signalling" << std::endl;
+  if (SignallingConnection && SignallingConnection->isOpen())
+    SignallingConnection->close();
+
+  // Stop and join DataInThread if it exists
+  if (DataInThread) {
+    lbridge(Synavis::ELogVerbosity::Info) << "Stopping DataInThread" << std::endl;
+    // If NoBufferThread has a Stop method, call it
+    DataInThread->Stop();
+  }
+  // Join BridgeThread and ListenerThread
+  if (BridgeThread.valid()) {
+    lbridge(Synavis::ELogVerbosity::Info) << "Waiting for BridgeThread to finish" << std::endl;
+    BridgeThread.wait();
+  }
+  if (ListenerThread.valid()) {
+    lbridge(Synavis::ELogVerbosity::Info) << "Waiting for ListenerThread to finish" << std::endl;
+    ListenerThread.wait();
+  }
+
+  lbridge(Synavis::ELogVerbosity::Info) << "Bridge stopped successfully." << std::endl;
 }
 
 Synavis::EMessageTimeoutPolicy Synavis::Bridge::GetTimeoutPolicy()
