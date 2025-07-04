@@ -7,6 +7,16 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
+diverging = LinearSegmentedColormap.from_list('diverging', (
+                 (0.000, (0.0, 0.0, 1.000)),
+                 (0.250, (0.5, 0.7, 0.9)),
+                 (0.500, (0.8, 0.8, 0.8)),
+                 (0.750, (0.7,0.5,0.4)),
+                 (1.000, (1.0, 0.0, 0.0)))
+                  )
+diverging.set_under((0.0, 0.0, 1.0))
+diverging.set_over((1.0, 0.0, 0.0))
 from scipy.integrate import odeint
 from scipy import constants
 import pandas as pd
@@ -23,7 +33,7 @@ if os.path.dirname(os.path.abspath(__file__)) != os.getcwd():
   os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # add Synavis (some parent directory to this) to path
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "build"))
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "unix"))
 import PySynavis as syn
 syn.SetGlobalLogVerbosity(syn.LogVerbosity.LogError)
 pylog = syn.Logger()
@@ -75,7 +85,7 @@ else:
 #endif
 
 import plantbox as pb
-from visualisation.vis_tools import PolydataFromPlantGeometry
+from visualisation.vis_tools import PolydataFromPlantGeometry, WavefrontFromPlantGeometry
 from functional.xylem_flux import XylemFluxPython
 from functional.photosynthesis_cpp import PhotosynthesisPython as Photosynthesis
 
@@ -84,8 +94,8 @@ from mpi4py import MPI
 comm = MPI.COMM_WORLD
 MPIRank = comm.Get_rank()
 MPISize = comm.Get_size()
-#MPIRank = 0
-#MPISize = 1
+MPIRank = 0
+MPISize = 8
 
 # model parameters
 simtime = 1 # days
@@ -95,10 +105,10 @@ plant_relative_scaling = 10.0
 dt = 1.0 / 24.0
 spacing = 0.5 * plant_relative_scaling # cm
 
-headstart = 8 # days
+headstart = 16 # days
 verbose = False
 
-field_size = 8
+field_size = 8*MPISize
 cmd_man = syn.CommandLineParser(sys.argv)
 if cmd_man.HasArgument("fs"):
   field_size = cmd_man.GetArgument("fs")
@@ -296,7 +306,7 @@ class Field :
     self.measurements = [[] for i in range(self.LocalSize)]
     self.plant_initalized = False
     # global light range for color mapping
-    self.light_range = [0, 1]
+    self.light_range = [0.0, 1.0]
   #enddef
   def get_position_from_local(self, local_id) :
     return self.seed_positions[local_id]
@@ -312,7 +322,7 @@ class Field :
   #enddef
   def global_id_value(self, global_id) :
     # combine two 32 bit integers to one 64 bit integer
-    value = global_id[0] << 32 | global_id[1]
+    value = global_id[0] << 20 | global_id[1] << 10 | self.MPIRank
     return value
   #enddef
   def init_plants(self, parameter_file) :
@@ -324,6 +334,8 @@ class Field :
       p.readParameters(parameter_file)
       sp = p.getOrganRandomParameter(1)[0]
       sp.seedPos = pb.Vector3d(self.get_position_from_local(i)[0], self.get_position_from_local(i)[1], sp.seedPos.z)
+      # set stochastic seed based on position
+      p.setSeed(int(self.global_id_value(self.get_global_from_local(i))))
       sdf = pb.SDF_PlantBox(np.inf, np.inf, 40)
       p.setGeometry(sdf)
       picker = lambda x, y, z: max(int(np.floor(-z)), -1)
@@ -496,6 +508,31 @@ class Field :
       #endif
     #endfor
   #enddef
+  def segment_light_to_organ(self, local_id) :
+    result = {}
+    plant = self.get_plant(local_id)
+    organs = plant.getOrgans()
+    leafs = [o for o in organs if o.organType() == pb.leaf.value]
+    organs = [o for o in organs if o.organType() != pb.leaf.value]
+    i = 0
+    for leaf in leafs :
+      id = leaf.getId()
+      num = leaf.getNumberOfNodes()
+      light = np.array(self.measurements[local_id][i:i+num]).mean()
+      val = (light - self.light_range[0]) / (self.light_range[1] - self.light_range[0])
+      colour = np.array(diverging(val)[0:3])
+      logfun("Leaf ", id, " has average light ", light, " -> ", val, " -> ", colour)
+      result[id] = colour
+      i += num
+    #endfor
+    for organ in organs :
+      if organ.organType() == pb.stem.value :
+        id = organ.getId()
+        result[id] = np.array([0.0, 0.0, 0.0])
+      #endif
+    #endfor
+    return result
+  #enddef
   def exportPlant(self, local_id, with_light = True, added_string = "") :
     #endif
     # steps:
@@ -541,6 +578,8 @@ class Field :
       vtkleaf.GetPointData().AddArray(vtklight)
     #endif
     vis.ResetGeometry()
+    WavefrontFromPlantGeometry(vis, "plant_" + str(local_id) + "_" + added_string + ".obj")
+    vis.ResetGeometry()
     vis.ComputeGeometryForOrganType(pb.stem.value)
     vtkstem = PolydataFromPlantGeometry(vis)
     writer = vtk.vtkXMLPolyDataWriter()
@@ -550,6 +589,32 @@ class Field :
     writer.SetFileName("leaf_" + str(local_id) + "_" + added_string + ".vtp")
     writer.SetInputData(vtkleaf)
     writer.Write()
+    vis.ResetGeometry()
+    vis.ComputeGeometryForOrganType(pb.root.value)
+    #vis.ComputeGeometry()
+    vtkroot = PolydataFromPlantGeometry(vis)
+    writer.SetFileName("root_" + str(local_id) + "_" + added_string + ".vtp")
+    writer.SetInputData(vtkroot)
+    writer.Write()
+  #enddef
+  def exportPlantVideo(self, local_id, added_string = "") :
+    plant = self.get_plant(local_id)
+    vis = pb.PlantVisualiser(plant)
+    vis.SetLeafResolution(30)
+    vis.SetGeometryResolution(6)
+    vis.SetComputeMidlineInLeaf(False)
+    vis.SetLeafMinimumWidth(0.025)
+    vis.SetRightPenalty(0.9)
+    vis.SetVerbose(False)
+    #vis.SetShapeFunction(lambda t : 1.0*((1 - t**2)**0.5))
+    vis.SetShapeFunction(lambda t : 1.0*((1 - t**0.6)**0.3))
+    vis.SetLeafWidthScaleFactor(0.5)
+    colourset = self.segment_light_to_organ(local_id)
+    WavefrontFromPlantGeometry(vis, plant, "plant_" + str(local_id) + "_" + added_string + ".obj",
+      resolution = "organ",
+      colour = colourset,
+      fixedset = colourset.keys(),
+      add_material_text = "_"+str(local_id)+"_"+added_string)
   #enddef
   def getLight(self, local_id) :
     return self.measurements[local_id]
@@ -724,11 +789,11 @@ output.flush()
 
 time.sleep(1)
 
-dataconnector.SendJSON({"type":"spawnmeter", "number": 20, "calibrate": False, "debug":True})
+dataconnector.SendJSON({"type":"spawnmeter", "number": 20, "calibrate": False, "debug":False})
 #pylog.logjson({"type":"console", "command":"t.maxFPS 20"})
 
 m_ = {"type":"placeplant", 
-                        "number": field.LocalSize,
+                        "number": field_size,
                         "rule": "square",
                         "mpi_world_size": field.MPISize,
                         "mpi_rank": field.MPIRank,
@@ -751,7 +816,7 @@ resultsfw = []
 resultspl = []
 
 Testing = False
-ForExport = False
+ForExport = True
 MakePhotosynthesis = True
 CalibrateUnreal = False
 
@@ -802,12 +867,19 @@ else :
     "method": "ApplySettings",
   })
   for i,t in enumerate(timerange_numeric):
+    # if for Export, re-initialize the plants with offset seeds
+    if ForExport :
+      field.MPIRank = field.MPIRank + 1
+      field.init_plants(parameter_file)
+      headstart = headstart + t
+      field.simulate(headstart, verbose = False)
+    #endif
     time_string_ue = timerange[i].strftime("%Y.%m.%d-%H:%M:%S")
-    time_string_file = timerange[i].strftime("%Y%m%d%H%M%S")
+    time_string_file = timerange[i].strftime("%Y%m%d%H%M%S")+str(i)
     intensity = weather.radiation_lux(timerange[i])
     radiation_par = weather.radiation_par(timerange[i])
     dataconnector.SendJSON({"type":"resetlights"})
-    field.light_range = [0,1]
+    field.light_range = [0.25,0.75]
     field.simulate(dt, verbose = False)
     dataconnector.SendJSON({"type":"t", "s":time_string_ue})
     #pylog.logjson({"type":"t", "s":time_string_ue})
@@ -861,7 +933,8 @@ else :
     flux_sum = 0.0
     if ForExport :
       for l_i in range(field.LocalSize) :
-        field.exportPlant(l_i, with_light = True, added_string=time_string_file)
+        #field.exportPlant(l_i, with_light = True, added_string=time_string_file+"b")
+        field.exportPlantVideo(l_i, added_string=time_string_file+"_"+str(i))
       #endfor
     elif MakePhotosynthesis :
       for l_i in range(field.LocalSize) :
@@ -872,10 +945,11 @@ else :
           if not CalibrateUnreal :
             # normalize to 1 without moving it to zero
             Q_input = Q_input / np.max(Q_input)
+            logfun("Moving range [",np.min(Q_input),",",np.max(Q_input),"] to [",np.min(Q_input)/np.max(Q_input),",1]")
             Q_input = Q_input * radiation_par
           #emdof
         else :
-          leaf_node_ids = field.photo[l_i].get_nodes_index()[0:-1]
+          leaf_node_ids = field.photo[l_i].get_nodes_index(4)[0:-1]
           Q_input = np.zeros(len(leaf_node_ids))
         #endif
         Q_input = np.array(Q_input) / 1e6 # to mol/m2s
@@ -885,7 +959,8 @@ else :
         summed_intensity += Q_ref / field.LocalSize
         RH_input = weather.relative_humidity(timerange[i])
         Tair_input = weather.temperature(timerange[i])
-        p_s_input = soil.soil_matric_potential(0.1)
+        #p_s_input = soil.soil_matric_potential(0.1)
+        p_s_input = np.linspace(-150, -250, depth)
         cs_input = weather.molar_fraction_co2(timerange[i])
         es = 0.61078 * np.exp(17.27 * Tair_input / (Tair_input + 237.3))  # FAO56
         ea = es * RH_input
@@ -896,7 +971,7 @@ else :
         else:
           field.photo[l_i].vQlight = Q_input #  irradiance per leaf segment
         #pylog.log("Computing photosynthesis for plant " + str(l_i) + " with Q=" + str(Q_ref) + " and cs=" + str(cs_input))
-        rx = field.photo[l_i].solve_photosynthesis(sim_time_=simtime, sxx_=[p_s_input],
+        rx = field.photo[l_i].solve_photosynthesis(sim_time_=simtime, sxx_=p_s_input,
                                 cells_=True,
                                 ea_=ea, es_=es,
                                 verbose_=False, doLog_=False, TairC_=Tair_input,
