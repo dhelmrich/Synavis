@@ -49,7 +49,7 @@ FetchContent_Declare(
     libdatachannel
     GIT_REPOSITORY https://github.com/paullouisageneau/libdatachannel.git
     GIT_SHALLOW True
-    GIT_TAG v0.19.5
+    GIT_TAG v0.23.1
 )
 FetchContent_GetProperties(libdatachannel)
 if(NOT libdatachannel)

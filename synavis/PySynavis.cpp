@@ -1,6 +1,6 @@
 // -*- mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
 #define PYBIND11_DETAILED_ERROR_MESSAGES
-#define _STL_CRT_SECURE_INVALID_PARAMETER(expr) _CRT_SECURE_INVALID_PARAMETER(expr)
+//#define _STL_CRT_SECURE_INVALID_PARAMETER(expr) _CRT_SECURE_INVALID_PARAMETER(expr)
 #include <functional>
 #include <numeric>
 #include <iostream>
@@ -26,7 +26,6 @@
 
 namespace py = pybind11;
 
-#include "UnrealReceiver.hpp"
 #include "Synavis.hpp"
 #include "Seeker.hpp"
 #include "Adapter.hpp"
@@ -36,20 +35,6 @@ namespace py = pybind11;
 
 namespace Synavis
 {
-
-  class PyReceiver : public UnrealReceiver
-  {
-  public:
-    void UseConfig(std::string filename) override
-    {
-      PYBIND11_OVERLOAD(void, UnrealReceiver, UseConfig, filename);
-    }
-
-    void SetDataCallback(std::function<void(std::vector<std::vector<unsigned char>>)> DataCallback) override
-    {
-      PYBIND11_OVERLOAD(void, UnrealReceiver, SetDataCallback, DataCallback);
-    }
-  };
 
   template < typename T = Adapter > class PyAdapter : public T
   {
@@ -223,20 +208,6 @@ namespace Synavis
       .export_values()
     ;
 
-    
-    py::class_<UnrealReceiver, PyReceiver, std::shared_ptr<UnrealReceiver>>(m, "UnrealReceiver")
-      .def(py::init<>())
-      .def("RegisterWithSignalling", &UnrealReceiver::RegisterWithSignalling)
-      .def("UseConfig", static_cast<void(UnrealReceiver::*)(std::string)>(&PyReceiver::UseConfig), py::arg("filename"))
-
-    .def("SetDataCallback", static_cast<void (UnrealReceiver::*)(
-        std::function<void(std::vector<std::vector<unsigned char>>)>)>
-        (&PyReceiver::SetDataCallback), py::arg("DataCallback"))
-
-      .def("RunForever", &UnrealReceiver::RunForever)
-      .def("EmptyCache", &UnrealReceiver::EmptyCache)
-      .def("SessionDescriptionProtocol", &UnrealReceiver::SessionDescriptionProtocol)
-    ;
     
     py::class_<rtc::PeerConnection> (m, "PeerConnection")
     ;
