@@ -4,13 +4,11 @@
 #include <rtc/rtc.hpp>
 #include <json.hpp>
 #include "Synavis.hpp"
-#include "UnrealReceiver.hpp"
 #include "Synavis/export.hpp"
 
 namespace Synavis
 {
 
-  class UnrealReceiver;
   class UnrealConnector;
 
   // this is a bridge class that is used on the UE side
