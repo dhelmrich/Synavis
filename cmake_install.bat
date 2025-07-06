@@ -109,7 +109,9 @@ set "SYNAVIS_APPBUILD=-DBUILD_WITH_APPS=Off"
 
 REM Get Python include dir and library dir
 for /f "delims=" %%i in ('python -c "from distutils.sysconfig import get_python_inc; print(get_python_inc())"') do set "PYTHON_INCLUDE_DIRS=%%i"
-for /f "delims=" %%i in ('python -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR'))"') do set "PYTHON_LIBRARY=%%i"
+for /f "delims=" %%i in ('python -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR'))"') do set "PYTHON_LIBDIR=%%i"
+for /f "delims=" %%i in ('python -c "import sys; print('python{}.lib'.format(sys.version_info.major*10+sys.version_info.minor))"') do set "PYTHON_LIBNAME=%%i"
+set "PYTHON_LIBRARY=%PYTHON_LIBDIR%\%PYTHON_LIBNAME%"
 if "%PYTHON_LIBRARY%"=="" (
     echo Error: Could not determine Python LIBDIR. Please ensure Python is installed with a shared library or set PYTHON_LIBRARY manually.
     exit /b 1
@@ -144,6 +146,10 @@ echo Running: %CMAKE_CONFIGURE_CMD%
 
 REM Build
 set "CMAKE_BUILD_CMD=cmake --build %DIR_SLASHED%/%BUILDDIR_SLASHED% --config %BUILDTYPE% -j %NPROC%"
+if "%VERBOSITY%"=="1" (
+  set "CMAKE_BUILD_CMD=%CMAKE_BUILD_CMD% --verbose"
+)
 echo Running: %CMAKE_BUILD_CMD%
 %CMAKE_BUILD_CMD%
+
 
