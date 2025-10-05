@@ -45,5 +45,14 @@ I would like to acknowledge funding provided by the German government to the Gau
 
 ## Cite as
 
+### Inaugural Paper
+
 Dirk Norbert Helmrich, Felix Maximilian Bauer, Mona Giraud, Andrea Schnepf, Jens Henrik Göbbert, Hanno Scharr, Ebba Þora Hvannberg, Morris Riedel, A Scalable Pipeline to Create Synthetic Datasets from Functional-Structural Plant Models for Deep Learning, in silico Plants, 2023;, diad022, https://doi.org/10.1093/insilicoplants/diad022
 
+### Cluster implementation
+
+Baker et al. "Adapting Agricultural Virtual Environments in Game Engines to Improve HPC Accessibility" 6th Nordic e-Infrastructure Collaboration Conference, NeIC 2024, Tallinn, Estonia, May 27–29, 2024, Communications in Computer and Information Science, vol 2398. Springer: 10.1007/978-3-031-86240-3_11
+
+### Photosynthesis Use-Case
+
+Dirk N Baker, Mona Giraud, Jens Henrik Göbbert, Hanno Scharr, Morris Riedel, Ebba Thóra Hvannberg, Andrea Schnepf, Virtual World Coupling with Photosynthesis Evaluation for Synthetic Data Production, in silico Plants, 2025;, diaf018, https://doi.org/10.1093/insilicoplants/diaf018
