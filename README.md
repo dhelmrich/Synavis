@@ -14,7 +14,7 @@ See our video:
 
 ## Migration Ongoing!!!
 
-I am currently migrating the Synavis Plugin to accomodate PixelStreaming2!
+I am currently migrating the Synavis Plugin to accomodate dynamic workflows. Read more about it in the [news post](https://www.dirkbaker.eu/#20251005-migration) and in the [living doc](https://github.com/dhelmrich/Synavis/wiki/Migration).
 
 ## Feature Set
 
