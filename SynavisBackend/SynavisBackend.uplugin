@@ -1,0 +1,20 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "1.0",
+  "FriendlyName": "SynavisBackend",
+  "Description": "Modern WebRTC streaming via libdatachannel",
+  "Category": "Networking",
+  "CreatedBy": "Dirk Baker",
+  "Modules": [
+    {
+      "Name": "SynavisBackend",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    }
+  ],
+  "SupportedTargetPlatforms": [
+    "Win64",
+    "Linux"
+  ]
+}

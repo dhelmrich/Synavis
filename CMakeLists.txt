@@ -44,17 +44,64 @@ if(UNIX)
   endif()
 endif()
 
+set(BUILD_SHARED_LIBS ON CACHE BOOL "Build shared libraries globally" FORCE)
+set(LIBDATACHANNEL_BUILD_SHARED_LIBS ON CACHE BOOL "Build shared libraries for libdatachannel" FORCE)
+set(LIBDATACHANNEL_BUILD_STATIC_LIBS OFF CACHE BOOL "Disable static build for libdatachannel" FORCE)
+
+
 # Fetch libdatachannel
 FetchContent_Declare(
-    libdatachannel
-    GIT_REPOSITORY https://github.com/paullouisageneau/libdatachannel.git
-    GIT_SHALLOW True
-    GIT_TAG v0.23.1
+  libdatachannel
+  GIT_REPOSITORY https://github.com/paullouisageneau/libdatachannel.git
+  GIT_SHALLOW True
+  GIT_TAG v0.23.2
 )
 FetchContent_GetProperties(libdatachannel)
-if(NOT libdatachannel)
+if(NOT libdatachannel_POPULATED)
   FetchContent_Populate(libdatachannel)
-  add_subdirectory(${libdatachannel_SOURCE_DIR} ${libdatachannel_BINARY_DIR} EXCLUDE_FROM_ALL)
+  # Ensure both static and shared libraries are built
+  set(BUILD_SHARED_LIBS ON CACHE BOOL "Build shared libraries globally" FORCE)
+  set(BUILD_STATIC_LIBS ON CACHE BOOL "Build static libraries globally" FORCE)
+  set(LIBDATACHANNEL_BUILD_SHARED_LIBS ON CACHE BOOL "Build shared libraries for libdatachannel" FORCE)
+  set(LIBDATACHANNEL_BUILD_STATIC_LIBS ON CACHE BOOL "Build static libraries for libdatachannel" FORCE)
+  set(ENABLE_LOCALHOST_ADDRESS ON CACHE BOOL "Enable localhost address for libdatachannel" FORCE)
+  set(ENABLE_LOCAL_ADDRESS_TRANSLATION ON CACHE BOOL "Enable local address translation for libdatachannel" FORCE)
+  add_subdirectory(${libdatachannel_SOURCE_DIR} ${libdatachannel_BINARY_DIR})
+  # Ensure versioned shared library is produced
+  set_target_properties(datachannel PROPERTIES
+      VERSION 0.23.2
+      SOVERSION 0
+  )
+  # Define the SynavisBackend target path
+  set(SYNAVIS_BACKEND_PATH ${CMAKE_SOURCE_DIR}/SynavisBackend)
+
+  add_custom_target(copy_datachannel ALL
+    COMMENT "🔧 Starting copy_datachannel: copying libdatachannel and headers to SynavisBackend"
+
+    # Create destination directories
+    COMMAND ${CMAKE_COMMAND} -E echo "📁 Creating lib and include directories in SynavisBackend..."
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_PATH}/lib
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_PATH}/include
+
+    # Copy shared library
+    COMMAND ${CMAKE_COMMAND} -E echo "📦 Copying libdatachannel binary: $<TARGET_FILE:datachannel> → SynavisBackend/lib/"
+    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:datachannel> ${SYNAVIS_BACKEND_PATH}/lib/
+
+    # Verify copy succeeded
+    COMMAND ${CMAKE_COMMAND} -E echo "🔍 Verifying that libdatachannel was copied..."
+    COMMAND ${CMAKE_COMMAND}
+      -DDEST_DIR=${SYNAVIS_BACKEND_PATH}/lib
+      -DTARGET_NAME=$<TARGET_FILE_NAME:datachannel>
+      -P ${CMAKE_SOURCE_DIR}/verify_datachannel.cmake
+
+    # Copy headers
+    COMMAND ${CMAKE_COMMAND} -E echo "📚 Copying libdatachannel headers from ${libdatachannel_SOURCE_DIR}/include → SynavisBackend/include/"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${libdatachannel_SOURCE_DIR}/include ${SYNAVIS_BACKEND_PATH}/include
+
+    COMMENT "✅ Finished copy_datachannel"
+  )
+
+
 endif()
 
 if(UNIX)
@@ -113,6 +160,7 @@ if(UNIX)
       FetchContent_Populate(date)
       add_subdirectory(${date_SOURCE_DIR} ${date_BINARY_DIR})
   endif()
+
 endif()
 
 if(BUILD_WITH_DECODING)

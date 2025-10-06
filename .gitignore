@@ -60,3 +60,5 @@ SynavisUE/Build/*
 *.vtp
 *.npy
 *.mtl
+/SynavisBackend/include
+/SynavisBackend/lib
