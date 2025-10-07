@@ -157,8 +157,8 @@ namespace Synavis
   int64_t TimeSince(std::chrono::system_clock::time_point t);
   double HighRes();
 
-  std::string GetLocalIP();
-  std::string FormattedTime(std::chrono::system_clock::time_point Time, bool ms = false);
+  std::string SYNAVIS_EXPORT GetLocalIP();
+  std::string SYNAVIS_EXPORT FormattedTime(std::chrono::system_clock::time_point Time, bool ms = false);
 
   inline void SYNAVIS_EXPORT VerboseMode()
   {
