@@ -38,12 +38,19 @@ target_include_directories(${Folder}
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/include
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/deps/json/single_include/nlohmann/
   #${CMAKE_BINARY_DIR}/_deps/nlohmann_json-src/single_include/nlohmann/
-  ${CPlantBox_INCLUDE_DIRS}
   ${MPI_CXX_INCLUDE_PATH}
   ${tinyxml2_INCLUDE_DIRS}
 )
-if(UNIX)
 
+if(WIN32)
+  target_include_directories(${Folder}
+    PUBLIC ${CPlantBox_INCLUDE_DIRS}
+    PUBLIC ${CPlantBox_DIR}/../../src/structural/
+    PUBLIC ${CPlantBox_DIR}/../../src/functional/
+    PUBLIC ${CPlantBox_DIR}/../../src/visualization/
+  )
+endif()
+if(UNIX)
   target_link_directories(${Folder} 
     PRIVATE ${CMAKE_BINARY_DIR}/_deps/libdatachannel-build
     PRIVATE ${CPlantBox_LIBRARY_DIR}
@@ -74,6 +81,16 @@ message(STATUS "TinyXML2_INCLUDE_DIRS: ${tinyxml2_INCLUDE_DIRS}")
 
 endif()
 
+# Find SuiteSparse (installed via vcpkg)
+find_library(AMD_LIB
+    NAMES amd
+    PATHS
+        "${VCPKG_INSTALLED_DIR}/installed/${VCPKG_TARGET_TRIPLET}/lib"
+        "${VCPKG_INSTALLED_DIR}/installed/${VCPKG_TARGET_TRIPLET}/debug/lib"
+    REQUIRED
+)
+
+
 target_link_libraries(${Folder} 
   PUBLIC Synavis 
     datachannel-static
@@ -82,10 +99,6 @@ target_link_libraries(${Folder}
     CPlantBox
     ${tinyxml2_LIBRARIES}
     ${MPI_CXX_LIBRARIES}
-    amd
-    colamd
-    btf
-    suitesparseconfig
-    klu
+    ${AMD_LIB}
 )
 
