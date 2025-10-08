@@ -26,8 +26,8 @@ find_package( PythonInterp 3.9 REQUIRED )
 
 find_package( PythonLibs 3.9 REQUIRED )
 
-pybind11_add_module(${PYPROJECT} SHARED 
-            ${RECEIVERSOURCES})
+# Only add the binding file(s) to the Python module
+pybind11_add_module(${PYPROJECT} SHARED PySynavis.cpp)
 
 add_library(${projectname} 
   ${PLAINSOURCES}
@@ -39,7 +39,6 @@ target_include_directories(${projectname}
   PUBLIC ${CMAKE_CURRENT_BINARY_DIR}
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/include
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/deps/json/single_include/nlohmann/
-  #${CMAKE_BINARY_DIR}/_deps/nlohmann_json-src/single_include/nlohmann/
 )
 target_include_directories(${PYPROJECT}
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
@@ -47,7 +46,6 @@ target_include_directories(${PYPROJECT}
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/include
   ${CMAKE_BINARY_DIR}/_deps/pybind11_json-src/include/pybind11_json/
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/deps/json/single_include/nlohmann/
-  #${CMAKE_BINARY_DIR}/_deps/nlohmann_json-src/single_include/nlohmann/
   ${CMAKE_BINARY_DIR}/_deps/pybind11-src/include
   ${PYTHON_INCLUDE_DIRS}
 )
@@ -61,11 +59,12 @@ set_target_properties(${PYPROJECT} PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${PROJECT
 install(TARGETS ${projectname} DESTINATION ${CMAKE_BINARY_DIR})
 install(TARGETS ${PYPROJECT} DESTINATION ${CMAKE_BINARY_DIR})
 
+
 if(UNIX)
-    target_include_directories(${projectname} PUBLIC AFTER
-  ${CMAKE_BINARY_DIR}/_deps/date-src/include)
-    target_include_directories(${PYPROJECT} PUBLIC AFTER
-  ${CMAKE_BINARY_DIR}/_deps/date-src/include)
+  target_include_directories(${projectname} PUBLIC AFTER
+    ${CMAKE_BINARY_DIR}/_deps/date-src/include)
+  target_include_directories(${PYPROJECT} PUBLIC AFTER
+    ${CMAKE_BINARY_DIR}/_deps/date-src/include)
   target_link_libraries(${projectname} PRIVATE date)
   target_link_libraries(${PYPROJECT} PRIVATE date)
   # also copy signalling_server.py from soure directory/python/modules to build directory
