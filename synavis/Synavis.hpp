@@ -1,5 +1,3 @@
-
-
 #pragma once
 #ifndef WEBRTCBRIDGE_HPP
 #define WEBRTCBRIDGE_HPP
@@ -149,13 +147,13 @@ namespace Synavis
     return encoded_length;
   }
 
-  void ExitWithMessage(std::string Message, int Code = 0);
+  void SYNAVIS_EXPORT ExitWithMessage(std::string Message, int Code = 0);
 
   // forward definitions
   class Adapter;
 
-  int64_t TimeSince(std::chrono::system_clock::time_point t);
-  double HighRes();
+  int64_t SYNAVIS_EXPORT TimeSince(std::chrono::system_clock::time_point t);
+  double SYNAVIS_EXPORT HighRes();
 
   std::string SYNAVIS_EXPORT GetLocalIP();
   std::string SYNAVIS_EXPORT FormattedTime(std::chrono::system_clock::time_point Time, bool ms = false);
