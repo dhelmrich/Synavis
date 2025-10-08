@@ -1,14 +1,6 @@
 # libdatachanneldeps.cmake
 # Usage: cmake -Dtarget_path=... -Ddest_dir=... -P libdatachanneldeps.cmake
 
-if(NOT DEFINED target_path)
-  message(FATAL_ERROR "Missing required parameter: target_path")
-endif()
-
-if(NOT DEFINED dest_dir)
-  message(FATAL_ERROR "Missing required parameter: dest_dir")
-endif()
-
 message(STATUS "🔍 Scanning runtime dependencies for: ${target_path}")
 message(STATUS "📁 Destination directory: ${dest_dir}")
 
