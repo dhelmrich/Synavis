@@ -8,19 +8,24 @@ public class SynavisBackend : ModuleRules
         Type = ModuleType.External;
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
-        string SynavisBackendPath = Path.Combine(ModuleDirectory, "../../lib");
+        string SynavisBackendRoot = Path.GetFullPath(Path.Combine(ModuleDirectory, "../../"));
+        string LibPath = Path.Combine(SynavisBackendRoot, "lib");
+        string IncludePath = Path.Combine(SynavisBackendRoot, "include");
 
-        PublicIncludePaths.Add(Path.Combine(SynavisBackendPath, "include"));
+        // Add all relevant include paths
+        PublicIncludePaths.Add(IncludePath);
+        PublicIncludePaths.Add(Path.Combine(IncludePath, "json"));
+        PublicIncludePaths.Add(Path.Combine(IncludePath, "rtc"));
 
         if (Target.Platform == UnrealTargetPlatform.Win64)
         {
-            PublicAdditionalLibraries.Add(Path.Combine(SynavisBackendPath, "win64", "datachannel.lib"));
-            RuntimeDependencies.Add("$(PluginDir)/lib/win64/datachannel.dll");
+            PublicAdditionalLibraries.Add(Path.Combine(LibPath, "datachannel.lib"));
+            RuntimeDependencies.Add("$(PluginDir)/lib/datachannel.dll");
         }
         else if (Target.Platform == UnrealTargetPlatform.Linux)
         {
-            PublicAdditionalLibraries.Add(Path.Combine(SynavisBackendPath, "linux", "SynavisBackend.a"));
-            RuntimeDependencies.Add("$(PluginDir)/lib/linux/SynavisBackend.so");
+            PublicAdditionalLibraries.Add(Path.Combine(LibPath, "datachannel.a"));
+            RuntimeDependencies.Add("$(PluginDir)/lib/datachannel.so");
         }
     }
 }

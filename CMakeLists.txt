@@ -72,37 +72,71 @@ if(NOT libdatachannel_POPULATED)
       VERSION 0.23.2
       SOVERSION 0
   )
-  # Define the SynavisBackend target path
-  set(SYNAVIS_BACKEND_PATH ${CMAKE_SOURCE_DIR}/SynavisBackend)
 
-  add_custom_target(copy_datachannel ALL
-    COMMENT "🔧 Starting copy_datachannel: copying libdatachannel and headers to SynavisBackend"
+  # On Windows, copy the built libdatachannel DLL and its dependencies to SynavisBackend
+  if(WIN32)
+    # Define the SynavisBackend target path
+    set(SYNAVIS_BACKEND_PATH ${CMAKE_SOURCE_DIR}/SynavisBackend)
 
-    # Create destination directories
-    COMMAND ${CMAKE_COMMAND} -E echo "📁 Creating lib and include directories in SynavisBackend..."
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_PATH}/lib
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_PATH}/include
 
-    # Copy shared library
-    COMMAND ${CMAKE_COMMAND} -E echo "📦 Copying libdatachannel binary: $<TARGET_FILE:datachannel> → SynavisBackend/lib/"
-    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:datachannel> ${SYNAVIS_BACKEND_PATH}/lib/
 
-    # Verify copy succeeded
-    COMMAND ${CMAKE_COMMAND} -E echo "🔍 Verifying that libdatachannel was copied..."
-    COMMAND ${CMAKE_COMMAND}
-      -DDEST_DIR=${SYNAVIS_BACKEND_PATH}/lib
-      -DTARGET_NAME=$<TARGET_FILE_NAME:datachannel>
-      -P ${CMAKE_SOURCE_DIR}/verify_datachannel.cmake
+    # Create destination directories and copy binaries, dependencies, and headers
 
-    # Copy headers
-    COMMAND ${CMAKE_COMMAND} -E echo "📚 Copying libdatachannel headers from ${libdatachannel_SOURCE_DIR}/include → SynavisBackend/include/"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${libdatachannel_SOURCE_DIR}/include ${SYNAVIS_BACKEND_PATH}/include
+    add_custom_target(copy_datachannel ALL
+      COMMENT "🔧 Starting copy_datachannel: copying libdatachannel and headers to SynavisBackend"
 
-    COMMENT "✅ Finished copy_datachannel"
-  )
+      # Create destination directories
+      COMMAND ${CMAKE_COMMAND} -E echo "📁 Creating lib and include directories in SynavisBackend..."
+      COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_PATH}/lib
+      COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_PATH}/include
+
+      # Copy shared library after build using a custom command on the datachannel target
+      COMMAND ${CMAKE_COMMAND} -E echo "📦 Copying libdatachannel binary after build to SynavisBackend/lib/"
+      COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:datachannel>" "${SYNAVIS_BACKEND_PATH}/lib/"
+
+      # Run libdatachanneldeps.cmake with resolved path
+      COMMAND ${CMAKE_COMMAND}
+        -Dtarget_path="$<TARGET_FILE:datachannel>"
+        -Ddest_dir="${SYNAVIS_BACKEND_PATH}/lib"
+        -P "${CMAKE_SOURCE_DIR}/libdatachanneldeps.cmake"
+
+      # Verify copy succeeded
+      COMMAND ${CMAKE_COMMAND} -E echo "🔍 Verifying that libdatachannel was copied..."
+      COMMAND ${CMAKE_COMMAND}
+        -DDEST_DIR=${SYNAVIS_BACKEND_PATH}/lib
+        -DTARGET_PATH=$<TARGET_FILE:datachannel>
+        -P ${CMAKE_SOURCE_DIR}/verify_datachannel.cmake
+
+      # Copy headers
+      COMMAND ${CMAKE_COMMAND} -E echo "📚 Copying libdatachannel headers from ${libdatachannel_SOURCE_DIR}/include → SynavisBackend/include/"
+      COMMAND ${CMAKE_COMMAND} -E copy_directory ${libdatachannel_SOURCE_DIR}/include ${SYNAVIS_BACKEND_PATH}/include
+
+      COMMENT "✅ Finished copy_datachannel"
+    )
+
+    # Ensure this runs after all relevant targets are built
+    add_dependencies(copy_datachannel datachannel PySynavis Synavis)
+  endif()
 
 
 endif()
+
+# Example for header-only library copying (e.g., nlohmann/json)
+FetchContent_Declare(
+  json
+  GIT_REPOSITORY https://github.com/nlohmann/json.git
+  GIT_TAG v3.11.2
+  GIT_SHALLOW True
+)
+FetchContent_GetProperties(json)
+if(NOT json_POPULATED)
+  FetchContent_Populate(json)
+endif()
+
+add_custom_command(TARGET copy_datachannel POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${json_SOURCE_DIR}/single_include ${SYNAVIS_BACKEND_PATH}/include/json
+)
 
 if(UNIX)
   # try to find pcap
