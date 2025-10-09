@@ -87,23 +87,23 @@ if(NOT libdatachannel_POPULATED)
     set(SYNAVIS_BACKEND_INCLUDE_PATH ${SYNAVIS_BACKEND_PATH}/Source/libdatachannel/include)
 
     add_custom_target(copy_datachannel ALL
-      COMMENT "🔧 Starting copy_datachannel: copying libdatachannel and headers to SynavisBackend"
+    COMMENT "🔧 Starting copy_datachannel: copying libdatachannel and headers to SynavisBackend"
 
-      # Create destination directories
-  COMMAND ${CMAKE_COMMAND} -E echo "📁 Creating lib and include directories in SynavisBackend/Source/libdatachannel..."
-  COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_LIB_PATH}
-  COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_INCLUDE_PATH}
+    # Create destination directories
+    COMMAND ${CMAKE_COMMAND} -E echo "📁 Creating lib and include directories in SynavisBackend/Source/libdatachannel..."
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_LIB_PATH}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_INCLUDE_PATH}
 
-  COMMAND ${CMAKE_COMMAND} -E echo "📦 Copying libdatachannel binaries after build to ${SYNAVIS_BACKEND_LIB_PATH}/"
-  COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:datachannel>" "${SYNAVIS_BACKEND_LIB_PATH}/"
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_LINKER_FILE:datachannel>" "${SYNAVIS_BACKEND_LIB_PATH}/"
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_PDB_FILE:datachannel>" "${SYNAVIS_BACKEND_LIB_PATH}/"
+    COMMAND ${CMAKE_COMMAND} -E echo "📦 Copying libdatachannel binaries after build to ${SYNAVIS_BACKEND_LIB_PATH}/"
+    COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:datachannel>" "${SYNAVIS_BACKEND_LIB_PATH}/"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_LINKER_FILE:datachannel>" "${SYNAVIS_BACKEND_LIB_PATH}/"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_PDB_FILE:datachannel>" "${SYNAVIS_BACKEND_LIB_PATH}/"
 
-      # Run libdatachanneldeps.cmake with resolved path
-      COMMAND ${CMAKE_COMMAND}
-        -Dtarget_path="$<TARGET_FILE:datachannel>"
-  -Ddest_dir="${SYNAVIS_BACKEND_LIB_PATH}"
-        -P "${CMAKE_SOURCE_DIR}/libdatachanneldeps.cmake"
+    # Run libdatachanneldeps.cmake with resolved path
+    COMMAND ${CMAKE_COMMAND}
+      -Dtarget_path="$<TARGET_FILE:datachannel>"
+    -Ddest_dir="${SYNAVIS_BACKEND_LIB_PATH}"
+    -P "${CMAKE_SOURCE_DIR}/libdatachanneldeps.cmake"
       
       # Verify copy succeeded
       COMMAND ${CMAKE_COMMAND} -E echo "🔍 Verifying that libdatachannel was copied..."

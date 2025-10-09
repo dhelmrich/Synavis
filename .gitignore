@@ -66,3 +66,4 @@ SynavisUE/Build/*
 /SynavisBackend/Intermediate
 /SynavisBackend/Source/libdatachannel
 /SynavisBackend/Binaries
+/SynavisBackend/Source/libvpx
