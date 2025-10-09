@@ -15,6 +15,7 @@ class SYNAVISBACKEND_API USynavisStreamer : public UActorComponent
 public:	
 	// Sets default values for this component's properties
 	USynavisStreamer();
+	virtual ~USynavisStreamer();
 
 protected:
 	// Called when the game starts
@@ -62,13 +63,13 @@ protected:
 	// Encode a frame to VP9 and send it directly via WebRTC (returns true if encoded+sent)
 	bool EncodeFrameToVP9AndSend(const TArray<FColor>& Pixels, int Width, int Height);
 
-	// helper to send bytes via DataConnector
-	void SendFrameBytes(const uint8_t* Bytes, size_t Size, const std::string& Name, const std::string& Format);
+	// helper to send bytes via DataConnector (use UE types in public API)
+	void SendFrameBytes(const TArray<uint8>& Bytes, const FString& Name, const FString& Format);
 
 	// internal state
 	bool bStreaming = false;
 
 	// Opaque pimpl for WebRTC internals (defined in cpp)
 	struct FWebRTCInternal;
-	std::unique_ptr<FWebRTCInternal> WebRTCInternal;
+	FWebRTCInternal* WebRTCInternal = nullptr;
 };

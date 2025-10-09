@@ -67,3 +67,7 @@ SynavisUE/Build/*
 /SynavisBackend/Source/libdatachannel
 /SynavisBackend/Binaries
 /SynavisBackend/Source/libvpx
+*.vcxproj
+*.filters
+*.pbxproj
+*.xcworkspacedata

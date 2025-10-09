@@ -1,0 +1,37 @@
+// ConvertRGBA -> I420 shader (HLSL)
+// This file is a stub to be used with a full-screen pass or compute shader.
+// Currently provides no GPU-side implementation; used as a placeholder for future optimization.
+
+// Input: t0 - RGBA texture (float4 or uint8)
+// Output: rtv0 - Y plane (R = Y)
+//         rtv1 - packed UV plane (RG = U,BA = V or R=U G=V depending on packing)
+
+Texture2D InputTexture : register(t0);
+SamplerState InputSampler : register(s0);
+
+struct VS_OUTPUT {
+    float4 Pos : SV_POSITION;
+    float2 UV  : TEXCOORD0;
+};
+
+VS_OUTPUT VSMain(uint id : SV_VertexID)
+{
+    VS_OUTPUT o;
+    float2 verts[4] = {float2(-1,-1), float2(1,-1), float2(-1,1), float2(1,1)};
+    float2 uvs[4] = {float2(0,1), float2(1,1), float2(0,0), float2(1,0)};
+    o.Pos = float4(verts[id], 0.0, 1.0);
+    o.UV = uvs[id];
+    return o;
+}
+
+float4 PSMain(VS_OUTPUT In) : SV_TARGET
+{
+    // naive conversion, placeholder
+    float4 c = InputTexture.Sample(InputSampler, In.UV);
+    float r = c.r * 255.0;
+    float g = c.g * 255.0;
+    float b = c.b * 255.0;
+    float Y = (0.257 * r + 0.504 * g + 0.098 * b) + 16.0;
+    // pack into 0..1 range
+    return float4(Y/255.0, 0, 0, 1);
+}

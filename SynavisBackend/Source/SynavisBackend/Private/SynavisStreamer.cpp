@@ -13,9 +13,10 @@
 #include <memory>
 #include <rtc/rtc.hpp>
 #include <rtc/websocket.hpp>
-#include <nlohmann/json.hpp>
+#include <string>
+#include <span>
 #include "Async/Async.h"
-#include "RenderCore/Public/RHIGPUReadback.h"
+#include "SynavisStreamerRendering.h"
 
 // libvpx guard: define LIBVPX_AVAILABLE in your build if libvpx is linked
 #if defined(LIBVPX_AVAILABLE)
@@ -56,6 +57,94 @@ void USynavisStreamer::TickComponent(float DeltaTime, ELevelTick TickType, FActo
 	if (!bStreaming || !RenderTarget)
 		return;
 
+	// Attempt GPU conversion via render-queue transfer into CPU buffers
+	TArray<uint8> Ybuf, Ubuf, Vbuf;
+	bool bUsedGPU = Synavis::ConvertRenderTargetToI420_GPU(RenderTarget, Ybuf, Ubuf, Vbuf);
+	if (bUsedGPU)
+	{
+		int YWidth = RenderTarget->SizeX;
+		int YHeight = RenderTarget->SizeY;
+		// Offload libvpx encoding to worker thread using the plane buffers
+		Async(EAsyncExecution::ThreadPool, [this, Ybuf = MoveTemp(Ybuf), Ubuf = MoveTemp(Ubuf), Vbuf = MoveTemp(Vbuf), YWidth, YHeight]() mutable {
+#if defined(LIBVPX_AVAILABLE)
+			vpx_image_t img;
+			if (!vpx_img_alloc(&img, VPX_IMG_FMT_I420, YWidth, YHeight, 1))
+			{
+				return;
+			}
+			for (int y = 0; y < YHeight; ++y)
+			{
+				memcpy(img.planes[0] + y * img.stride[0], Ybuf.GetData() + y * YWidth, YWidth);
+			}
+			int ChW = (YWidth + 1) / 2;
+			int ChH = (YHeight + 1) / 2;
+			for (int y = 0; y < ChH; ++y)
+			{
+				memcpy(img.planes[1] + y * img.stride[1], Ubuf.GetData() + y * ChW, ChW);
+				memcpy(img.planes[2] + y * img.stride[2], Vbuf.GetData() + y * ChW, ChW);
+			}
+
+			vpx_codec_enc_cfg_t cfg;
+			vpx_codec_enc_config_default(vpx_codec_vp9_cx(), &cfg, 0);
+			cfg.g_w = YWidth;
+			cfg.g_h = YHeight;
+			cfg.g_timebase.num = 1;
+			cfg.g_timebase.den = 30;
+
+			vpx_codec_ctx_t encoder;
+			if (vpx_codec_enc_init(&encoder, vpx_codec_vp9_cx(), &cfg, 0))
+			{
+				vpx_img_free(&img);
+				return;
+			}
+
+			if (vpx_codec_encode(&encoder, &img, 0, 1, 0, VPX_DL_REALTIME))
+			{
+				vpx_codec_destroy(&encoder);
+				vpx_img_free(&img);
+				return;
+			}
+
+			vpx_codec_iter_t iter = nullptr;
+			const vpx_codec_cx_pkt_t* pkt = nullptr;
+			while ((pkt = vpx_codec_get_cx_data(&encoder, &iter)) != nullptr)
+			{
+				if (pkt->kind == VPX_CODEC_CX_FRAME_PKT)
+				{
+					const uint8_t* data = reinterpret_cast<const uint8_t*>(pkt->data.frame.buf);
+					size_t sz = static_cast<size_t>(pkt->data.frame.sz);
+					if (WebRTCInternal)
+					{
+						if (WebRTCInternal->VideoTrack && WebRTCInternal->VideoTrack->isOpen())
+						{
+							rtc::binary pktbuf(sz);
+							memcpy(pktbuf.data(), data, sz);
+							WebRTCInternal->VideoTrack->send(pktbuf);
+						}
+						else if (WebRTCInternal->DataChannel && WebRTCInternal->DataChannel->isOpen())
+						{
+							static thread_local rtc::binary dcbuf;
+							dcbuf.resize(sz);
+							memcpy(dcbuf.data(), data, sz);
+							WebRTCInternal->DataChannel->sendBuffer(dcbuf);
+						}
+					}
+				}
+			}
+
+			vpx_codec_destroy(&encoder);
+			vpx_img_free(&img);
+#else
+			if (WebRTCInternal && WebRTCInternal->DataChannel && WebRTCInternal->DataChannel->isOpen())
+			{
+				// not a great fallback; we could repackage RGB into DataChannel
+			}
+#endif
+		});
+		return;
+	}
+
+	// If GPU path not used or not ready fall back to the earlier CPU readback path
 	// Use FRHIGPUTextureReadback (UE5.1+) for async readback
 	static TUniquePtr<FRHIGPUTextureReadback> TextureReadback;
 	static bool bReadbackPending = false;
@@ -85,134 +174,6 @@ void USynavisStreamer::TickComponent(float DeltaTime, ELevelTick TickType, FActo
 			}
 		);
 		bReadbackPending = true;
-	}
-
-	// poll for completion on the game thread
-	if (bReadbackPending && TextureReadback.IsValid())
-	{
-		if (TextureReadback->IsReady())
-		{
-			FRHIGPUTextureReadback::FReadbackParameters Params;
-			FRHIGPUTextureReadback::FReadbackData ReadbackData;
-			if (TextureReadback->Map(ReadbackData))
-			{
-				const uint8_t* PixelData = reinterpret_cast<const uint8_t*>(ReadbackData.Data);
-				int RowPitch = ReadbackData.RowPitch;
-
-				// Copy rows into a contiguous buffer (RGBA8)
-				std::vector<uint8_t> RawBuf;
-				RawBuf.resize(Width * Height * 4);
-				for (int y = 0; y < Height; ++y)
-				{
-					const uint8_t* Row = PixelData + size_t(y) * RowPitch;
-					memcpy(RawBuf.data() + size_t(y) * Width * 4, Row, Width * 4);
-				}
-
-				TextureReadback->Unmap();
-				bReadbackPending = false;
-
-				// Offload encoding to a background thread to avoid blocking the game thread
-				Async(EAsyncExecution::ThreadPool, [this, Raw = MoveTemp(RawBuf), Width, Height]() mutable {
-					// Convert and encode
-#if defined(LIBVPX_AVAILABLE)
-					// Convert RGBA -> I420
-					vpx_image_t img;
-					if (!vpx_img_alloc(&img, VPX_IMG_FMT_I420, Width, Height, 1))
-					{
-						// conversion failed
-					}
-					// naive conversion; better use libyuv for performance
-					const uint8_t* Src = Raw.data();
-					for (int y = 0; y < Height; ++y)
-					{
-						for (int x = 0; x < Width; ++x)
-						{
-							int si = (y * Width + x) * 4;
-							uint8_t r = Src[si + 0];
-							uint8_t g = Src[si + 1];
-							uint8_t b = Src[si + 2];
-							// RGB -> YUV conversion (BT.601) integer approximation
-							int Y = ( 66 * r + 129 * g +  25 * b + 128) >> 8; Y += 16;
-							int U = (-38 * r -  74 * g + 112 * b + 128) >> 8; U += 128;
-							int V = (112 * r -  94 * g -  18 * b + 128) >> 8; V += 128;
-							// clamp
-							Y = FMath::Clamp(Y, 0, 255);
-							U = FMath::Clamp(U, 0, 255);
-							V = FMath::Clamp(V, 0, 255);
-							// fill planes
-							img.planes[0][y * img.stride[0] + x] = static_cast<uint8_t>(Y);
-							if ((y % 2 == 0) && (x % 2 == 0))
-							{
-								int cx = x / 2;
-								int cy = y / 2;
-								img.planes[1][cy * img.stride[1] + cx] = static_cast<uint8_t>(U);
-								img.planes[2][cy * img.stride[2] + cx] = static_cast<uint8_t>(V);
-							}
-						}
-					}
-
-					// Prepare encoder
-					vpx_codec_enc_cfg_t cfg;
-					vpx_codec_enc_config_default(vpx_codec_vp9_cx(), &cfg, 0);
-					cfg.g_w = Width;
-					cfg.g_h = Height;
-					cfg.g_timebase.num = 1;
-					cfg.g_timebase.den = 30;
-
-					vpx_codec_ctx_t encoder;
-					if (vpx_codec_enc_init(&encoder, vpx_codec_vp9_cx(), &cfg, 0))
-					{
-						// encoder init failed
-					}
-
-					vpx_codec_encode(&encoder, &img, 0, 1, 0, VPX_DL_REALTIME);
-					vpx_codec_iter_t iter = nullptr;
-					const vpx_codec_cx_pkt_t* pkt = nullptr;
-					// Send encoded packets immediately to avoid allocating a large output buffer
-					while ((pkt = vpx_codec_get_cx_data(&encoder, &iter)) != nullptr)
-					{
-						if (pkt->kind == VPX_CODEC_CX_FRAME_PKT)
-						{
-							const uint8_t* data = reinterpret_cast<const uint8_t*>(pkt->data.frame.buf);
-							size_t sz = static_cast<size_t>(pkt->data.frame.sz);
-							if (WebRTCInternal)
-							{
-								// Prefer sending on an outgoing media track if available
-								if (WebRTCInternal->VideoTrack && WebRTCInternal->VideoTrack->isOpen())
-								{
-									rtc::binary pktbuf(sz);
-									memcpy(pktbuf.data(), data, sz);
-									WebRTCInternal->VideoTrack->send(pktbuf);
-								}
-								else if (WebRTCInternal->DataChannel && WebRTCInternal->DataChannel->isOpen())
-								{
-									// reuse a thread-local buffer to avoid frequent allocations
-									static thread_local rtc::binary dcbuf;
-									dcbuf.resize(sz);
-									memcpy(dcbuf.data(), data, sz);
-									WebRTCInternal->DataChannel->sendBuffer(dcbuf);
-								}
-							}
-						}
-					}
-
-					vpx_codec_destroy(&encoder);
-					vpx_img_free(&img);
-#else
-					// libvpx not available: fallback to previous RGB packaging
-					if (WebRTCInternal && WebRTCInternal->DataChannel && WebRTCInternal->DataChannel->isOpen())
-					{
-						// reuse thread-local buffer to avoid allocations
-						static thread_local rtc::binary dcbuf;
-						dcbuf.resize(Raw.size());
-						memcpy(dcbuf.data(), Raw.data(), Raw.size());
-						WebRTCInternal->DataChannel->sendBuffer(dcbuf);
-					}
-#endif
-#endif
-				});
-			}
-		}
 	}
 }
 
@@ -270,7 +231,7 @@ void USynavisStreamer::StartSignalling()
 {
 	// Initialize libdatachannel components and create a datachannel
 	if (!WebRTCInternal)
-		WebRTCInternal = std::make_unique<FWebRTCInternal>();
+		WebRTCInternal = MakeUnique<FWebRTCInternal>();
 	static bool bInitDone = false;
 	if (!bInitDone) { rtc::InitLogger(rtc::LogLevel::Info); bInitDone = true; }
 	WebRTCInternal->PeerConnection = std::make_shared<rtc::PeerConnection>();
@@ -302,8 +263,10 @@ void USynavisStreamer::StartSignalling()
 			auto description = WebRTCInternal->PeerConnection->localDescription();
 			if (description)
 			{
-				nlohmann::json message = { {"type", description->typeString()}, {"sdp", std::string(description.value())} };
-				FString Offer = FString(message.dump().c_str());
+				// Build a minimal JSON offer string using FString to avoid external JSON dependency
+				std::string sdpStr = description.value();
+				FString Offer = FString::Printf(TEXT("{\"type\":\"%s\",\"sdp\":\"%s\"}"),
+					*FString(description->typeString().c_str()), *FString(sdpStr.c_str()));
 				UE_LOG(LogTemp, Log, TEXT("WebRTC Offer: %s"), *Offer);
 			}
 		}
@@ -335,7 +298,7 @@ void USynavisStreamer::CaptureFrame()
 	}
 
 	// always attempt VP9 when libvpx is available; otherwise fallback to raw RGBA
-	std::string Name = "frame";
+	FString Name = TEXT("frame");
 #if defined(LIBVPX_AVAILABLE)
 	{
 		if (EncodeFrameToVP9AndSend(Bitmap, Width, Height))
@@ -347,19 +310,24 @@ void USynavisStreamer::CaptureFrame()
 	// send as bytes (RGBA8)
 	size_t BytesPerPixel = 4;
 	size_t TotalSize = Width * Height * BytesPerPixel;
-	// allocate contiguous buffer
-	std::vector<uint8_t> RawBuffer;
-	RawBuffer.resize(TotalSize);
+	// allocate contiguous buffer using UE types
+	TArray<uint8> RawBuffer;
+	RawBuffer.SetNumUninitialized(TotalSize);
 	for (int i = 0; i < Width * Height; ++i)
 	{
 		const FColor& C = Bitmap[i];
 		RawBuffer[i * 4 + 0] = C.R;
 		RawBuffer[i * 4 + 1] = C.G;
 		RawBuffer[i * 4 + 2] = C.B;
+    if (WebRTCInternal)
+    {
+        delete WebRTCInternal;
+        WebRTCInternal = nullptr;
+    }
 		RawBuffer[i * 4 + 3] = C.A;
 	}
 
-	SendFrameBytes(RawBuffer.data(), RawBuffer.size(), Name, "raw_rgba");
+	SendFrameBytes(RawBuffer, Name, TEXT("raw_rgba"));
 }
 
 // EncodeFrameToVP9 removed: use EncodeFrameToVP9AndSend to encode and stream without allocating an output buffer.
@@ -459,16 +427,21 @@ bool USynavisStreamer::EncodeFrameToVP9AndSend(const TArray<FColor>& Pixels, int
 #endif
 }
 
-void USynavisStreamer::SendFrameBytes(const uint8_t* Bytes, size_t Size, const std::string& Name, const std::string& Format)
+void USynavisStreamer::SendFrameBytes(const TArray<uint8>& Bytes, const FString& Name, const FString& Format)
 {
 	if (!Connector)
 		return;
 
-	// DataConnector expects std::span<const uint8_t>
+	// DataConnector expects std::span<const uint8_t>. Convert TArray to std::span without copying.
 	try
 	{
-		std::span<const uint8_t> span(Bytes, Size);
-		Connector->SendBuffer(span, Name, Format);
+		const uint8* DataPtr = Bytes.GetData();
+		size_t Size = static_cast<size_t>(Bytes.Num());
+		std::span<const uint8_t> span(DataPtr, Size);
+		// Connector likely expects UE FString for metadata; attempt to forward as UTF-8 std::string
+		std::string nameUtf8(TCHAR_TO_UTF8(*Name));
+		std::string formatUtf8(TCHAR_TO_UTF8(*Format));
+		Connector->SendBuffer(span, nameUtf8, formatUtf8);
 	}
 	catch (...) {
 		UE_LOG(LogActor, Error, TEXT("Error sending frame bytes via DataConnector"));

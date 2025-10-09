@@ -45,7 +45,12 @@ public class SynavisBackend : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
-				// ... add private dependencies that you statically link with here ...	
+				// Rendering and shader dependencies for GPU conversion
+				"RenderCore",
+				"RHI",
+				"Renderer",
+				
+				// ... add other private dependencies that you statically link with here ...
 			}
 			);
 		
