@@ -11,12 +11,6 @@ file(GET_RUNTIME_DEPENDENCIES
   DIRECTORIES "${CMAKE_BINARY_DIR}" "${CMAKE_INSTALL_PREFIX}"
 )
 
-message(STATUS "✅ Total resolved dependencies: ${resolved_deps}")
-
-if(unresolved_deps)
-  message(WARNING "⚠️ Unresolved dependencies: ${unresolved_deps}")
-endif()
-
 foreach(dep IN LISTS resolved_deps)
   if(dep MATCHES "^${CMAKE_BINARY_DIR}")
     message(STATUS "📦 Copying subproject dependency: ${dep}")
