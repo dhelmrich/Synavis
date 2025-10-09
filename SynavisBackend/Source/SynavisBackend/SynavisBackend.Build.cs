@@ -76,5 +76,76 @@ public class SynavisBackend : ModuleRules
 			PublicAdditionalLibraries.Add(SoPath);
 			RuntimeDependencies.Add(SoPath);
 		}
+
+		// ---- libvpx support (flat layout under Source/libvpx)
+		string LibVpxInclude = System.IO.Path.Combine(ModuleDirectory, "..", "libvpx", "include");
+		LibVpxInclude = System.IO.Path.GetFullPath(LibVpxInclude);
+		PublicSystemIncludePaths.Add(LibVpxInclude);
+		if (!System.IO.Directory.Exists(LibVpxInclude))
+		{
+			System.Console.WriteLine($"Warning: libvpx include directory not found: {LibVpxInclude}. Run the CMake copy step to populate Source/libvpx/include.");
+		}
+
+		string LibVpxPath = System.IO.Path.Combine(ModuleDirectory, "..", "libvpx", "lib");
+		LibVpxPath = System.IO.Path.GetFullPath(LibVpxPath);
+
+		if (Target.Platform == UnrealTargetPlatform.Win64)
+		{
+			// Prefer DLL + import lib if present
+			var dlls = System.IO.Directory.Exists(LibVpxPath) ? System.IO.Directory.GetFiles(LibVpxPath, "vpx*.dll") : new string[0];
+			var libs = System.IO.Directory.Exists(LibVpxPath) ? System.IO.Directory.GetFiles(LibVpxPath, "vpx*.lib") : new string[0];
+
+			if (dlls.Length > 0 && libs.Length > 0)
+			{
+				// Use first matched dll/lib pair
+				string dllPath = dlls[0];
+				string dllName = System.IO.Path.GetFileName(dllPath);
+				string importLib = libs[0];
+				PublicAdditionalLibraries.Add(importLib);
+				PublicDelayLoadDLLs.Add(dllName);
+				RuntimeDependencies.Add(dllPath);
+				PublicDefinitions.Add("LIBVPX_AVAILABLE=1");
+			}
+			else if (libs.Length > 0)
+			{
+				// Static or import libs only
+				foreach (var lib in libs)
+				{
+					PublicAdditionalLibraries.Add(lib);
+				}
+				PublicDefinitions.Add("LIBVPX_AVAILABLE=1");
+			}
+			else if (dlls.Length > 0)
+			{
+				// DLLs exist but no import lib found. Warn and still add runtime dependency so UE can stage the DLL.
+				foreach (var dll in dlls)
+				{
+					string dllName = System.IO.Path.GetFileName(dll);
+					System.Console.WriteLine($"Warning: Found {dllName} in {LibVpxPath} but no corresponding import lib (.lib) was found. Linking may fail.");
+					RuntimeDependencies.Add(dll);
+					PublicDefinitions.Add("LIBVPX_AVAILABLE=1");
+				}
+			}
+			else
+			{
+				System.Console.WriteLine($"Notice: No libvpx artifacts found in {LibVpxPath}.");
+			}
+		}
+		else if (Target.Platform == UnrealTargetPlatform.Linux)
+		{
+			string so = System.IO.Path.Combine(LibVpxPath, "libvpx.so");
+			if (System.IO.File.Exists(so))
+			{
+				PublicAdditionalLibraries.Add(so);
+				RuntimeDependencies.Add(so);
+				PublicDefinitions.Add("LIBVPX_AVAILABLE=1");
+			}
+			else
+			{
+				// Add .a static libs if present
+				var staticLibs = System.IO.Directory.Exists(LibVpxPath) ? System.IO.Directory.GetFiles(LibVpxPath, "libvpx*.a") : new string[0];
+				foreach (var a in staticLibs) PublicAdditionalLibraries.Add(a);
+			}
+		}
 	}
 }
