@@ -62,3 +62,7 @@ SynavisUE/Build/*
 *.mtl
 /SynavisBackend/include
 /SynavisBackend/lib
+/.history
+/SynavisBackend/Intermediate
+/SynavisBackend/Source/libdatachannel
+/SynavisBackend/Binaries
