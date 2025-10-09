@@ -82,34 +82,39 @@ if(NOT libdatachannel_POPULATED)
 
     # Create destination directories and copy binaries, dependencies, and headers
 
+    # Use flat layout under SynavisBackend/Source/libdatachannel/{lib,include}
+    set(SYNAVIS_BACKEND_LIB_PATH ${SYNAVIS_BACKEND_PATH}/Source/libdatachannel/lib)
+    set(SYNAVIS_BACKEND_INCLUDE_PATH ${SYNAVIS_BACKEND_PATH}/Source/libdatachannel/include)
+
     add_custom_target(copy_datachannel ALL
       COMMENT "🔧 Starting copy_datachannel: copying libdatachannel and headers to SynavisBackend"
 
       # Create destination directories
-      COMMAND ${CMAKE_COMMAND} -E echo "📁 Creating lib and include directories in SynavisBackend..."
-      COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_PATH}/lib
-      COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_PATH}/include
+  COMMAND ${CMAKE_COMMAND} -E echo "📁 Creating lib and include directories in SynavisBackend/Source/libdatachannel..."
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_LIB_PATH}
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_INCLUDE_PATH}
 
-      # Copy shared library after build using a custom command on the datachannel target
-      COMMAND ${CMAKE_COMMAND} -E echo "📦 Copying libdatachannel binary after build to SynavisBackend/lib/"
-      COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:datachannel>" "${SYNAVIS_BACKEND_PATH}/lib/"
+  COMMAND ${CMAKE_COMMAND} -E echo "📦 Copying libdatachannel binaries after build to ${SYNAVIS_BACKEND_LIB_PATH}/"
+  COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:datachannel>" "${SYNAVIS_BACKEND_LIB_PATH}/"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_LINKER_FILE:datachannel>" "${SYNAVIS_BACKEND_LIB_PATH}/"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_PDB_FILE:datachannel>" "${SYNAVIS_BACKEND_LIB_PATH}/"
 
       # Run libdatachanneldeps.cmake with resolved path
       COMMAND ${CMAKE_COMMAND}
         -Dtarget_path="$<TARGET_FILE:datachannel>"
-        -Ddest_dir="${SYNAVIS_BACKEND_PATH}/lib"
+  -Ddest_dir="${SYNAVIS_BACKEND_LIB_PATH}"
         -P "${CMAKE_SOURCE_DIR}/libdatachanneldeps.cmake"
-
+      
       # Verify copy succeeded
       COMMAND ${CMAKE_COMMAND} -E echo "🔍 Verifying that libdatachannel was copied..."
       COMMAND ${CMAKE_COMMAND}
-        -DDEST_DIR=${SYNAVIS_BACKEND_PATH}/lib
+        -DDEST_DIR=${SYNAVIS_BACKEND_LIB_PATH}
         -DTARGET_PATH=$<TARGET_FILE:datachannel>
         -P ${CMAKE_SOURCE_DIR}/verify_datachannel.cmake
 
       # Copy headers
-      COMMAND ${CMAKE_COMMAND} -E echo "📚 Copying libdatachannel headers from ${libdatachannel_SOURCE_DIR}/include → SynavisBackend/include/"
-      COMMAND ${CMAKE_COMMAND} -E copy_directory ${libdatachannel_SOURCE_DIR}/include ${SYNAVIS_BACKEND_PATH}/include
+      COMMAND ${CMAKE_COMMAND} -E echo "📚 Copying libdatachannel headers from ${libdatachannel_SOURCE_DIR}/include → ${SYNAVIS_BACKEND_INCLUDE_PATH}/"
+      COMMAND ${CMAKE_COMMAND} -E copy_directory ${libdatachannel_SOURCE_DIR}/include ${SYNAVIS_BACKEND_INCLUDE_PATH}
 
       COMMENT "✅ Finished copy_datachannel"
     )
@@ -134,8 +139,12 @@ if(NOT json_POPULATED)
 endif()
 
 add_custom_command(TARGET copy_datachannel POST_BUILD
+  # Copy json header-only library into the plugin include. Prefer the flat Source/libdatachannel/include if set.
+  COMMAND ${CMAKE_COMMAND} -E echo "📚 Copying json headers into plugin include folder"
+  COMMAND ${CMAKE_COMMAND} -E cmake_echo_color --blue "Destination: ${SYNAVIS_BACKEND_INCLUDE_PATH} (if set) else ${SYNAVIS_BACKEND_PATH}/include/json"
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_PATH}/include/json
   COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${json_SOURCE_DIR}/single_include ${SYNAVIS_BACKEND_PATH}/include/json
+    ${json_SOURCE_DIR}/single_include $<IF:$<BOOL:${SYNAVIS_BACKEND_INCLUDE_PATH}>,${SYNAVIS_BACKEND_INCLUDE_PATH}/json,${SYNAVIS_BACKEND_PATH}/include/json>
 )
 
 if(UNIX)
