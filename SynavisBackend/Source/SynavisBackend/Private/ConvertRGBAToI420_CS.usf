@@ -1,0 +1,64 @@
+// Compute shader: Convert RGBA render target to NV12 (Y plane + interleaved UV)
+// This shader expects the following bindings:
+// t0 - InputTexture (RGBA8/float4)
+// s0 - Sampler
+// u0 - RWTexture2D<uint> OutY (PF_R8)
+// u1 - RWTexture2D<uint> OutUV (PF_R8G8)
+// cb0 - CB containing int2 TextureSize
+
+cbuffer CSConstants : register(b0)
+{
+    int2 TextureSize; // x = width, y = height
+};
+
+Texture2D<float4> InputTexture : register(t0);
+SamplerState InputSampler : register(s0);
+
+RWTexture2D<uint> OutY : register(u0);
+RWTexture2D<uint> OutUV : register(u1);
+
+[numthreads(16,16,1)]
+void CSMainY(uint3 DTid : SV_DispatchThreadID)
+{
+    int x = DTid.x;
+    int y = DTid.y;
+    if (x >= TextureSize.x || y >= TextureSize.y)
+        return;
+
+    float2 uv = (float2(x, y) + 0.5) / float2(TextureSize.x, TextureSize.y);
+    float4 c = InputTexture.SampleLevel(InputSampler, uv, 0);
+    float r = saturate(c.r) * 255.0;
+    float g = saturate(c.g) * 255.0;
+    float b = saturate(c.b) * 255.0;
+    float Yf = (0.257 * r + 0.504 * g + 0.098 * b) + 16.0;
+    uint Y = (uint)round(clamp(Yf, 0.0, 255.0));
+    // store single byte; using uint texture where low byte contains Y
+    OutY[int2(x, y)] = Y & 0xFF;
+
+    // UV for half-resolution: compute for even coordinates only
+    if ((x % 2) == 0 && (y % 2) == 0)
+    {
+        int2 p00 = int2(x, y);
+        int2 p10 = int2(min(x+1, TextureSize.x-1), y);
+        int2 p01 = int2(x, min(y+1, TextureSize.y-1));
+        int2 p11 = int2(min(x+1, TextureSize.x-1), min(y+1, TextureSize.y-1));
+
+        float4 c00 = InputTexture.Load(int3(p00, 0));
+        float4 c10 = InputTexture.Load(int3(p10, 0));
+        float4 c01 = InputTexture.Load(int3(p01, 0));
+        float4 c11 = InputTexture.Load(int3(p11, 0));
+
+        float rAvg = (c00.r + c10.r + c01.r + c11.r) * 0.25 * 255.0;
+        float gAvg = (c00.g + c10.g + c01.g + c11.g) * 0.25 * 255.0;
+        float bAvg = (c00.b + c10.b + c01.b + c11.b) * 0.25 * 255.0;
+
+        float Uf = ((-38.0 * rAvg - 74.0 * gAvg + 112.0 * bAvg + 128.0) / 256.0) + 128.0;
+        float Vf = (((112.0 * rAvg - 94.0 * gAvg - 18.0 * bAvg + 128.0) / 256.0) + 128.0);
+        uint U = (uint)round(clamp(Uf, 0.0, 255.0));
+        uint V = (uint)round(clamp(Vf, 0.0, 255.0));
+
+        uint packed = (U & 0xFF) | ((V & 0xFF) << 8);
+        // write to half-res coordinate
+        OutUV[int2(x/2, y/2)] = packed;
+    }
+}

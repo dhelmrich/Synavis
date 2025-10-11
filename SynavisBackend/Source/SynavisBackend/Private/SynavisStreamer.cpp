@@ -251,7 +251,15 @@ void USynavisStreamer::CaptureFrame()
 
 	int Width = RenderTarget->SizeX;
 	int Height = RenderTarget->SizeY;
+	// First try GPU path: convert render target to I420 via compute shader (NV12 on GPU, deinterleaved to I420 on CPU)
+	TArray<uint8> Ygpu, Ugpu, Vgpu;
+	if (ConvertRenderTargetToI420_GPU(RenderTarget, Ygpu, Ugpu, Vgpu))
+	{
+		EncodeI420AndSend(Ygpu, Ugpu, Vgpu, Width, Height);
+		return;
+	}
 
+	// GPU path not available or failed: fall back to CPU readback + conversion
 	TArray<FColor> Bitmap;
 	Bitmap.AddUninitialized(Width * Height);
 
