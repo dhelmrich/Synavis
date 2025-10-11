@@ -16,9 +16,9 @@ param(
     [string]$CPlantBoxDir = "",
     [string]$VcpkgToolchain = "",
     [ValidateSet('static','dynamic')][string]$Triplet = 'dynamic',
-    [switch]$Help,
-    [switch]$ExportVPX = $false,
-    [switch]$NoBuild = $false
+    [switch]$ExportFFmpeg = $false,
+    [switch]$NoBuild = $false,
+    [switch]$Help
 )
 
 # Ensure BaseDir is always an absolute path
@@ -37,9 +37,9 @@ function Show-Help {
     Write-Host "  -Verbose          Enable verbose logging"
     Write-Host "  -CPlantBoxDir     Specify location of CPlantBox (default: not set)"
     Write-Host "  -VcpkgToolchain   Specify path to vcpkg toolchain file (default: not set)"
-    Write-Host "  -Help             Show this help message"
-    Write-Host "  -ExportVPX       Export libvpx via vcpkg (default: false)"
+    Write-Host "  -ExportFFmpeg    Export ffmpeg/libav via vcpkg (default: false)"
     Write-Host "  -NoBuild         Configure only, do not build (default: false)"
+    Write-Host "  -Help             Show this help message"
     exit 0
 }
 
@@ -158,10 +158,10 @@ if (-not $NoBuild) {
   Write-Host "Skipping build step due to -NoBuild switch."
 }
 
-# Export libvpx via vcpkg if requested
-if ($ExportVPX) {
+# Export ffmpeg/libav via vcpkg if requested
+if ($ExportFFmpeg) {
     if ($VcpkgToolchain -eq "") {
-        Write-Error "Vcpkg toolchain file must be specified with -VcpkgToolchain to export libvpx."
+        Write-Error "Vcpkg toolchain file must be specified with -VcpkgToolchain to export ffmpeg/libav."
         exit 1
     }
     $vcpkgCmd = Get-Command vcpkg -ErrorAction SilentlyContinue
@@ -169,100 +169,110 @@ if ($ExportVPX) {
         Write-Error "vcpkg command not found. Please ensure vcpkg is installed and available in PATH."
         exit 1
     }
-    # Procedure:
-    # 1. Install libvpx via vcpkg
-    # 2. Determine the installed triplet for libvpx
-    # 3. Export libvpx (.lib|.dll|.pdb) to SynavisBackend/lib
-    # 4. Export only libvpx-specific include files to SynavisBackend/include
-    Write-Host "Installing libvpx via vcpkg..."
-    & vcpkg install libvpx
 
-    # Determine vcpkg root from the vcpkg executable location
+    Write-Host "Installing ffmpeg via vcpkg..."
+    & vcpkg install ffmpeg[avcodec,avdevice,avfilter,avformat,core]
+
+    # Determine vcpkg root and triplet similarly to libvpx handling
     $VcpkgExePath = $vcpkgCmd.Source
     $VcpkgRoot = Split-Path $VcpkgExePath -Parent
     Write-Host "Detected vcpkg root: $VcpkgRoot"
 
-    # Determine which vcpkg triplet to use for libvpx based on $Triplet ('dynamic' or 'static')
-    # Map to common vcpkg triplet names used in this project
     $preferredTriplet = if ($Triplet -eq 'static') { 'x64-windows-static' } else { 'x64-windows' }
 
-    # Find the installed triplet for libvpx (e.g. x64-windows)
-    $pkgLine = & vcpkg list | Select-String -Pattern '^libvpx:' | Select-Object -First 1
+    $pkgLine = & vcpkg list | Select-String -Pattern '^ffmpeg:' | Select-Object -First 1
     if ($null -eq $pkgLine) {
-        Write-Error "libvpx not found in vcpkg list after install. Ensure vcpkg installed the package for the desired triplet ($preferredTriplet)."
+        Write-Error "ffmpeg not found in vcpkg list after install. Ensure vcpkg installed the package for the desired triplet ($preferredTriplet)."
         exit 1
     }
     $detectedTriplet = ($pkgLine -split ':')[1] -split '\s+' | Select-Object -First 1
     Write-Host "Detected triplet: $detectedTriplet (preferred: $preferredTriplet)"
 
-    # If the user specified a preference and it's available, use it. Otherwise use detected.
     if ($preferredTriplet -and (Test-Path (Join-Path $VcpkgRoot "installed\$preferredTriplet"))) {
-        $LibVpxTriplet = $preferredTriplet
+        $LibTriplet = $preferredTriplet
     } else {
-        $LibVpxTriplet = $detectedTriplet
+        $LibTriplet = $detectedTriplet
     }
-    Write-Host "Using libvpx triplet: $LibVpxTriplet"
+    Write-Host "Using ffmpeg triplet: $LibTriplet"
 
-    $LibVpxInstallDir = Join-Path $VcpkgRoot "installed\$LibVpxTriplet"
-    $LibVpxLibDir = Join-Path $LibVpxInstallDir "lib"
-    $LibVpxBinDir = Join-Path $LibVpxInstallDir "bin"
-    $LibVpxIncludeDir = Join-Path $LibVpxInstallDir "include"
-    # Mirror the CMakeLists layout: SynavisBackend/Source/libvpx/{lib,include}
+    $InstallDir = Join-Path $VcpkgRoot "installed\$LibTriplet"
+    $LibDir = Join-Path $InstallDir "lib"
+    $BinDir = Join-Path $InstallDir "bin"
+    $IncludeDir = Join-Path $InstallDir "include"
+
+    # Destination layout: SynavisBackend/Source/libav/{lib,include}
     $SynavisBackendRoot = Join-Path $BaseDir "SynavisBackend"
-    $DestLibDir = Join-Path $SynavisBackendRoot "Source\libvpx\lib"
-    $DestIncludeDir = Join-Path $SynavisBackendRoot "Source\libvpx\include"
-    if (!(Test-Path $DestLibDir)) {
-        New-Item -ItemType Directory -Path $DestLibDir -Force | Out-Null
-    }
-    if (!(Test-Path $DestIncludeDir)) {
-        New-Item -ItemType Directory -Path $DestIncludeDir -Force | Out-Null
-    }
-    Write-Host "Copying libvpx libraries to $DestLibDir"
-    # Copy any .lib files in lib folder
-    if (Test-Path $LibVpxLibDir) {
-        Get-ChildItem -Path $LibVpxLibDir -Filter "*.lib" -File -ErrorAction SilentlyContinue | ForEach-Object {
-            Write-Host "Copying $($_.Name)"
-            Copy-Item -Path $_.FullName -Destination $DestLibDir -Force -ErrorAction SilentlyContinue
+    $DestLibDir = Join-Path $SynavisBackendRoot "Source\libav\lib"
+    $DestIncludeDir = Join-Path $SynavisBackendRoot "Source\libav\include"
+    if (!(Test-Path $DestLibDir)) { New-Item -ItemType Directory -Path $DestLibDir -Force | Out-Null }
+    if (!(Test-Path $DestIncludeDir)) { New-Item -ItemType Directory -Path $DestIncludeDir -Force | Out-Null }
+
+    Write-Host "Copying ffmpeg/libav libraries to $DestLibDir"
+    # Only copy the minimal set of ffmpeg/libav libs required for VP9 encoding and runtime
+    $wantedLibPrefixes = @('avcodec','avformat','avutil','swscale','swresample','aom','vpx')
+    if (Test-Path $LibDir) {
+        Get-ChildItem -Path $LibDir -Filter "*.lib" -File -ErrorAction SilentlyContinue | ForEach-Object {
+            $base = $_.BaseName.ToLower()
+            $shouldCopy = $false
+            foreach ($p in $wantedLibPrefixes) { if ($base -like "$p*") { $shouldCopy = $true; break } }
+            if ($shouldCopy) {
+                Write-Host "Copying $($_.Name)"
+                Copy-Item -Path $_.FullName -Destination $DestLibDir -Force -ErrorAction SilentlyContinue
+            } else {
+                Write-Host "Skipping $($_.Name)"
+            }
         }
     }
-    # Copy any DLLs and PDBs from bin folder
-    if (Test-Path $LibVpxBinDir) {
-        Get-ChildItem -Path $LibVpxBinDir -Filter "*.dll" -File -ErrorAction SilentlyContinue | ForEach-Object {
-            Write-Host "Copying $($_.Name)"
-            Copy-Item -Path $_.FullName -Destination $DestLibDir -Force -ErrorAction SilentlyContinue
+    if (Test-Path $BinDir) {
+        # DLLs
+        Get-ChildItem -Path $BinDir -Filter "*.dll" -File -ErrorAction SilentlyContinue | ForEach-Object {
+            $base = ($_.BaseName).ToLower()
+            $shouldCopy = $false
+            foreach ($p in $wantedLibPrefixes) { if ($base -like "$p*" -or $base -like "${p}-*") { $shouldCopy = $true; break } }
+            if ($shouldCopy) {
+                Write-Host "Copying $($_.Name)"
+                Copy-Item -Path $_.FullName -Destination $DestLibDir -Force -ErrorAction SilentlyContinue
+            } else {
+                Write-Host "Skipping $($_.Name)"
+            }
         }
-        Get-ChildItem -Path $LibVpxBinDir -Filter "*.pdb" -File -ErrorAction SilentlyContinue | ForEach-Object {
-            Write-Host "Copying $($_.Name)"
-            Copy-Item -Path $_.FullName -Destination $DestLibDir -Force -ErrorAction SilentlyContinue
+        # PDBs for the selected DLLs
+        Get-ChildItem -Path $BinDir -Filter "*.pdb" -File -ErrorAction SilentlyContinue | ForEach-Object {
+            $base = ($_.BaseName).ToLower()
+            $shouldCopy = $false
+            foreach ($p in $wantedLibPrefixes) { if ($base -like "$p*" -or $base -like "${p}-*") { $shouldCopy = $true; break } }
+            if ($shouldCopy) {
+                Write-Host "Copying $($_.Name)"
+                Copy-Item -Path $_.FullName -Destination $DestLibDir -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 
-    # Copy only libvpx-specific include directories (fallback to headers containing 'vpx' or entire include tree)
-    Write-Host "Collecting libvpx-specific include directories from $LibVpxIncludeDir"
-    $topLevel = Get-ChildItem -Path $LibVpxIncludeDir -Force -ErrorAction SilentlyContinue
-    $matches = $topLevel | Where-Object { $_.Name -match '^(vpx|vp8|vp9|libvpx)' }
-    if ($matches -and $matches.Count -gt 0) {
-        foreach ($item in $matches) {
+    # Copy ffmpeg/libav-related include directories: avcodec, avformat, avutil, swresample, swscale
+    Write-Host "Collecting ffmpeg/libav-specific include directories from $IncludeDir"
+    $topLevel = Get-ChildItem -Path $IncludeDir -Force -ErrorAction SilentlyContinue
+    $includeMatches = $topLevel | Where-Object { $_.Name -like 'libav*' -or $_.Name -like 'avcodec*' -or $_.Name -like 'avformat*' -or $_.Name -like 'avutil*' -or $_.Name -like 'swresample*' -or $_.Name -like 'swscale*' -or $_.Name -like 'postproc*' -or $_.Name -like 'avfilter*' }
+    if ($includeMatches -and $includeMatches.Count -gt 0) {
+        foreach ($item in $includeMatches) {
             $dest = Join-Path $DestIncludeDir $item.Name
             Write-Host "Copying include item $($item.Name) to $dest"
             Copy-Item -Path $item.FullName -Destination $dest -Recurse -Force -ErrorAction SilentlyContinue
         }
     } else {
-        # As a fallback, copy any header files with 'vpx' in their name preserving folder structure
-        $headerMatches = Get-ChildItem -Path $LibVpxIncludeDir -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'vpx' }
+        # Fallback: copy headers containing 'av' or 'libav' in their name preserving folder structure
+    $headerMatches = Get-ChildItem -Path $IncludeDir -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'av*' -or $_.Name -like 'libav*' -or $_.Name -like 'avcodec*' -or $_.Name -like 'avformat*' -or $_.Name -like 'avutil*' }
         if ($headerMatches -and $headerMatches.Count -gt 0) {
             foreach ($h in $headerMatches) {
-                $rel = $h.FullName.Substring($LibVpxIncludeDir.Length).TrimStart('\','/')
+                $rel = $h.FullName.Substring($IncludeDir.Length).TrimStart('\','/')
                 $dest = Join-Path $DestIncludeDir $rel
                 $destDir = Split-Path $dest -Parent
                 if (!(Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir | Out-Null }
                 Copy-Item -Path $h.FullName -Destination $dest -Force -ErrorAction SilentlyContinue
             }
         } else {
-            Write-Warning "Could not find libvpx-specific include directories or headers; copying entire include tree as fallback."
-            Copy-Item -Path (Join-Path $LibVpxIncludeDir "*") -Destination $DestIncludeDir -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Warning "Could not find ffmpeg-specific include directories or headers; copying entire include tree as fallback."
+            Copy-Item -Path (Join-Path $IncludeDir "*") -Destination $DestIncludeDir -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
-    Write-Host "libvpx export completed."
+    Write-Host "ffmpeg/libav export completed."
 }
-
