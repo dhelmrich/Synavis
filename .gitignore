@@ -71,3 +71,5 @@ SynavisUE/Build/*
 *.filters
 *.pbxproj
 *.xcworkspacedata
+/SynavisBackend/Source/libav
+/CPlantBox
