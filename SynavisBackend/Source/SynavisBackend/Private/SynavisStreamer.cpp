@@ -32,6 +32,31 @@ extern "C" {
 #include <libavutil/buffer.h>
 }
 #endif
+
+#if defined(LIBAV_AVAILABLE)
+// C-style free callback for av_buffer_create when we allocated the memory via av_malloc
+static void AvFreeOpaque(void* opaque, uint8_t* data)
+{
+	if (opaque) av_free(opaque);
+}
+
+// C-style free callback for av_buffer_create when the buffer wraps an FRHIGPUTextureReadback.
+// The opaque is expected to be a pointer to ReadbackFreeCtx (defined locally where used),
+// but we forward-declare a minimal struct here to avoid include cycles.
+struct __ReadbackFreeCtx { FRHIGPUTextureReadback* RB; };
+static void AvFreeReadback(void* opaque, uint8_t* data)
+{
+	__ReadbackFreeCtx* ctx = reinterpret_cast<__ReadbackFreeCtx*>(opaque);
+	if (!ctx) return;
+	FRHIGPUTextureReadback* RB = ctx->RB;
+	// Unlock/delete must run on render thread
+	ENQUEUE_RENDER_COMMAND(Synavis_FreeReadbackFromAVBuf)([RB](FRHICommandListImmediate& RHICmdList)
+	{
+		if (RB) { RB->Unlock(); delete RB; }
+	});
+	delete ctx;
+}
+#endif
 THIRD_PARTY_INCLUDES_END
 
 using rtc::binary;
@@ -80,40 +105,42 @@ void USynavisStreamer::TickComponent(float DeltaTime, ELevelTick TickType, FActo
 	if (!bStreaming || !RenderTarget)
 		return;
 
-	// CPU-only path: we do not attempt GPU conversion here.
-
-	// If GPU path not used or not ready fall back to the earlier CPU readback path
-	// Use FRHIGPUTextureReadback (UE5.1+) for async readback
-	static TUniquePtr<FRHIGPUTextureReadback> TextureReadback;
-	static bool bReadbackPending = false;
-
-	if (!TextureReadback)
+	// Process any pending NV12 GPU readbacks (non-blocking)
+	const double Now = FPlatformTime::Seconds();
+	const double ReadbackTimeout = 0.5; // seconds
+	for (int32 i = PendingReadbacks.Num() - 1; i >= 0; --i)
 	{
-		// FRHIGPUTextureReadback has a constructor taking FName; create via MakeUnique
-		TextureReadback = MakeUnique<FRHIGPUTextureReadback>(TEXT("SynavisReadback"));
-	}
+		FPendingNV12Readback& rec = PendingReadbacks[i];
+		if (!rec.ReadbackY || !rec.ReadbackUV)
+		{
+			PendingReadbacks.RemoveAtSwap(i);
+			continue;
+		}
 
-	FTextureRenderTargetResource* RTResource = RenderTarget->GameThread_GetRenderTargetResource();
-	if (!RTResource)
-		return;
+		// If readbacks ready, encode and remove from queue
+		if (rec.ReadbackY->IsReady() && rec.ReadbackUV->IsReady())
+		{
+			UE_LOG(LogTemp, Verbose, TEXT("Synavis: Pending readback ready, starting zero-copy encode (Width=%d Height=%d)"), RenderTarget->SizeX, RenderTarget->SizeY);
+			EncodeNV12ReadbackAndSend(rec.ReadbackY, rec.ReadbackUV, RenderTarget->SizeX, RenderTarget->SizeY);
+			// EncodeNV12ReadbackAndSend takes ownership of the readbacks (via AVBuffer free callback),
+			// so do not delete them here.
+			PendingReadbacks.RemoveAtSwap(i);
+			continue;
+		}
 
-	int Width = RenderTarget->SizeX;
-	int Height = RenderTarget->SizeY;
-
-	// issue a readback if none outstanding
-	if (!bReadbackPending && TextureReadback.IsValid())
-	{
-		ENQUEUE_RENDER_COMMAND(CopyToReadbackCmd)(
-			[RTTexture = RTResource->GetRenderTargetTexture(), Readback = TextureReadback.Get()](FRHICommandListImmediate& RHICmdList)
+		// Timeout expired: clean up and fall back (unlock & delete on render thread)
+		if (Now - rec.EnqueuedAt > ReadbackTimeout)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Synavis: Pending readback timed out after %.3fs, cleaning up"), Now - rec.EnqueuedAt);
+			FRHIGPUTextureReadback* Yrb = rec.ReadbackY;
+			FRHIGPUTextureReadback* UVrb = rec.ReadbackUV;
+			ENQUEUE_RENDER_COMMAND(Synavis_CleanupReadback)([Yrb, UVrb](FRHICommandListImmediate& RHICmdList)
 			{
-				if (RTTexture && Readback)
-				{
-					// Use EnqueueCopy to copy texture into the readback
-					Readback->EnqueueCopy(RHICmdList, RTTexture);
-				}
-			}
-		);
-		bReadbackPending = true;
+				if (Yrb) { Yrb->Unlock(); delete Yrb; }
+				if (UVrb) { UVrb->Unlock(); delete UVrb; }
+			});
+			PendingReadbacks.RemoveAtSwap(i);
+		}
 	}
 }
 
@@ -259,8 +286,13 @@ void USynavisStreamer::CaptureFrame()
 	FRHIGPUTextureReadback* ReadbackUV = nullptr;
 	if (EnqueueNV12ReadbackFromRenderTarget(RenderTarget, ReadbackY, ReadbackUV))
 	{
-		// This helper will wait briefly for readiness and then hand the buffers to the encoder (zero-copy).
-		EncodeNV12ReadbackAndSend(ReadbackY, ReadbackUV, Width, Height);
+		// Non-blocking: store the readbacks in PendingReadbacks so TickComponent can process them
+		FPendingNV12Readback rec;
+		rec.ReadbackY = ReadbackY;
+		rec.ReadbackUV = ReadbackUV;
+		rec.EnqueuedAt = FPlatformTime::Seconds();
+		PendingReadbacks.Add(rec);
+		UE_LOG(LogTemp, Verbose, TEXT("Synavis: CaptureFrame enqueued NV12 readback (Width=%d Height=%d). PendingReadbacks=%d"), Width, Height, PendingReadbacks.Num());
 		return;
 	}
 
@@ -537,7 +569,7 @@ void USynavisStreamer::EncodeNV12AndSend(const TArray<uint8>& Y, const TArray<ui
 		uint8_t* Ycopy = (uint8_t*)av_malloc(Y.Num());
 		if (!Ycopy) return;
 		memcpy(Ycopy, Y.GetData(), Y.Num());
-		AVBufferRef* bufY = av_buffer_create(Ycopy, Y.Num(), [](void* opaque){ av_free(opaque); }, Ycopy, 0);
+	AVBufferRef* bufY = av_buffer_create(Ycopy, Y.Num(), AvFreeOpaque, Ycopy, 0);
 
 		// Allocate and copy UV buffer into an AVBuffer
 		uint8_t* UVcopy = (uint8_t*)av_malloc(UV.Num());
@@ -547,7 +579,7 @@ void USynavisStreamer::EncodeNV12AndSend(const TArray<uint8>& Y, const TArray<ui
 			return;
 		}
 		memcpy(UVcopy, UV.GetData(), UV.Num());
-		AVBufferRef* bufUV = av_buffer_create(UVcopy, UV.Num(), [](void* opaque){ av_free(opaque); }, UVcopy, 0);
+	AVBufferRef* bufUV = av_buffer_create(UVcopy, UV.Num(), AvFreeOpaque, UVcopy, 0);
 
 		// Set frame data pointers and linesizes
 		frame->buf[0] = bufY;
@@ -654,8 +686,8 @@ void USynavisStreamer::EncodeNV12ReadbackAndSend(FRHIGPUTextureReadback* Readbac
 	ReadbackFreeCtx* ctxY = new ReadbackFreeCtx{ ReadbackY };
 	ReadbackFreeCtx* ctxUV = new ReadbackFreeCtx{ ReadbackUV };
 
-	AVBufferRef* bufY = av_buffer_create(static_cast<uint8_t*>(YPtr), Width * Height, freeCb, ctxY, 0);
-	AVBufferRef* bufUV = av_buffer_create(static_cast<uint8_t*>(UVPtr), (Width * Height) / 2, freeCb, ctxUV, 0);
+	AVBufferRef* bufY = av_buffer_create(static_cast<uint8_t*>(YPtr), Width * Height, AvFreeReadback, ctxY, 0);
+	AVBufferRef* bufUV = av_buffer_create(static_cast<uint8_t*>(UVPtr), (Width * Height) / 2, AvFreeReadback, ctxUV, 0);
 
 	if (!bufY || !bufUV)
 	{
@@ -676,17 +708,18 @@ void USynavisStreamer::EncodeNV12ReadbackAndSend(FRHIGPUTextureReadback* Readbac
 	if (ret < 0)
 	{
 		char errbuf[128]; av_strerror(ret, errbuf, sizeof(errbuf));
-		UE_LOG(LogTemp, Error, TEXT("avcodec_send_frame (NV12 zero-copy) failed: %s"), ANSI_TO_TCHAR(errbuf));
+		UE_LOG(LogTemp, Error, TEXT("Synavis: avcodec_send_frame (NV12 zero-copy) failed: %s"), ANSI_TO_TCHAR(errbuf));
 	}
 
 	while ((ret = avcodec_receive_packet(LibAVState->CodecCtx, LibAVState->Packet)) >= 0)
 	{
-		if (WebRTCInternal)
+			if (WebRTCInternal)
 		{
 			size_t sz = static_cast<size_t>(LibAVState->Packet->size);
 			const uint8_t* data = LibAVState->Packet->data;
 			if (WebRTCInternal->VideoTrack && WebRTCInternal->VideoTrack->isOpen())
 			{
+					UE_LOG(LogTemp, Verbose, TEXT("Synavis: Sending encoded packet size=%d"), (int)sz);
 				rtc::binary pktbuf(sz);
 				if (sz) memcpy(pktbuf.data(), data, sz);
 				uint32_t ts = 0;

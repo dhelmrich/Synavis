@@ -77,6 +77,17 @@ protected:
 	// timer callback to capture frames
 	void CaptureFrame();
 
+	// Pending GPU readback record for non-blocking zero-copy path
+	struct FPendingNV12Readback
+	{
+		FRHIGPUTextureReadback* ReadbackY = nullptr;
+		FRHIGPUTextureReadback* ReadbackUV = nullptr;
+		double EnqueuedAt = 0.0;
+	};
+
+	// Pending readbacks queue; processed in TickComponent
+	TArray<FPendingNV12Readback> PendingReadbacks;
+
 	// Encode planar I420 buffers using libav and send via WebRTC (defined in cpp)
 	void EncodeI420AndSend(const TArray<uint8>& Y, const TArray<uint8>& U, const TArray<uint8>& V, int Width, int Height);
 

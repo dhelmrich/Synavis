@@ -224,6 +224,7 @@ bool EnqueueNV12ReadbackFromRenderTarget(UTextureRenderTarget2D* SrcRT, FRHIGPUT
     // Enqueue on render thread
     ENQUEUE_RENDER_COMMAND(Synavis_EnqueueNV12Readback)([RTTexture = RTResource->GetRenderTargetTexture(), Width, Height, ReadbackY, ReadbackUV](FRHICommandListImmediate& RHICmdList)
     {
+        UE_LOG(LogTemp, Verbose, TEXT("Synavis: EnqueueNV12ReadbackFromRenderTarget - dispatching RDG for %dx%d"), Width, Height);
         FRDGBuilder GraphBuilder(RHICmdList);
         FRDGTextureRef RDGInput = RegisterExternalTexture(GraphBuilder, RTTexture, TEXT("Synavis_Input"));
 
@@ -252,6 +253,7 @@ bool EnqueueNV12ReadbackFromRenderTarget(UTextureRenderTarget2D* SrcRT, FRHIGPUT
         AddEnqueueCopyPass(GraphBuilder, ReadbackUV, RDGUV);
 
         GraphBuilder.Execute();
+        UE_LOG(LogTemp, Verbose, TEXT("Synavis: EnqueueNV12ReadbackFromRenderTarget - RDG executed and readbacks enqueued"));
     });
 
     OutReadbackY = ReadbackY;
