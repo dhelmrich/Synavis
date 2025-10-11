@@ -1,9 +1,10 @@
 #pragma once
 
 // Shader wrappers disabled for simplified build iteration
-#if 0
+
 #include "GlobalShader.h"
 #include "ShaderParameterUtils.h"
+#include "ShaderParameterStruct.h"
 #include "RHIStaticStates.h"
 
 class FConvertRGBAToI420PS : public FGlobalShader
@@ -22,4 +23,4 @@ public:
         return true;
     }
 };
-#endif
+

@@ -4,6 +4,23 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include <memory>
+#if __has_include(<rtc/rtc.hpp>)
+#include <rtc/rtc.hpp>
+#else
+namespace rtc { class PeerConnection; class DataChannel; class WebSocket; class Track; }
+#endif
+#if defined(LIBAV_AVAILABLE)
+extern "C" {
+	struct AVCodecContext;
+	struct AVFrame;
+	struct AVPacket;
+	struct AVCodec;
+}
+#else
+	// forward-declare to allow pointer members without bringing libav into every compile unit
+	struct AVCodecContext; struct AVFrame; struct AVPacket; struct AVCodec;
+#endif
 #include "SynavisStreamer.generated.h"
 
 
@@ -60,8 +77,8 @@ protected:
 	// timer callback to capture frames
 	void CaptureFrame();
 
-	// Encode a frame to VP9 and send it directly via WebRTC (returns true if encoded+sent)
-	bool EncodeFrameToVP9AndSend(const TArray<FColor>& Pixels, int Width, int Height);
+	// Encode planar I420 buffers using libav and send via WebRTC (defined in cpp)
+	void EncodeI420AndSend(const TArray<uint8>& Y, const TArray<uint8>& U, const TArray<uint8>& V, int Width, int Height);
 
 	// helper to send bytes via DataConnector (use UE types in public API)
 	void SendFrameBytes(const TArray<uint8>& Bytes, const FString& Name, const FString& Format);
@@ -69,7 +86,31 @@ protected:
 	// internal state
 	bool bStreaming = false;
 
-	// Opaque pimpl for WebRTC internals (defined in cpp)
-	struct FWebRTCInternal;
-	FWebRTCInternal* WebRTCInternal = nullptr;
+				// Opaque pimpl for WebRTC internals (defined here so UHT sees a complete type)
+				struct FWebRTCInternal
+				{
+						std::shared_ptr<rtc::PeerConnection> PeerConnection;
+						std::shared_ptr<rtc::DataChannel> DataChannel;
+						std::shared_ptr<rtc::WebSocket> Signalling;
+						std::shared_ptr<rtc::Track> VideoTrack;
+						std::shared_ptr<rtc::RtpPacketizer> Packetizer;
+						FWebRTCInternal() {}
+						~FWebRTCInternal(); // defined in cpp
+				};
+				FWebRTCInternal* WebRTCInternal = nullptr;
+
+			// Persistent libav encoder context to avoid allocations per-frame
+			struct FLibAVEncoderState
+			{
+				AVCodecContext* CodecCtx = nullptr;
+				AVFrame* Frame = nullptr;
+				AVPacket* Packet = nullptr;
+				const AVCodec* Codec = nullptr;
+				int Width = 0;
+				int Height = 0;
+				FCriticalSection Mutex;
+				FLibAVEncoderState() {}
+				~FLibAVEncoderState(); // defined in cpp
+			};
+			FLibAVEncoderState* LibAVState = nullptr;
 };

@@ -3,6 +3,7 @@
 // Compute shader wrapper disabled for simplified build iteration
 #include "GlobalShader.h"
 #include "ShaderParameterUtils.h"
+#include "ShaderParameterStruct.h"
 
 class FConvertRGBACompute : public FGlobalShader
 {

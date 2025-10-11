@@ -62,18 +62,20 @@ public class SynavisBackend : ModuleRules
 			}
 			);
 
-	// Platform-specific linking for libdatachannel when using the flat layout under Source/libdatachannel
-	// ModuleDirectory points to .../Source/SynavisBackend; the CMake step copies libs to Source/libdatachannel/lib
-	string LibDataChannelPath = System.IO.Path.Combine(ModuleDirectory, "..", "libdatachannel", "lib");
-	LibDataChannelPath = System.IO.Path.GetFullPath(LibDataChannelPath);
+    // Platform-specific linking for libdatachannel when using the flat layout under Source/libdatachannel
+    // ModuleDirectory points to .../Source/SynavisBackend; the CMake step copies libs to Source/libdatachannel/lib
+    string ModuleSourceDirectory = System.IO.Path.GetFullPath(System.IO.Path.Combine(ModuleDirectory));
+    string LibDataChannelPath = System.IO.Path.Combine(ModuleDirectory, "..", "libdatachannel", "lib");
 
 		if (Target.Platform == UnrealTargetPlatform.Win64)
 		{
 			string DllPath = System.IO.Path.Combine(LibDataChannelPath, "datachannel.dll");
 			string LibPath = System.IO.Path.Combine(LibDataChannelPath, "datachannel.lib");
-			PublicAdditionalLibraries.Add(LibPath);
-			PublicDelayLoadDLLs.Add("datachannel.dll");
-			RuntimeDependencies.Add(DllPath);
+      PublicAdditionalLibraries.Add(LibPath);
+      RuntimeDependencies.Add(DllPath);
+      // add DLL folder to path
+      
+
 		}
 		else if (Target.Platform == UnrealTargetPlatform.Linux)
 		{
@@ -83,73 +85,67 @@ public class SynavisBackend : ModuleRules
 		}
 
 		// ---- libvpx support (flat layout under Source/libvpx)
-		string LibVpxInclude = System.IO.Path.Combine(ModuleDirectory, "..", "libvpx", "include");
-		LibVpxInclude = System.IO.Path.GetFullPath(LibVpxInclude);
-		PublicSystemIncludePaths.Add(LibVpxInclude);
-		if (!System.IO.Directory.Exists(LibVpxInclude))
+		// ---- libav/ffmpeg support (flat layout under Source/libav)
+		string LibAvInclude = System.IO.Path.Combine(ModuleDirectory, "..", "libav", "include");
+		LibAvInclude = System.IO.Path.GetFullPath(LibAvInclude);
+		PublicSystemIncludePaths.Add(LibAvInclude);
+		if (!System.IO.Directory.Exists(LibAvInclude))
 		{
-			System.Console.WriteLine($"Warning: libvpx include directory not found: {LibVpxInclude}. Run the CMake copy step to populate Source/libvpx/include.");
+			System.Console.WriteLine($"Warning: libav include directory not found: {LibAvInclude}. Run the CMake copy step to populate Source/libav/include.");
 		}
 
-		string LibVpxPath = System.IO.Path.Combine(ModuleDirectory, "..", "libvpx", "lib");
-		LibVpxPath = System.IO.Path.GetFullPath(LibVpxPath);
+		string LibAvPath = System.IO.Path.Combine(ModuleDirectory, "..", "libav", "lib");
+		LibAvPath = System.IO.Path.GetFullPath(LibAvPath);
 
 		if (Target.Platform == UnrealTargetPlatform.Win64)
 		{
-			// Prefer DLL + import lib if present
-			var dlls = System.IO.Directory.Exists(LibVpxPath) ? System.IO.Directory.GetFiles(LibVpxPath, "vpx*.dll") : new string[0];
-			var libs = System.IO.Directory.Exists(LibVpxPath) ? System.IO.Directory.GetFiles(LibVpxPath, "vpx*.lib") : new string[0];
+			// Require common ffmpeg import libs and/or DLLs to be present under Source/libav/lib
+			string[] wanted = new string[] { "avcodec", "avformat", "avutil", "swscale", "swresample" };
+			if (!System.IO.Directory.Exists(LibAvPath))
+			{
+				throw new System.Exception($"Required libav library directory not found: {LibAvPath}. Please place FFmpeg import libs (.lib) and DLLs (.dll) in Source/libav/lib.");
+			}
 
-			if (dlls.Length > 0 && libs.Length > 0)
+			foreach (var name in wanted)
 			{
-				// Use first matched dll/lib pair
-				string dllPath = dlls[0];
-				string dllName = System.IO.Path.GetFileName(dllPath);
-				string importLib = libs[0];
-				PublicAdditionalLibraries.Add(importLib);
-				PublicDelayLoadDLLs.Add(dllName);
-				RuntimeDependencies.Add(dllPath);
-				PublicDefinitions.Add("LIBVPX_AVAILABLE=1");
-			}
-			else if (libs.Length > 0)
-			{
-				// Static or import libs only
-				foreach (var lib in libs)
+				var libs = System.IO.Directory.GetFiles(LibAvPath, name + "*.lib");
+				var dlls = System.IO.Directory.GetFiles(LibAvPath, name + "*.dll");
+
+				if (libs.Length == 0 && dlls.Length == 0)
 				{
-					PublicAdditionalLibraries.Add(lib);
+					throw new System.Exception($"Required libav artifact for '{name}' not found in {LibAvPath}. Expected '{name}*.lib' or '{name}*.dll'.");
 				}
-				PublicDefinitions.Add("LIBVPX_AVAILABLE=1");
-			}
-			else if (dlls.Length > 0)
-			{
-				// DLLs exist but no import lib found. Warn and still add runtime dependency so UE can stage the DLL.
-				foreach (var dll in dlls)
+
+				// Prefer import libs for linking
+				if (libs.Length > 0)
 				{
-					string dllName = System.IO.Path.GetFileName(dll);
-					System.Console.WriteLine($"Warning: Found {dllName} in {LibVpxPath} but no corresponding import lib (.lib) was found. Linking may fail.");
-					RuntimeDependencies.Add(dll);
-					PublicDefinitions.Add("LIBVPX_AVAILABLE=1");
+					foreach (var lib in libs) PublicAdditionalLibraries.Add(lib);
+				}
+
+				// Register DLLs for delay-load and runtime
+				if (dlls.Length > 0)
+				{
+					foreach (var dllPath in dlls)
+					{
+						string dllName = System.IO.Path.GetFileName(dllPath);
+						PublicDelayLoadDLLs.Add(dllName);
+						RuntimeDependencies.Add(dllPath);
+					}
 				}
 			}
-			else
-			{
-				System.Console.WriteLine($"Notice: No libvpx artifacts found in {LibVpxPath}.");
-			}
+
+			// Always define LIBAV_AVAILABLE when we require and link libav
+			PublicDefinitions.Add("LIBAV_AVAILABLE=1");
 		}
 		else if (Target.Platform == UnrealTargetPlatform.Linux)
 		{
-			string so = System.IO.Path.Combine(LibVpxPath, "libvpx.so");
-			if (System.IO.File.Exists(so))
+			string SoDir = LibAvPath;
+			if (System.IO.Directory.Exists(SoDir))
 			{
-				PublicAdditionalLibraries.Add(so);
-				RuntimeDependencies.Add(so);
-				PublicDefinitions.Add("LIBVPX_AVAILABLE=1");
-			}
-			else
-			{
-				// Add .a static libs if present
-				var staticLibs = System.IO.Directory.Exists(LibVpxPath) ? System.IO.Directory.GetFiles(LibVpxPath, "libvpx*.a") : new string[0];
-				foreach (var a in staticLibs) PublicAdditionalLibraries.Add(a);
+				// Add core shared objects if present
+				var soFiles = System.IO.Directory.GetFiles(SoDir, "libav*.so*");
+				foreach (var so in soFiles) { PublicAdditionalLibraries.Add(so); RuntimeDependencies.Add(so); }
+				PublicDefinitions.Add("LIBAV_AVAILABLE=1");
 			}
 		}
 	}
