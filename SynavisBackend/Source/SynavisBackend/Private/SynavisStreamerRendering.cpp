@@ -14,6 +14,8 @@
 #include "SynavisStreamerComputeShader.h"
 #include "ShaderParameterUtils.h"
 #include "RHIStaticStates.h"
+// We need access to the USynavisStreamer declaration (libav includes live in SynavisStreamer.cpp)
+#include "SynavisStreamer.h"
 bool ConvertRGBA8ToI420_CPU(const uint8_t* Src, int Width, int Height, TArray<uint8>& OutY, TArray<uint8>& OutU, TArray<uint8>& OutV)
 {
     if (!Src || Width <= 0 || Height <= 0)
@@ -198,3 +200,64 @@ bool ConvertRenderTargetToI420_GPU(UTextureRenderTarget2D* SrcRT, TArray<uint8>&
 }
 // Note: GPU conversion path requires a shader and RDG/RHI handling which is engine-version specific.
 // The stub above intentionally returns false to fall back to CPU conversion in the streamer.
+
+bool EnqueueNV12ReadbackFromRenderTarget(UTextureRenderTarget2D* SrcRT, FRHIGPUTextureReadback*& OutReadbackY, FRHIGPUTextureReadback*& OutReadbackUV)
+{
+    OutReadbackY = nullptr;
+    OutReadbackUV = nullptr;
+    if (!SrcRT)
+        return false;
+
+    FTextureRenderTargetResource* RTResource = SrcRT->GameThread_GetRenderTargetResource();
+    if (!RTResource)
+        return false;
+
+    const int Width = SrcRT->SizeX;
+    const int Height = SrcRT->SizeY;
+    if (Width <= 0 || Height <= 0)
+        return false;
+
+    // Allocate readbacks on heap and return ownership to caller; they must be freed later.
+    FRHIGPUTextureReadback* ReadbackY = new FRHIGPUTextureReadback(TEXT("Synavis_Y_Readback"));
+    FRHIGPUTextureReadback* ReadbackUV = new FRHIGPUTextureReadback(TEXT("Synavis_UV_Readback"));
+
+    // Enqueue on render thread
+    ENQUEUE_RENDER_COMMAND(Synavis_EnqueueNV12Readback)([RTTexture = RTResource->GetRenderTargetTexture(), Width, Height, ReadbackY, ReadbackUV](FRHICommandListImmediate& RHICmdList)
+    {
+        FRDGBuilder GraphBuilder(RHICmdList);
+        FRDGTextureRef RDGInput = RegisterExternalTexture(GraphBuilder, RTTexture, TEXT("Synavis_Input"));
+
+        FRDGTextureDesc DescY = FRDGTextureDesc::Create2D(FIntPoint(Width, Height), PF_R8, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
+        FRDGTextureRef RDGY = GraphBuilder.CreateTexture(DescY, TEXT("Synavis_Y"));
+
+        FRDGTextureDesc DescUV = FRDGTextureDesc::Create2D(FIntPoint((Width + 1) / 2, (Height + 1) / 2), PF_R8G8, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
+        FRDGTextureRef RDGUV = GraphBuilder.CreateTexture(DescUV, TEXT("Synavis_UV"));
+
+        TShaderMapRef<FConvertRGBACompute> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
+        FConvertRGBACompute::FParameters* PassParameters = GraphBuilder.AllocParameters<FConvertRGBACompute::FParameters>();
+        PassParameters->InputTexture = RDGInput;
+        PassParameters->LinearSampler = TStaticSamplerState<SF_Bilinear>::GetRHI();
+        PassParameters->OutY = GraphBuilder.CreateUAV(RDGY);
+        PassParameters->OutUV = GraphBuilder.CreateUAV(RDGUV);
+        PassParameters->TextureSize = FIntPoint(Width, Height);
+
+        GraphBuilder.AddPass(RDG_EVENT_NAME("SynavisConvertToNV12"), PassParameters, ERDGPassFlags::Compute,
+            [PassParameters, ComputeShader, Width, Height](FRHIComputeCommandList& RHICmdListInner)
+            {
+                FComputeShaderUtils::Dispatch(RHICmdListInner, ComputeShader, *PassParameters, FIntVector((Width + 15) / 16, (Height + 15) / 16, 1));
+            }
+        );
+
+        AddEnqueueCopyPass(GraphBuilder, ReadbackY, RDGY);
+        AddEnqueueCopyPass(GraphBuilder, ReadbackUV, RDGUV);
+
+        GraphBuilder.Execute();
+    });
+
+    OutReadbackY = ReadbackY;
+    OutReadbackUV = ReadbackUV;
+    return true;
+}
+
+// Note: EncodeNV12ReadbackAndSend is implemented in SynavisStreamer.cpp where libav and rtc headers
+// are available; this file only provides the EnqueueNV12ReadbackFromRenderTarget helper.

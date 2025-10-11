@@ -80,6 +80,14 @@ protected:
 	// Encode planar I420 buffers using libav and send via WebRTC (defined in cpp)
 	void EncodeI420AndSend(const TArray<uint8>& Y, const TArray<uint8>& U, const TArray<uint8>& V, int Width, int Height);
 
+	// Encode NV12 buffers using libav and send via WebRTC (Y plane + packed interleaved UV)
+	// Y: size Width*Height, UV: size (Width * Height)/2, typical strides: YStride=Width, UVStride=Width
+	void EncodeNV12AndSend(const TArray<uint8>& Y, const TArray<uint8>& UV, int YStride, int UVStride, int Width, int Height);
+
+	// Zero-copy variant: accept FRHIGPUTextureReadback readbacks for Y and UV (NV12). The helper will wrap
+	// the readback pointers into AVBufferRefs that free/unlock the readbacks when FFmpeg is done.
+	void EncodeNV12ReadbackAndSend(class FRHIGPUTextureReadback* ReadbackY, class FRHIGPUTextureReadback* ReadbackUV, int Width, int Height);
+
 	// helper to send bytes via DataConnector (use UE types in public API)
 	void SendFrameBytes(const TArray<uint8>& Bytes, const FString& Name, const FString& Format);
 

@@ -21,3 +21,12 @@ bool ConvertRGBA8ToI420_CPU(const uint8_t* Src, int Width, int Height, TArray<ui
 // GPU conversion: render into two RTs then transfer to CPU via render queue and ReadPixels (blocking FlushRenderingCommands).
 // Outputs are planar I420 buffers (Y full-res, U and V quarter-sized each).
 bool ConvertRenderTargetToI420_GPU(class UTextureRenderTarget2D* SrcRT, TArray<uint8>& OutY, TArray<uint8>& OutU, TArray<uint8>& OutV);
+
+// Enqueue NV12 (Y + packed UV) readbacks for a render target.
+// Returns true if the GPU dispatch and readbacks were enqueued. On success the function
+// allocates and returns two FRHIGPUTextureReadback* objects (caller is responsible for
+// letting FFmpeg free/unlock them via av_buffer free callbacks). The readbacks will
+// become ready asynchronously; callers must poll Readback->IsReady() and then Lock().
+// Forward declare FRHIGPUTextureReadback here.
+class FRHIGPUTextureReadback;
+bool EnqueueNV12ReadbackFromRenderTarget(class UTextureRenderTarget2D* SrcRT, FRHIGPUTextureReadback*& OutReadbackY, FRHIGPUTextureReadback*& OutReadbackUV);
