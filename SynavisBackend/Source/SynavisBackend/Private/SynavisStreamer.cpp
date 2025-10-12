@@ -57,6 +57,8 @@ static void AvFreeReadback(void* opaque, uint8_t* data)
 	delete ctx;
 }
 #endif
+
+
 THIRD_PARTY_INCLUDES_END
 
 using rtc::binary;
@@ -224,29 +226,38 @@ void USynavisStreamer::StartSignalling()
 	WebRTCInternal->DataChannel->onOpen([]() { /* no-op */ });
 	WebRTCInternal->DataChannel->onClosed([]() { /* no-op */ });
 	WebRTCInternal->DataChannel->onError([](std::string err) { /* no-op */ });
+  WebRTCInternal->DataChannel->onMessage(
+	  [this](const rtc::message_variant& msg)
+	  {
+	    if (std::holds_alternative<rtc::binary>(msg))
+	    {
+	      
+	    }
+      else if (std::holds_alternative<std::string>(msg))
+			{
 
-	// Create a send-only VP9 track if possible (mirrors libdatachannel examples)
-	// Try to create a send-only VP9 track; ignore failures without using exceptions
+			}
+	  }
+	);
+
+	rtc::Description::Video media("video", rtc::Description::Direction::SendOnly);
+	media.addVP9Codec(96);
+	media.setBitrate(90000);
+	WebRTCInternal->VideoTrack = WebRTCInternal->PeerConnection->addTrack(media);
+	if (WebRTCInternal->VideoTrack)
 	{
-		rtc::Description::Video media("video", rtc::Description::Direction::SendOnly);
-		media.addVP9Codec(96);
-		media.setBitrate(90000);
-		WebRTCInternal->VideoTrack = WebRTCInternal->PeerConnection->addTrack(media);
-		if (WebRTCInternal->VideoTrack)
-		{
-			WebRTCInternal->VideoTrack->onOpen([]() { /* no-op */ });
+		WebRTCInternal->VideoTrack->onOpen([]() { /* no-op */ });
 
-			// Attach an RTP packetizer/media handler to the track so libdatachannel handles RTP packetization
-      using namespace rtc;
-      // Create RTP packetization config: choose random SSRC and default payload type 96 (VP9)
-      SSRC ssrc = static_cast<SSRC>(std::rand());
-      auto rtpCfg = std::make_shared<RtpPacketizationConfig>(ssrc, std::string("synavis"), 96, RtpPacketizer::VideoClockRate);
-      auto packetizer = std::make_shared<RtpPacketizer>(rtpCfg);
-      // Attach packetizer to the track (media handler chain)
-      WebRTCInternal->VideoTrack->setMediaHandler(packetizer);
-      // Keep a reference so we can reuse it for frame metadata if needed
-      WebRTCInternal->Packetizer = packetizer;
-		}
+		// Attach an RTP packetizer/media handler to the track so libdatachannel handles RTP packetization
+    using namespace rtc;
+    // Create RTP packetization config: choose random SSRC and default payload type 96 (VP9)
+    SSRC ssrc = static_cast<SSRC>(std::rand());
+    auto rtpCfg = std::make_shared<RtpPacketizationConfig>(ssrc, std::string("synavis"), 96, RtpPacketizer::VideoClockRate);
+    auto packetizer = std::make_shared<RtpPacketizer>(rtpCfg);
+    // Attach packetizer to the track (media handler chain)
+    WebRTCInternal->VideoTrack->setMediaHandler(packetizer);
+    // Keep a reference so we can reuse it for frame metadata if needed
+    WebRTCInternal->Packetizer = packetizer;
 	}
 
 	// handle incoming signalling messages if you want to accept answers via websocket
@@ -266,6 +277,10 @@ void USynavisStreamer::StartSignalling()
 	});
 
 	WebRTCInternal->PeerConnection->setLocalDescription();
+}
+
+void USynavisStreamer::AcceptCallbacks(const FSynavisMessage& OnMessage, const FSynavisData& OnData, APawn* InPawn)
+{
 }
 
 void USynavisStreamer::CaptureFrame()

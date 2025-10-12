@@ -5,6 +5,8 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include <memory>
+
+#include "RHIGPUReadback.h"
 #if __has_include(<rtc/rtc.hpp>)
 #include <rtc/rtc.hpp>
 #else
@@ -22,6 +24,9 @@ extern "C" {
 	struct AVCodecContext; struct AVFrame; struct AVPacket; struct AVCodec;
 #endif
 #include "SynavisStreamer.generated.h"
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FSynavisMessage, USynavisStreamer*, Connection, FString, Message, APawn*, Pawn);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FSynavisData, USynavisStreamer*, Connection, TArray<uint8>, Data, APawn*, Pawn);
 
 
 UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
@@ -73,6 +78,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Streaming|Signalling")
 	void StartSignalling();
 
+
+	void AcceptCallbacks(
+		const FSynavisMessage& OnMessage,
+		const FSynavisData& OnData,
+    APawn* InPawn);
+
 protected:
 	// timer callback to capture frames
 	void CaptureFrame();
@@ -105,31 +116,31 @@ protected:
 	// internal state
 	bool bStreaming = false;
 
-				// Opaque pimpl for WebRTC internals (defined here so UHT sees a complete type)
-				struct FWebRTCInternal
-				{
-						std::shared_ptr<rtc::PeerConnection> PeerConnection;
-						std::shared_ptr<rtc::DataChannel> DataChannel;
-						std::shared_ptr<rtc::WebSocket> Signalling;
-						std::shared_ptr<rtc::Track> VideoTrack;
-						std::shared_ptr<rtc::RtpPacketizer> Packetizer;
-						FWebRTCInternal() {}
-						~FWebRTCInternal(); // defined in cpp
-				};
-				FWebRTCInternal* WebRTCInternal = nullptr;
+	// Opaque pimpl for WebRTC internals (defined here so UHT sees a complete type)
+	struct FWebRTCInternal
+	{
+			std::shared_ptr<rtc::PeerConnection> PeerConnection;
+			std::shared_ptr<rtc::DataChannel> DataChannel;
+			std::shared_ptr<rtc::WebSocket> Signalling;
+			std::shared_ptr<rtc::Track> VideoTrack;
+			std::shared_ptr<rtc::RtpPacketizer> Packetizer;
+			FWebRTCInternal() {}
+			~FWebRTCInternal(); // defined in cpp
+	};
+	FWebRTCInternal* WebRTCInternal = nullptr;
 
-			// Persistent libav encoder context to avoid allocations per-frame
-			struct FLibAVEncoderState
-			{
-				AVCodecContext* CodecCtx = nullptr;
-				AVFrame* Frame = nullptr;
-				AVPacket* Packet = nullptr;
-				const AVCodec* Codec = nullptr;
-				int Width = 0;
-				int Height = 0;
-				FCriticalSection Mutex;
-				FLibAVEncoderState() {}
-				~FLibAVEncoderState(); // defined in cpp
-			};
-			FLibAVEncoderState* LibAVState = nullptr;
+  // Persistent libav encoder context to avoid allocations per-frame
+  struct FLibAVEncoderState
+  {
+	  AVCodecContext* CodecCtx = nullptr;
+	  AVFrame* Frame = nullptr;
+	  AVPacket* Packet = nullptr;
+	  const AVCodec* Codec = nullptr;
+	  int Width = 0;
+	  int Height = 0;
+	  FCriticalSection Mutex;
+	  FLibAVEncoderState() {}
+	  ~FLibAVEncoderState(); // defined in cpp
+  };
+  FLibAVEncoderState* LibAVState = nullptr;
 };

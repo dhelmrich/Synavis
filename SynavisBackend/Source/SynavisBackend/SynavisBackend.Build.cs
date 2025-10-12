@@ -32,12 +32,9 @@ public class SynavisBackend : ModuleRules
 			new string[]
 			{
 				"Core",
-				// The module exposes an ActorComponent in its public headers, so expose Engine and CoreUObject
 				"CoreUObject",
 				"Engine",
-				// libdatachannel is consumed via headers/libs inside Source/libdatachannel
-				"Projects"
-				// ... add other public dependencies that you statically link with here ...
+				"Projects",
 			}
 			);
 			
@@ -45,12 +42,10 @@ public class SynavisBackend : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
-				// Rendering and shader dependencies for GPU conversion
 				"RenderCore",
 				"RHI",
 				"Renderer",
-				
-				// ... add other private dependencies that you statically link with here ...
+				"Engine"
 			}
 			);
 		
