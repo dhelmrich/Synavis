@@ -38,4 +38,29 @@ jobs:
         name: package
         path: ${{github.workspace}}/build/PySynavis.cpython-310-x86_64-linux-gnu.so
 
+  build-python:
+    name: Build Python-only package
+    runs-on: ubuntu-latest
+    env:
+     CC:   gcc-11
+     CXX:  g++-11
+    steps:
+    - uses: actions/checkout@v3
+    - uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: libfmt-dev libavcodec-dev libavformat-dev libavutil-dev
+
+    - name: chmod
+      run: chmod +x ${{github.workspace}}/cmake_install.sh
+
+    - name: Configure and build Python-only
+      # run the cmake_install.sh script to install using cmake for python-only target
+      run: ${{github.workspace}}/cmake_install.sh -d build -t ${{env.BUILD_TYPE}} -j 1 -B ${{github.workspace}} --python-only
+
+    - name: Upload Python artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: pysynavis-package
+        path: ${{github.workspace}}/build/PySynavis.*.so
+
 

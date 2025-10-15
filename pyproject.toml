@@ -1,0 +1,20 @@
+[build-system]
+requires = ["scikit-build-core", "setuptools", "wheel"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "synavis"
+version = "0.0.1"
+description = "Python bindings for Synavis (PySynavis)"
+authors = [ { name="Dirk Baker" } ]
+readme = "README.md"
+requires-python = ">=3.10"
+
+[tool.scikit-build]
+# Configure scikit-build if needed. It will call CMake and use `cmake --install` to assemble
+# package files. The CMake install layout in `synavis/CMakeLists.txt` installs python files
+# into the directory named by PY_PACKAGE_NAME (defaults to projectname lowercase).
+
+[tool.scikit-build.cmake]
+# No explicit options here; scikit-build will call `cmake` to configure and `cmake --install` to install
+# into the wheel build directory. If needed, users can customize CMAKE_ARGS in CI.

@@ -1,11 +1,14 @@
 # build directory name can be a parameter -d
 # build type can be a parameter -t
 # Default values
+nproc=$(nproc)
+# Default values
 BUILDDIR="build"
 BUILDTYPE="Release"
 DELBUILD=false
 ACTIVATE_DECODING=true
-nproc=$(nproc)
+PYTHON_ONLY=false
+# determine parallelism
 # subtract one
 nproc=$((nproc-1))
 
@@ -38,6 +41,8 @@ while [[ $# -gt 0 ]]; do
     -B) BASEDIR="$2"; shift 2;;
     -v) VERBOSITY="$2"; shift 2;;
     -p) CPLANTBOX_DIR="$2"; shift 2;;
+    --python-only)
+      PYTHON_ONLY=true; shift;;
     --clang) USE_CLANG=true; shift;;
     -h|--help)
       echo "Usage: $0 [-d builddir] [-t buildtype] [-e deletebuild] [-j nproc] [-c activate_decoding] [-B basedir] [-v verbosity] [-p cplantbox_location] [--clang]"
@@ -106,8 +111,12 @@ fi
 #cmake verbose option
 CMAKE_VERBOSE="-DCMAKE_VERBOSE_MAKEFILE=On"
 
-# Build with apps
+# Build with apps (default On). If python-only is requested, turn apps off to speed up build.
 SYNAVIS_APPBUILD="-DBUILD_WITH_APPS=On"
+if [ "$PYTHON_ONLY" = true ] ; then
+  echo "Python-only build requested: disabling app build and limiting build target to PySynavis"
+  SYNAVIS_APPBUILD="-DBUILD_WITH_APPS=Off"
+fi
 
 # Verbosity
 CMAKE_VERBOSE_LOGGING=""
@@ -137,4 +146,9 @@ fi
 cmake -H$DIR -B$DIR/$BUILDDIR -DCMAKE_BUILD_TYPE=$BUILDTYPE -G "$GENERATOR" $LIBDATACHANNEL_VERBOSELOGGING $LIBDATACHANNEL_BUILD_TESTS $LIBDATACHANNEL_BUILD_EXAMPLES $LIBDATACHANNEL_SETTINGS $DECODING -DPYTHON_INCLUDE_DIR=$PYTHON_INCLUDE_DIRS -DPYTHON_LIBRARY=$PYTHON_LIBRARY $SYNAVIS_APPBUILD $CMAKE_VERBOSE_LOGGING $CPLANTBOX_DIR_OPTION $CMAKEOPT
 
 # build
-cmake --build $DIR/$BUILDDIR -- -j $nproc
+if [ "$PYTHON_ONLY" = true ] ; then
+  # Build only the Python target to save time
+  cmake --build $DIR/$BUILDDIR --target PySynavis -- -j $nproc
+else
+  cmake --build $DIR/$BUILDDIR -- -j $nproc
+fi

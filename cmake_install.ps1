@@ -18,6 +18,7 @@ param(
     [ValidateSet('static','dynamic')][string]$Triplet = 'dynamic',
     [switch]$ExportFFmpeg = $false,
     [switch]$NoBuild = $false,
+    [switch]$PythonOnly = $false,
     [switch]$Help
 )
 
@@ -106,6 +107,10 @@ if ($Verbose) {
 
 # Build with apps
 $SynavisAppBuild = "-DBUILD_WITH_APPS=On"
+if ($PythonOnly) {
+    Write-Host "Python-only build requested: disabling app builds"
+    $SynavisAppBuild = "-DBUILD_WITH_APPS=Off"
+}
 
 # CPlantBox options
 $CPlantBoxDirOption = ""
@@ -150,7 +155,11 @@ Invoke-Expression $CMakeCmd
 
 if (-not $NoBuild) {
   # Build
-  $BuildCmd = "cmake --build $BuildPath -- /m:$Jobs"
+    if ($PythonOnly) {
+        $BuildCmd = "cmake --build $BuildPath --target PySynavis -- /m:$Jobs"
+    } else {
+        $BuildCmd = "cmake --build $BuildPath -- /m:$Jobs"
+    }
   Write-Host "Running: $BuildCmd"
   Invoke-Expression $BuildCmd
   Write-Host "Build completed successfully."

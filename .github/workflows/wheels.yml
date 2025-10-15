@@ -1,0 +1,121 @@
+name: Build wheels
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-wheels:
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      matrix:
+        include:
+          - platform: manylinux_x86_64
+            runs-on: ubuntu-latest
+          - platform: windows
+            runs-on: windows-latest
+
+    env:
+      PYPACKAGE: "synavis"
+      # Tell CMake to avoid building apps (faster) and enable decoding for wheels.
+      CMAKE_ARGS: "-DBUILD_WITH_APPS=Off -DBUILD_WITH_DECODING=On -DPY_PACKAGE_NAME=synavis"
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python (bootstrap)
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install scikit-build-core scikit-build cibuildwheel wheel
+
+      - name: Bootstrap vcpkg (manylinux)
+        if: matrix.platform == 'manylinux_x86_64'
+        run: |
+          set -euo pipefail
+          if [ ! -d "${{ github.workspace }}/vcpkg" ]; then
+            git clone --single-branch --depth=1 https://github.com/microsoft/vcpkg.git "${{ github.workspace }}/vcpkg"
+            pushd "${{ github.workspace }}/vcpkg"
+            ./bootstrap-vcpkg.sh
+          else
+            pushd "${{ github.workspace }}/vcpkg"
+          fi
+          ./vcpkg install openssl libpcap libcurl libuv ffmpeg zlib --triplet x64-linux
+          popd
+          mkdir -p "${{ github.workspace }}/wheelhouse/vcpkg"
+          cp -r "${{ github.workspace }}/vcpkg/installed" "${{ github.workspace }}/wheelhouse/vcpkg/installed"
+          cp -r "${{ github.workspace }}/vcpkg/packages" "${{ github.workspace }}/wheelhouse/vcpkg/packages"
+
+      - name: Cache vcpkg installed packages (manylinux)
+        if: matrix.platform == 'manylinux_x86_64'
+        uses: actions/cache@v4
+        with:
+          path: |
+            vcpkg/installed
+            vcpkg/packages
+          key: vcpkg-linux-${{ runner.os }}-${{ hashFiles('**/vcpkg/installed/**') }}
+          restore-keys: |
+            vcpkg-linux-
+
+      - name: Build wheels with cibuildwheel (manylinux)
+        if: matrix.platform == 'manylinux_x86_64'
+        env:
+          CIBW_CMAKE_BUILD: "1"
+          # build multiple Python versions; adjust as needed
+          CIBW_BUILD: "cp38-* cp39-* cp310-* cp311-*"
+          CIBW_ENVIRONMENT: "CMAKE_ARGS='-DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux -DBUILD_WITH_APPS=Off -DBUILD_WITH_DECODING=On -DPY_PACKAGE_NAME=synavis'"
+        run: |
+          python -m cibuildwheel --platform linux --output-dir wheelhouse
+
+      - name: Bootstrap vcpkg (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          Write-Host "Bootstrapping vcpkg on Windows"
+          $vcpkgDir = "$Env:GITHUB_WORKSPACE\vcpkg"
+          if (-not (Test-Path $vcpkgDir)) {
+            git clone https://github.com/microsoft/vcpkg.git $vcpkgDir
+            Push-Location $vcpkgDir
+            .\bootstrap-vcpkg.bat
+            Pop-Location
+          }
+          Push-Location $vcpkgDir
+          .\vcpkg.exe install openssl libpcap libcurl libuv ffmpeg zlib --triplet x64-windows
+          Pop-Location
+          Write-Host "Copying vcpkg packages to output directory"
+          New-Item -ItemType Directory -Path "$Env:GITHUB_WORKSPACE\wheelhouse\vcpkg" -Force
+          Copy-Item -Path "$Env:GITHUB_WORKSPACE\vcpkg\installed" -Destination "$Env:GITHUB_WORKSPACE\wheelhouse\vcpkg\installed" -Recurse -Force
+          Copy-Item -Path "$Env:GITHUB_WORKSPACE\vcpkg\packages" -Destination "$Env:GITHUB_WORKSPACE\wheelhouse\vcpkg\packages" -Recurse -Force
+
+      - name: Cache vcpkg installed packages (Windows)
+        if: matrix.platform == 'windows'
+        uses: actions/cache@v4
+        with:
+          path: |
+            vcpkg\\installed
+            vcpkg\\packages
+          key: vcpkg-windows-${{ runner.os }}-${{ hashFiles('**/vcpkg/installed/**') }}
+          restore-keys: |
+            vcpkg-windows-
+
+      - name: Build wheels with cibuildwheel (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        env:
+          CIBW_CMAKE_BUILD: "1"
+          CIBW_BUILD: "cp38-* cp39-* cp310-* cp311-* cp312-*"
+          CIBW_ENVIRONMENT: "CMAKE_ARGS='-DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}\\vcpkg\\scripts\\buildsystems\\vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows -DBUILD_WITH_APPS=Off -DBUILD_WITH_DECODING=On -DPY_PACKAGE_NAME=synavis'"
+        run: |
+          python -m cibuildwheel --platform windows --output-dir wheelhouse
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v3
+        with:
+          name: wheels
+          path: wheelhouse/*.whl

@@ -1,7 +1,7 @@
 #---------------------------------------------------------------
 # Project Synavis
 # 
-# Copyright (c) 2023 Dirk Helmrich
+# Copyright (c) 2023 Dirk Baker
 # All rights reserved.
 # --------------------------------------------------------------
 # License terms MIT License
@@ -77,9 +77,6 @@ if(NOT libdatachannel_POPULATED)
   if(WIN32)
     # Define the SynavisBackend target path
     set(SYNAVIS_BACKEND_PATH ${CMAKE_SOURCE_DIR}/SynavisBackend)
-
-
-
     # Create destination directories and copy binaries, dependencies, and headers
 
     # Use flat layout under SynavisBackend/Source/libdatachannel/{lib,include}
@@ -138,14 +135,16 @@ if(NOT json_POPULATED)
   FetchContent_Populate(json)
 endif()
 
-add_custom_command(TARGET copy_datachannel POST_BUILD
-  # Copy json header-only library into the plugin include. Prefer the flat Source/libdatachannel/include if set.
-  COMMAND ${CMAKE_COMMAND} -E echo "📚 Copying json headers into plugin include folder"
-  COMMAND ${CMAKE_COMMAND} -E cmake_echo_color --blue "Destination: ${SYNAVIS_BACKEND_INCLUDE_PATH} (if set) else ${SYNAVIS_BACKEND_PATH}/include/json"
-  COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_PATH}/include/json
-  COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${json_SOURCE_DIR}/single_include $<IF:$<BOOL:${SYNAVIS_BACKEND_INCLUDE_PATH}>,${SYNAVIS_BACKEND_INCLUDE_PATH}/json,${SYNAVIS_BACKEND_PATH}/include/json>
-)
+if(WIN32)
+  add_custom_command(TARGET copy_datachannel POST_BUILD
+    # Copy json header-only library into the plugin include. Prefer the flat Source/libdatachannel/include if set.
+    COMMAND ${CMAKE_COMMAND} -E echo "📚 Copying json headers into plugin include folder"
+    COMMAND ${CMAKE_COMMAND} -E cmake_echo_color --blue "Destination: ${SYNAVIS_BACKEND_INCLUDE_PATH} (if set) else ${SYNAVIS_BACKEND_PATH}/include/json"
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_PATH}/include/json
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+      ${json_SOURCE_DIR}/single_include $<IF:$<BOOL:${SYNAVIS_BACKEND_INCLUDE_PATH}>,${SYNAVIS_BACKEND_INCLUDE_PATH}/json,${SYNAVIS_BACKEND_PATH}/include/json>
+  )
+endif()
 
 if(UNIX)
   # try to find pcap
