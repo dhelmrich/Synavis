@@ -61,7 +61,12 @@ target_include_directories(${PYPROJECT}
 )
 
 target_link_libraries(${projectname} PRIVATE datachannel-static nlohmann_json::nlohmann_json )
-target_link_libraries(${PYPROJECT} PRIVATE ${projectname} datachannel-static nlohmann_json::nlohmann_json Python::Development)
+target_link_libraries(${PYPROJECT} PRIVATE ${projectname} datachannel-static nlohmann_json::nlohmann_json)
+if(TARGET Python::Development)
+  target_link_libraries(${PYPROJECT} PRIVATE Python::Development)
+else()
+  message(STATUS "Python::Development target not available; assuming pybind11 provided the necessary linkage")
+endif()
 
 # Ensure the built extension is placed in the normal library output directory
 set_target_properties(${PYPROJECT} PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/)

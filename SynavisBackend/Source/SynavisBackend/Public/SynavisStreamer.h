@@ -39,6 +39,12 @@ public:
 	USynavisStreamer();
 	virtual ~USynavisStreamer();
 
+  UPROPERTY()
+  FSynavisMessage MsgBroadcast;
+
+  UPROPERTY()
+  FSynavisData DataBroadcast;
+
 protected:
 	// Called when the game starts
 	virtual void BeginPlay() override;
@@ -80,8 +86,8 @@ public:
 
 
 	void AcceptCallbacks(
-		const FSynavisMessage& OnMessage,
-		const FSynavisData& OnData,
+    TFunctionPtr<void(TArray<uint8>)> DataHandler,
+    TFunctionPtr<void(FString)> MsgHandler,
     APawn* InPawn);
 
 protected:

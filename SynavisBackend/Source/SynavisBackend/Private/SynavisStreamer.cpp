@@ -31,9 +31,7 @@ extern "C" {
 #include <libavutil/error.h>
 #include <libavutil/buffer.h>
 }
-#endif
 
-#if defined(LIBAV_AVAILABLE)
 // C-style free callback for av_buffer_create when we allocated the memory via av_malloc
 static void AvFreeOpaque(void* opaque, uint8_t* data)
 {
@@ -214,6 +212,12 @@ void USynavisStreamer::StopStreaming()
 
 void USynavisStreamer::StartSignalling()
 {
+  // Signalling server
+  //open/connect/autodiscover
+  // Add handler for trickle ICE
+  // Add handler for initial setup of connection
+  // Synavis might attempt to setup first for simulation coupling.
+
 	// Initialize libdatachannel components and create a datachannel
 	if (!WebRTCInternal)
 		WebRTCInternal = new FWebRTCInternal();
@@ -223,7 +227,10 @@ void USynavisStreamer::StartSignalling()
 
 	// create datachannel
 	WebRTCInternal->DataChannel = WebRTCInternal->PeerConnection->createDataChannel("synavis-stream");
-	WebRTCInternal->DataChannel->onOpen([]() { /* no-op */ });
+	WebRTCInternal->DataChannel->onOpen([]() { 
+    UE_LOG(LogTemp, Ingo, TEXT("Opening Data Channel"))
+    // TODO determine max message size and binary support
+   });
 	WebRTCInternal->DataChannel->onClosed([]() { /* no-op */ });
 	WebRTCInternal->DataChannel->onError([](std::string err) { /* no-op */ });
   WebRTCInternal->DataChannel->onMessage(
@@ -231,11 +238,14 @@ void USynavisStreamer::StartSignalling()
 	  {
 	    if (std::holds_alternative<rtc::binary>(msg))
 	    {
-	      
+	      TArray<uint8> container;
+        //try to std::move into container
+
 	    }
       else if (std::holds_alternative<std::string>(msg))
 			{
-
+        auto fmsg = FString(ANSI_TO_TCHAR(msg->data()));
+        MsgBroadcast.Broadcast(fmsg);
 			}
 	  }
 	);
@@ -246,7 +256,7 @@ void USynavisStreamer::StartSignalling()
 	WebRTCInternal->VideoTrack = WebRTCInternal->PeerConnection->addTrack(media);
 	if (WebRTCInternal->VideoTrack)
 	{
-		WebRTCInternal->VideoTrack->onOpen([]() { /* no-op */ });
+		WebRTCInternal->VideoTrack->onOpen([]() {  });
 
 		// Attach an RTP packetizer/media handler to the track so libdatachannel handles RTP packetization
     using namespace rtc;
@@ -279,8 +289,11 @@ void USynavisStreamer::StartSignalling()
 	WebRTCInternal->PeerConnection->setLocalDescription();
 }
 
-void USynavisStreamer::AcceptCallbacks(const FSynavisMessage& OnMessage, const FSynavisData& OnData, APawn* InPawn)
+void USynavisStreamer::AcceptCallbacks(
+    TFunctionPtr<void(TArray<uint8>)> DataHandler,
+    TFunctionPtr<void(FString)> MsgHandler, APawn* InPawn)
 {
+
 }
 
 void USynavisStreamer::CaptureFrame()
@@ -367,15 +380,9 @@ void USynavisStreamer::SendFrameBytes(const TArray<uint8>& Bytes, const FString&
 			memcpy(buf.data(), Bytes.GetData(), sz);
 
 		// Prefer sending via the send-only VideoTrack when available (video packets);
-		// fall back to the reliable DataChannel for arbitrary bytes.
 		if (WebRTCInternal->VideoTrack && WebRTCInternal->VideoTrack->isOpen())
 		{
 			WebRTCInternal->VideoTrack->send(buf);
-			return;
-		}
-		else if (WebRTCInternal->DataChannel && WebRTCInternal->DataChannel->isOpen())
-		{
-			WebRTCInternal->DataChannel->sendBuffer(buf);
 			return;
 		}
 	}
@@ -634,13 +641,6 @@ void USynavisStreamer::EncodeNV12AndSend(const TArray<uint8>& Y, const TArray<ui
 					fi.payloadType = 96; // keep same payload type as configured
 					WebRTCInternal->VideoTrack->sendFrame(std::move(pktbuf), fi);
 				}
-				else if (WebRTCInternal->DataChannel && WebRTCInternal->DataChannel->isOpen())
-				{
-					static thread_local rtc::binary dcbuf;
-					dcbuf.resize(sz);
-					if (sz) memcpy(dcbuf.data(), data, sz);
-					WebRTCInternal->DataChannel->sendBuffer(dcbuf);
-				}
 			}
 			av_packet_unref(LibAVState->Packet);
 		}
@@ -743,13 +743,6 @@ void USynavisStreamer::EncodeNV12ReadbackAndSend(FRHIGPUTextureReadback* Readbac
 				rtc::FrameInfo fi(ts);
 				fi.payloadType = 96;
 				WebRTCInternal->VideoTrack->sendFrame(std::move(pktbuf), fi);
-			}
-			else if (WebRTCInternal->DataChannel && WebRTCInternal->DataChannel->isOpen())
-			{
-				static thread_local rtc::binary dcbuf;
-				dcbuf.resize(sz);
-				if (sz) memcpy(dcbuf.data(), data, sz);
-				WebRTCInternal->DataChannel->sendBuffer(dcbuf);
 			}
 		}
 		av_packet_unref(LibAVState->Packet);
