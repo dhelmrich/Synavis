@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel", "scikit-build-core"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scikit-build-wrapper"
+version = "0.0.0"
+description = "Wrapper backend to post-process scikit-build-core wheels to inject FFmpeg libs"
+authors = [ { name = "Synavis Wrapper" } ]
+readme = ""
+requires-python = ">=3.10"
