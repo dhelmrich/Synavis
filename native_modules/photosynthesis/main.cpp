@@ -915,7 +915,7 @@ int main(int argc, char** argv)
       auto plant = std::shared_ptr<CPlantBox::MappedPlant>(new CPlantBox::MappedPlant());
       try
       {
-        plant->readParametersChar(parameter_file.c_str());
+        plant->readParameters(parameter_file);
       }
       catch (const std::exception& e)
       {
