@@ -25,6 +25,19 @@ set(BUILD_SHARED_LIBS ON)
 # add an option to build with decoding support
 option(BUILD_WITH_DECODING "Build with decoding support" OFF)
 option(BUILD_WITH_APPS "Build with applications" OFF)
+option(BUILD_WHEEL "Build python wheel only" OFF)
+
+# option check: WIN32 + BUILD_WHEEL demands CMAKE_TOOLCHAIN_FILE
+if(WIN32 AND BUILD_WHEEL)
+  if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+    message(FATAL_ERROR "On Windows, when BUILD_WHEEL is ON, CMAKE_TOOLCHAIN_FILE must be defined to point to vcpkg.cmake")
+  endif()
+endif()
+
+if(BUILD_WHEEL)
+  #set target to Release
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
 
 # an variable for the vcpkg.cmake path
 set(VCPKG_CMAKE_PATH "" CACHE PATH "Path to the vcpkg.cmake file")
@@ -74,7 +87,8 @@ if(NOT libdatachannel_POPULATED)
   )
 
   # On Windows, copy the built libdatachannel DLL and its dependencies to SynavisBackend
-  if(WIN32)
+  # When BUILD_WHEEL is ON we do not want to perform repository-changing side effects
+  if(WIN32 AND NOT BUILD_WHEEL)
     # Define the SynavisBackend target path
     set(SYNAVIS_BACKEND_PATH ${CMAKE_SOURCE_DIR}/SynavisBackend)
     # Create destination directories and copy binaries, dependencies, and headers
@@ -94,7 +108,13 @@ if(NOT libdatachannel_POPULATED)
     COMMAND ${CMAKE_COMMAND} -E echo "📦 Copying libdatachannel binaries after build to ${SYNAVIS_BACKEND_LIB_PATH}/"
     COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:datachannel>" "${SYNAVIS_BACKEND_LIB_PATH}/"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_LINKER_FILE:datachannel>" "${SYNAVIS_BACKEND_LIB_PATH}/"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_PDB_FILE:datachannel>" "${SYNAVIS_BACKEND_LIB_PATH}/"
+    # Use a small CMake script at build-time to copy the PDB only if it
+    # actually exists. We pass the generator-expression for the target PDB
+    # file as -Dsource so it gets evaluated for the active config.
+    COMMAND ${CMAKE_COMMAND}
+      -Dsource="$<TARGET_PDB_FILE:datachannel>"
+      -Ddest="${SYNAVIS_BACKEND_LIB_PATH}"
+      -P "${CMAKE_SOURCE_DIR}/cmake/copy_if_exists.cmake"
 
     # Run libdatachanneldeps.cmake with resolved path
     COMMAND ${CMAKE_COMMAND}
@@ -119,8 +139,6 @@ if(NOT libdatachannel_POPULATED)
     # Ensure this runs after all relevant targets are built
     add_dependencies(copy_datachannel datachannel PySynavis Synavis)
   endif()
-
-
 endif()
 
 # Example for header-only library copying (e.g., nlohmann/json)
@@ -135,7 +153,7 @@ if(NOT json_POPULATED)
   FetchContent_Populate(json)
 endif()
 
-if(WIN32)
+if(WIN32 AND TARGET copy_datachannel)
   add_custom_command(TARGET copy_datachannel POST_BUILD
     # Copy json header-only library into the plugin include. Prefer the flat Source/libdatachannel/include if set.
     COMMAND ${CMAKE_COMMAND} -E echo "📚 Copying json headers into plugin include folder"
@@ -265,15 +283,6 @@ if(NOT pybind11_FOUND)
   )
 else()
   message(STATUS "Found pybind11 v${pybind11_VERSION}: ${pybind11_INCLUDE_DIRS}")
-  # check in the include dir path if we are on the cluster by searching for "stages" in pybind11_INCLUDE_DIRS
-  string(FIND "${pybind11_INCLUDE_DIRS}" "stages" _is_cluster)
-  if(_is_cluster)
-    # print information message about this
-    message(WARNING "Found pybind11 on the cluster")
-    message(WARNING "Make sure that you have loaded the correct stages. The default stage is not always the correct one.")
-  else()
-    message(STATUS "Found pybind11 on your local machine or user space")
-  endif()
 endif()
 
 if(NOT pybind11_FOUND)
