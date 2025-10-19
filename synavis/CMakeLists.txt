@@ -29,11 +29,6 @@ else()
 endif()
 # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -openmp:llvm -openmp:experimental")
 
-#set(PYBIND11_PYTHON_VERSION 3.9)
-## Use modern CMake FindPython to reliably locate interpreter and development
-## components (headers and libraries). This works well in scikit-build's
-## isolated build environment where the Python executable and dev files are
-## provided by the temporary build environment.
 find_package(Python 3.10 COMPONENTS Interpreter Development REQUIRED)
 
 # Only add the binding file(s) to the Python module
