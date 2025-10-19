@@ -61,14 +61,37 @@ THIRD_PARTY_INCLUDES_END
 
 using rtc::binary;
 
+static const TMap<FString, TArray<TTuple<FString,FString,uint32>>> DataConnectionHeaderMap
+{
+	{TEXT("control"), { {TEXT("ID"), TEXT("int"), 1} }},
+	{TEXT("video"),   {
+	  {TEXT("Width"), TEXT("int"), 2},
+    {TEXT("Height"), TEXT("int"), 2},
+	}},
+  {TEXT("geometry"), {
+    {TEXT("VertexCount"), TEXT("int"), 4},
+    {TEXT("TriangleCount"), TEXT("int"), 4},
+    {TEXT("HasNTCVMap"), TEXT("uint"), 1}, /*Has Normal, Tangent, Cotangent, Vertex Colour: bool packed NNTTCCVV as uint8*/
+  }},
+  {TEXT("INCamera"), {
+		{TEXT("parameter"), TEXT("type"), 4 /*size of parameter in bytes*/},
+	}},
+  {TEXT("messagetemplate"), {
+		{TEXT("parameter"), TEXT("type"), 4 /*size of parameter in bytes*/},
+	}},
+};
+
 // Sets default values for this component's properties
 USynavisStreamer::USynavisStreamer()
 {
-	// Set this component to be initialized when the game starts, and to be ticked every frame.  You can turn these features
-	// off to improve performance if you don't need them.
-	PrimaryComponentTick.bCanEverTick = true;
+  // Set this component to be initialized when the game starts, and to be ticked every frame.  You can turn these features
+  // off to improve performance if you don't need them.
+  PrimaryComponentTick.bCanEverTick = true;
 
-	// ...
+	// RenderTarget initialization
+  this->RenderTarget = CreateDefaultSubobject<UTextureRenderTarget2D>(TEXT("SynavisStreamerRenderTarget"));
+
+  // ...
 }
 
 USynavisStreamer::~USynavisStreamer()
@@ -290,8 +313,9 @@ void USynavisStreamer::StartSignalling()
 }
 
 void USynavisStreamer::AcceptCallbacks(
-    TFunctionPtr<void(TArray<uint8>)> DataHandler,
-    TFunctionPtr<void(FString)> MsgHandler, APawn* InPawn)
+    TFunctionRef<void(TArray<uint8>)> DataHandler,
+    TFunctionRef<void(FString)> MsgHandler,
+    APawn* InPawn)
 {
 
 }
@@ -380,14 +404,36 @@ void USynavisStreamer::SendFrameBytes(const TArray<uint8>& Bytes, const FString&
 			memcpy(buf.data(), Bytes.GetData(), sz);
 
 		// Prefer sending via the send-only VideoTrack when available (video packets);
+		// fall back to the reliable DataChannel for arbitrary bytes.
 		if (WebRTCInternal->VideoTrack && WebRTCInternal->VideoTrack->isOpen())
 		{
 			WebRTCInternal->VideoTrack->send(buf);
 			return;
 		}
+		else if (WebRTCInternal->DataChannel && WebRTCInternal->DataChannel->isOpen())
+		{
+			WebRTCInternal->DataChannel->sendBuffer(buf);
+			return;
+		}
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT("No open DataChannel to send frame bytes (Name=%s, Format=%s)"), *Name, *Format);
+}
+
+void USynavisStreamer::OnDataChannelMessage(const rtc::message_variant& message)
+{
+	if (std::holds_alternative<rtc::binary>(message))
+	{
+		const rtc::binary& data = std::get<rtc::binary>(message);
+		// preprocessing of the data type using the control bytes
+
+	}
+	else if (std::holds_alternative<std::string>(message))
+	{
+		const std::string& msgStr = std::get<std::string>(message);
+		FString Msg = FString(msgStr.c_str());
+		
+  }
 }
 
 // Helper: encode planar I420 buffers using libav (ffmpeg) and send via WebRTC DataChannel/VideoTrack
@@ -641,6 +687,13 @@ void USynavisStreamer::EncodeNV12AndSend(const TArray<uint8>& Y, const TArray<ui
 					fi.payloadType = 96; // keep same payload type as configured
 					WebRTCInternal->VideoTrack->sendFrame(std::move(pktbuf), fi);
 				}
+				else if (WebRTCInternal->DataChannel && WebRTCInternal->DataChannel->isOpen())
+				{
+					static thread_local rtc::binary dcbuf;
+					dcbuf.resize(sz);
+					if (sz) memcpy(dcbuf.data(), data, sz);
+					WebRTCInternal->DataChannel->sendBuffer(dcbuf);
+				}
 			}
 			av_packet_unref(LibAVState->Packet);
 		}
@@ -743,6 +796,13 @@ void USynavisStreamer::EncodeNV12ReadbackAndSend(FRHIGPUTextureReadback* Readbac
 				rtc::FrameInfo fi(ts);
 				fi.payloadType = 96;
 				WebRTCInternal->VideoTrack->sendFrame(std::move(pktbuf), fi);
+			}
+			else if (WebRTCInternal->DataChannel && WebRTCInternal->DataChannel->isOpen())
+			{
+				static thread_local rtc::binary dcbuf;
+				dcbuf.resize(sz);
+				if (sz) memcpy(dcbuf.data(), data, sz);
+				WebRTCInternal->DataChannel->sendBuffer(dcbuf);
 			}
 		}
 		av_packet_unref(LibAVState->Packet);

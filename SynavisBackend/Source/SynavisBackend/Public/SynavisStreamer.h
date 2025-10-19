@@ -37,7 +37,7 @@ class SYNAVISBACKEND_API USynavisStreamer : public UActorComponent
 public:	
 	// Sets default values for this component's properties
 	USynavisStreamer();
-	virtual ~USynavisStreamer();
+	virtual ~USynavisStreamer() override;
 
   UPROPERTY()
   FSynavisMessage MsgBroadcast;
@@ -86,8 +86,8 @@ public:
 
 
 	void AcceptCallbacks(
-    TFunctionPtr<void(TArray<uint8>)> DataHandler,
-    TFunctionPtr<void(FString)> MsgHandler,
+    TFunctionRef<void(TArray<uint8>)> DataHandler,
+    TFunctionRef<void(FString)> MsgHandler,
     APawn* InPawn);
 
 protected:
@@ -118,6 +118,10 @@ protected:
 
 	// helper to send bytes via DataConnector (use UE types in public API)
 	void SendFrameBytes(const TArray<uint8>& Bytes, const FString& Name, const FString& Format);
+
+  void OnDataChannelMessage(const rtc::message_variant& message);
+
+  bool TryParseJSON(std::string message, FJsonObject& OutJsonObject);
 
 	// internal state
 	bool bStreaming = false;
