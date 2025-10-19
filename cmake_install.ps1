@@ -22,6 +22,10 @@ param(
     [switch]$Help
 )
 
+# stop on all errors
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
 # Ensure BaseDir is always an absolute path
 if (-not [System.IO.Path]::IsPathRooted($BaseDir)) {
     $BaseDir = Join-Path (Get-Location | Select-Object -ExpandProperty Path) $BaseDir
@@ -84,6 +88,17 @@ if ($null -eq $PythonLibrary -or $PythonLibrary -eq "" -or $PythonLibrary -eq "N
 Write-Host "Python include dir: $PythonIncludeDir"
 Write-Host "Python library: $PythonLibrary"
 
+# Determine the active Python executable so CMake's FindPython will use the same interpreter
+$PythonExecutable = & python -c "import sys; print(sys.executable)"
+if ($null -eq $PythonExecutable -or $PythonExecutable -eq "" -or $PythonExecutable -eq "None") {
+    Write-Error "Could not determine Python executable using 'python'."
+    exit 1
+}
+Write-Host "Python executable: $PythonExecutable"
+
+# Pass explicit Python executable to CMake to prefer the current environment's interpreter
+$PythonExeOption = "-DPython3_EXECUTABLE=`"$PythonExecutable`" -DPython_EXECUTABLE=`"$PythonExecutable`""
+
 # Vcpkg toolchain option
 $VcpkgToolchainOption = ""
 if ($VcpkgToolchain -ne "") {
@@ -115,18 +130,19 @@ if ($PythonOnly) {
 # CPlantBox options
 $CPlantBoxDirOption = ""
 if ($CPlantBoxDir -ne "") {
-    Write-Host "Using cplantbox location: $CPlantBoxDir"
-    $CPlantBoxDirOption = "-DCPlantBox_DIR=$CPlantBoxDir"
-} else {
-    Write-Host "No cplantbox location specified, pulling CPlantBox from git"
-    $CPlantBoxRepo = "$BaseDir\CPlantBox"
-    if (!(Test-Path $CPlantBoxRepo)) {
-        Write-Host "Cloning CPlantBox repository"
-        git clone https://github.com/Plant-Root-Soil-Interactions-Modelling/CPlantBox.git $CPlantBoxRepo
+    # Check for a CMake package config in the provided directory
+    $cfg1 = Join-Path $CPlantBoxDir "CPlantBoxConfig.cmake"
+    $cfg2 = Join-Path $CPlantBoxDir "lib\cmake\CPlantBox\CPlantBoxConfig.cmake"
+    if ((Test-Path $cfg1) -or (Test-Path $cfg2)) {
+        Write-Host "Using installed CPlantBox location: $CPlantBoxDir"
+        $CPlantBoxDirOption = "-DCPlantBox_DIR=$CPlantBoxDir"
     } else {
-        Write-Host "Found existing CPlantBox directory, using it"
+        Write-Warning "The provided CPlantBoxDir '$CPlantBoxDir' does not appear to be an installed CPlantBox (no CMake config found)."
+        Write-Warning "Not passing CPlantBox_DIR to CMake to avoid configuring/building CPlantBox."
+        Write-Host "If you intended to use a local CPlantBox source tree, please build/install it separately and then pass the install directory via -CPlantBoxDir."
     }
-    $CPlantBoxDirOption = "-DCPlantBox_DIR=$CPlantBoxRepo\build"
+} else {
+    Write-Host "No CPlantBox_DIR specified; will not configure or build CPlantBox."
 }
 
 $PythonLibString = if ($PythonLibrary -ne "") { "-DPYTHON_LIBRARY=$PythonLibrary" } else { "" }
@@ -143,11 +159,11 @@ $CMakeCmd = @(
     $Decoding,
     "-DPYTHON_INCLUDE_DIR=$PythonIncludeDir",
     $PythonLibString,
+    $PythonExeOption,
     $SynavisAppBuild,
     $CMakeVerboseLogging,
     $CPlantBoxDirOption,
-    $VcpkgToolchainOption,
-    $CMakeOpt
+    $VcpkgToolchainOption
 ) -join " "
 
 Write-Host "Running: $CMakeCmd"
@@ -156,13 +172,17 @@ Invoke-Expression $CMakeCmd
 if (-not $NoBuild) {
   # Build
     if ($PythonOnly) {
-        $BuildCmd = "cmake --build $BuildPath --target PySynavis -- /m:$Jobs"
+                $BuildCmd = "cmake --build `"$BuildPath`" --config $BuildType --target PySynavis -- /m:$Jobs"
     } else {
-        $BuildCmd = "cmake --build $BuildPath -- /m:$Jobs"
+                $BuildCmd = "cmake --build `"$BuildPath`" --config $BuildType -- /m:$Jobs"
     }
   Write-Host "Running: $BuildCmd"
-  Invoke-Expression $BuildCmd
-  Write-Host "Build completed successfully."
+    Invoke-Expression $BuildCmd
+    $BuildExitCode = $LASTEXITCODE
+    if ($BuildExitCode -ne 0) {
+            throw "Build failed with exit code $BuildExitCode"
+    }
+    Write-Host "Build completed successfully."
 } else {
   Write-Host "Skipping build step due to -NoBuild switch."
 }
