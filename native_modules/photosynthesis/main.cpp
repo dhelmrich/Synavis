@@ -313,7 +313,7 @@ public:
       leaf->leafGeometryX = { 38.41053981,1.0 ,1.0, 0.3, 1.0, 38.41053981 };
       leaf->createLeafRadialGeometry(leaf->leafGeometryPhi, leaf->leafGeometryX, 20);
     }
-    plant->initialize(verbose_plant, true); // initialize with stochastic = true
+    plant->initialize(verbose_plant); // initialize with stochastic = true
     plant->simulate(plant_age, verbose_plant);
     auto visualiser = std::make_shared<TaggedPlantVisualiser>();
     visualiser->tag = get_seed_by_id(position);
@@ -704,7 +704,7 @@ void photosynthesis_evaluation(std::shared_ptr<Synavis::DataConnector> m, auto f
       leaf->leafGeometryX = { 38.41053981,1.0 ,1.0, 0.3, 1.0, 38.41053981 };
       leaf->createLeafRadialGeometry(leaf->leafGeometryPhi, leaf->leafGeometryX, 20);
     }
-    plant->initialize(false, true); // initialize with stochastic = true
+    plant->initialize(false); // initialize with stochastic = true
     plant->simulate(20.0, false);
     plants.push_back(plant);
   }
@@ -931,7 +931,7 @@ int main(int argc, char** argv)
         leaf->leafGeometryX = { 38.41053981,1.0 ,1.0, 0.3, 1.0, 38.41053981 };
         leaf->createLeafRadialGeometry(leaf->leafGeometryPhi, leaf->leafGeometryX, 20);
       }
-      plant->initialize(true, true);
+      plant->initialize(true);
       plant->simulate(8, false);
 
       auto vis = std::make_shared<TaggedPlantVisualiser>();
