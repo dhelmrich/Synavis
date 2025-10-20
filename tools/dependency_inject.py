@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Post-process a wheel to inject FFmpeg runtime libraries into the package.
 
-Usage: tools/package_ffmpeg_into_wheel.py <wheel-path> [--dirs dir1;dir2]
+Usage: tools/package_ffmpeg_into_wheel.py <wheel-path> [--dirs dir1;dir2] [--noprobe]
 If --dirs is not provided, the script will probe common system locations.
+If --noprobe is provided, the script will NOT expand sibling directories or
+perform recursive glob searches; it will only search the directories provided
+explicitly via --dirs (or the default candidates if --dirs is omitted and
+--noprobe is not set).
 """
 import sys
 import os
@@ -23,42 +27,48 @@ def compute_sha256_b64(path):
     return digest, os.path.getsize(path)
 
 
-def find_ffmpeg_libs(dirs, is_windows=False):
+def find_ffmpeg_libs(dirs, is_windows=False, noprobe=False):
     patterns = []
     if is_windows:
         patterns = ['**/*avcodec*.dll', '**/*avformat*.dll', '**/*avutil*.dll', '**/*swresample*.dll', '**/*swscale*.dll']
     else:
         patterns = ['**/libavcodec*.so*', '**/libavformat*.so*', '**/libavutil*.so*', '**/libswresample*.so*', '**/libswscale*.so*']
     found = []
-    # Expand candidate directories to include common sibling/bin locations (vcpkg layout)
+    # If noprobe is set, do not expand sibling directories nor do recursive globbing.
+    # Only use the exact directories provided in `dirs` and non-recursive globbing.
     expanded_dirs = []
     for d in dirs:
         if not d:
             continue
         d = os.path.abspath(d)
         expanded_dirs.append(d)
-        # if a 'lib' directory, check sibling 'bin' and parent/bin
-        base = os.path.basename(d).lower()
-        parent = os.path.dirname(d)
-        if base in ('lib', 'lib64'):
-            sibling_bin = os.path.join(parent, 'bin')
-            expanded_dirs.append(sibling_bin)
-            # vcpkg layout: installed/<triplet>/lib -> installed/<triplet>/bin
-            expanded_dirs.append(os.path.join(parent, '..', 'bin'))
-        # sometimes libraries live in 'bin' next to 'lib'
-        if base == 'bin':
-            expanded_dirs.append(parent)
-        # also probe common debug/release subfolders
-        expanded_dirs.append(os.path.join(d, 'Release'))
-        expanded_dirs.append(os.path.join(d, 'Debug'))
 
     # Remove duplicates and non-existent paths
     expanded_dirs = [os.path.normpath(x) for x in dict.fromkeys(expanded_dirs) if x and os.path.isdir(os.path.normpath(x))]
 
     for d in expanded_dirs:
         for pat in patterns:
-            # glob with recursive
-            found.extend(glob.glob(os.path.join(d, pat), recursive=True))
+            if noprobe:
+                # when not probing, only match the immediate directory (non-recursive)
+                pat_to_use = pat.replace('**/', '')
+                found.extend(glob.glob(os.path.join(d, pat_to_use), recursive=False))
+            else:
+                # glob with recursive expansion
+                # also expand candidate dirs to sibling/bin and common subfolders
+                base = os.path.basename(d).lower()
+                parent = os.path.dirname(d)
+                probe_dirs = [d]
+                if base in ('lib', 'lib64'):
+                    probe_dirs.append(os.path.join(parent, 'bin'))
+                    probe_dirs.append(os.path.join(parent, '..', 'bin'))
+                if base == 'bin':
+                    probe_dirs.append(parent)
+                probe_dirs.append(os.path.join(d, 'Release'))
+                probe_dirs.append(os.path.join(d, 'Debug'))
+                # normalize and filter existing
+                probe_dirs = [os.path.normpath(x) for x in dict.fromkeys(probe_dirs) if x and os.path.isdir(os.path.normpath(x))]
+                for pd in probe_dirs:
+                    found.extend(glob.glob(os.path.join(pd, pat), recursive=True))
     # unique
     seen = set()
     out = []
