@@ -167,11 +167,6 @@ void USynavisStreamer::TickComponent(float DeltaTime, ELevelTick TickType, FActo
 	}
 }
 
-void USynavisStreamer::SetRenderTarget(UTextureRenderTarget2D* InTarget)
-{
-	RenderTarget = InTarget;
-}
-
 void USynavisStreamer::SetCaptureFPS(float FPS)
 {
 	CaptureFPS = FMath::Max(1.0f, FPS);
@@ -186,8 +181,8 @@ void USynavisStreamer::SetCaptureFPS(float FPS)
 
 USynavisStreamer::FWebRTCInternal::~FWebRTCInternal()
 {
-	if (DataChannel)
-		DataChannel->close();
+	if (SystemDataChannel)
+		SystemDataChannel->close();
 	if (PeerConnection)
 		PeerConnection->close();
 	if (Signalling)
@@ -199,6 +194,13 @@ USynavisStreamer::FLibAVEncoderState::~FLibAVEncoderState()
 	if (Packet) { av_packet_free(&Packet); Packet = nullptr; }
 	if (Frame) { av_frame_free(&Frame); Frame = nullptr; }
 	if (CodecCtx) { avcodec_free_context(&CodecCtx); CodecCtx = nullptr; }
+}
+
+
+ESynavisState USynavisStreamer::GetConnectionState()
+{
+  // return connection state --> we need to do callback-based updates here
+  return this->ConnectionState;
 }
 
 void USynavisStreamer::StartStreaming()
@@ -215,6 +217,7 @@ void USynavisStreamer::StartStreaming()
 		// actual codec context will be created when first frame with size arrives
 	}
 }
+
 
 void USynavisStreamer::StopStreaming()
 {
@@ -249,14 +252,13 @@ void USynavisStreamer::StartSignalling()
 	WebRTCInternal->PeerConnection = std::make_shared<rtc::PeerConnection>();
 
 	// create datachannel
-	WebRTCInternal->DataChannel = WebRTCInternal->PeerConnection->createDataChannel("synavis-stream");
-	WebRTCInternal->DataChannel->onOpen([]() { 
-    UE_LOG(LogTemp, Ingo, TEXT("Opening Data Channel"))
-    // TODO determine max message size and binary support
+	WebRTCInternal->SystemDataChannel = WebRTCInternal->PeerConnection->createDataChannel("synavis-stream");
+	WebRTCInternal->SystemDataChannel->onOpen([]() { 
+    UE_LOG(LogTemp, Warning, TEXT("Opening Data Channel"))
    });
-	WebRTCInternal->DataChannel->onClosed([]() { /* no-op */ });
-	WebRTCInternal->DataChannel->onError([](std::string err) { /* no-op */ });
-  WebRTCInternal->DataChannel->onMessage(
+	WebRTCInternal->SystemDataChannel->onClosed([]() { /* no-op */ });
+	WebRTCInternal->SystemDataChannel->onError([](std::string err) { /* no-op */ });
+  WebRTCInternal->SystemDataChannel->onMessage(
 	  [this](const rtc::message_variant& msg)
 	  {
 	    if (std::holds_alternative<rtc::binary>(msg))
@@ -267,8 +269,9 @@ void USynavisStreamer::StartSignalling()
 	    }
       else if (std::holds_alternative<std::string>(msg))
 			{
-        auto fmsg = FString(ANSI_TO_TCHAR(msg->data()));
-        MsgBroadcast.Broadcast(fmsg);
+        const std::string& str = std::get<std::string>(msg);
+        FString fmsg = FString(UTF8_TO_TCHAR(str.c_str()));
+        // MsgBroadcast.Broadcast(fmsg, nullptr);
 			}
 	  }
 	);
@@ -312,12 +315,43 @@ void USynavisStreamer::StartSignalling()
 	WebRTCInternal->PeerConnection->setLocalDescription();
 }
 
-void USynavisStreamer::AcceptCallbacks(
-    TFunctionRef<void(TArray<uint8>)> DataHandler,
-    TFunctionRef<void(FString)> MsgHandler,
-    APawn* InPawn)
+static uint32 CreatePawnHandle()
 {
+	static uint32 NextPawnHandle = 1;
+	return NextPawnHandle++;
+}
 
+int USynavisStreamer::RegisterDataSource(
+  FSynavisData DataHandler,
+  FSynavisMessage MsgHandler,
+  UTextureRenderTarget2D* VideoSource,
+  bool DedicatedChannel)
+{
+  FSynavisHandlers Handler;
+  Handler.DataHandler = DataHandler;
+  Handler.MsgHandler = MsgHandler;
+  Handler.HandlerID = CreatePawnHandle();
+
+  // create a video track and bind conversion to each tick if VideoSource is valid
+  if (VideoSource)
+  {
+    auto VideoTrack = WebRTCInternal->PeerConnection->addTrack(rtc::Description::Video("video", rtc::Description::Direction::SendOnly));
+    if (VideoTrack)
+    {
+      VideoTrack->onOpen([]() {  });
+      // Create RTP packetization config: choose random SSRC and default payload type 96 (VP9)
+      rtc::SSRC ssrc = static_cast<rtc::SSRC>(std::rand());
+      auto rtpCfg = std::make_shared<rtc::RtpPacketizationConfig>(ssrc, std::string("synavis"), 96, rtc::RtpPacketizer::VideoClockRate);
+      auto packetizer = std::make_shared<rtc::RtpPacketizer>(rtpCfg);
+      // Attach packetizer to the track (media handler chain)
+      VideoTrack->setMediaHandler(packetizer);
+      // Keep a reference so we can reuse it for frame metadata if needed
+      WebRTCInternal->Packetizer = packetizer;
+    }
+  }
+
+  RegisteredDataHandlers.Add(Handler);
+  return Handler.HandlerID;
 }
 
 void USynavisStreamer::CaptureFrame()
@@ -410,9 +444,9 @@ void USynavisStreamer::SendFrameBytes(const TArray<uint8>& Bytes, const FString&
 			WebRTCInternal->VideoTrack->send(buf);
 			return;
 		}
-		else if (WebRTCInternal->DataChannel && WebRTCInternal->DataChannel->isOpen())
+		else if (WebRTCInternal->SystemDataChannel && WebRTCInternal->SystemDataChannel->isOpen())
 		{
-			WebRTCInternal->DataChannel->sendBuffer(buf);
+			WebRTCInternal->SystemDataChannel->sendBuffer(buf);
 			return;
 		}
 	}
@@ -545,12 +579,12 @@ void USynavisStreamer::EncodeI420AndSend(const TArray<uint8>& Y, const TArray<ui
 					fi.payloadType = 96; // VP9 payload type as configured earlier
 					WebRTCInternal->VideoTrack->sendFrame(std::move(pktbuf), fi);
 				}
-				else if (WebRTCInternal->DataChannel && WebRTCInternal->DataChannel->isOpen())
+				else if (WebRTCInternal->SystemDataChannel && WebRTCInternal->SystemDataChannel->isOpen())
 				{
 					static thread_local rtc::binary dcbuf;
 					dcbuf.resize(sz);
 					if (sz) memcpy(dcbuf.data(), data, sz);
-					WebRTCInternal->DataChannel->sendBuffer(dcbuf);
+					WebRTCInternal->SystemDataChannel->sendBuffer(dcbuf);
 				}
 			}
 			av_packet_unref(LibAVState->Packet);
@@ -687,12 +721,12 @@ void USynavisStreamer::EncodeNV12AndSend(const TArray<uint8>& Y, const TArray<ui
 					fi.payloadType = 96; // keep same payload type as configured
 					WebRTCInternal->VideoTrack->sendFrame(std::move(pktbuf), fi);
 				}
-				else if (WebRTCInternal->DataChannel && WebRTCInternal->DataChannel->isOpen())
+				else if (WebRTCInternal->SystemDataChannel && WebRTCInternal->SystemDataChannel->isOpen())
 				{
 					static thread_local rtc::binary dcbuf;
 					dcbuf.resize(sz);
 					if (sz) memcpy(dcbuf.data(), data, sz);
-					WebRTCInternal->DataChannel->sendBuffer(dcbuf);
+					WebRTCInternal->SystemDataChannel->sendBuffer(dcbuf);
 				}
 			}
 			av_packet_unref(LibAVState->Packet);
@@ -797,12 +831,12 @@ void USynavisStreamer::EncodeNV12ReadbackAndSend(FRHIGPUTextureReadback* Readbac
 				fi.payloadType = 96;
 				WebRTCInternal->VideoTrack->sendFrame(std::move(pktbuf), fi);
 			}
-			else if (WebRTCInternal->DataChannel && WebRTCInternal->DataChannel->isOpen())
+			else if (WebRTCInternal->SystemDataChannel && WebRTCInternal->SystemDataChannel->isOpen())
 			{
 				static thread_local rtc::binary dcbuf;
 				dcbuf.resize(sz);
 				if (sz) memcpy(dcbuf.data(), data, sz);
-				WebRTCInternal->DataChannel->sendBuffer(dcbuf);
+				WebRTCInternal->SystemDataChannel->sendBuffer(dcbuf);
 			}
 		}
 		av_packet_unref(LibAVState->Packet);

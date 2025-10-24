@@ -25,9 +25,40 @@ extern "C" {
 #endif
 #include "SynavisStreamer.generated.h"
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FSynavisMessage, USynavisStreamer*, Connection, FString, Message, APawn*, Pawn);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FSynavisData, USynavisStreamer*, Connection, TArray<uint8>, Data, APawn*, Pawn);
+DECLARE_DYNAMIC_DELEGATE_OneParam(FSynavisMessage, FString, Message);
+DECLARE_DYNAMIC_DELEGATE_OneParam(FSynavisData, const TArray<uint8>&, Data);
 
+
+UENUM(BlueprintType)
+enum class ESynavisSourcePolicy : uint8
+{
+  RemainStatic      UMETA(DisplayName = "Static: Do not accept connection updates"),
+  DynamicOptional   UMETA(DisplayName = "Dynamic Optional: Attempt renegotiation but ignore failures"),
+  DynamicMandatory  UMETA(DisplayName = "Dynamic Mandatory: Force renegotiation on updates"),
+};
+
+UENUM(BlueprintType)
+enum class ESynavisState : uint8
+{
+  Offline     UMETA(DisplayName = "Offline"),
+  SignallingUp   UMETA(DisplayName = "Signalling Up"),
+  Negotiating   UMETA(DisplayName = "Negotiating"),
+  Connected    UMETA(DisplayName = "Connected"),
+  Failure      UMETA(DisplayName = "Failure"),
+};
+
+struct FSynavisHandlers
+{
+  // Video: Source -> Destination
+  // a TOptional<TPair<std::shared_ptr<rtc::Track>, UTextureRenderTarget2D*>>
+  TOptional<TPair<std::shared_ptr<rtc::Track>, UTextureRenderTarget2D*>> Video;
+
+  std::optional<std::shared_ptr<rtc::DataChannel>> DataChannel;
+
+  FSynavisData DataHandler;
+  FSynavisMessage MsgHandler;
+  uint32 HandlerID = 0;
+};
 
 UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
 class SYNAVISBACKEND_API USynavisStreamer : public UActorComponent
@@ -44,6 +75,7 @@ public:
 
   UPROPERTY()
   FSynavisData DataBroadcast;
+
 
 protected:
 	// Called when the game starts
@@ -67,12 +99,15 @@ public:
 	void StopStreaming();
 
 	UFUNCTION(BlueprintCallable, Category = "Streaming")
-	void SetRenderTarget(class UTextureRenderTarget2D* InTarget);
-
-	UFUNCTION(BlueprintCallable, Category = "Streaming")
 	void SetCaptureFPS(float FPS);
 
-	// no setter: encoding uses VP9 by default
+	// Connection Policy for handling additional requests to stream cameras
+  // from within Unreal: If set, the streamer will attempt to renegotiate
+  // the connection when receiving such requests. By default, we will ignore
+  // these requests in the instance that libdatachannel reports that we have
+  // an active connection
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Streaming|Connection")
+  ESynavisSourcePolicy SourcePolicy = ESynavisSourcePolicy::RemainStatic;
 
 	// Signalling server configuration for WebRTC (ws://host:port)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Streaming|Signalling")
@@ -84,15 +119,31 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Streaming|Signalling")
 	void StartSignalling();
 
+  UFUNCTION(BlueprintCallable, Category = "Streaming|Connection")
+  ESynavisState GetConnectionState() const;
 
-	void AcceptCallbacks(
-    TFunctionRef<void(TArray<uint8>)> DataHandler,
-    TFunctionRef<void(FString)> MsgHandler,
-    APawn* InPawn);
+  /**
+   * Register data source for this streamer instance.
+   * @param DataHandler Callback to receive binary data messages
+   * @param MsgHandler Callback to receive text messages
+   * @param VideoSource optional reference to a UTextureRenderTarget2D to use as video source
+   * @param DedicatedChannel set to false by default but if true, will trigger the creation of a dedicated DataChannel for this handler
+   * @return Handler ID that can be used to unregister later
+   */
+	UFUNCTION(BlueprintCallable, Category = "Streaming|Data")
+	int RegisterDataSource(
+		FSynavisData DataHandler,
+		FSynavisMessage MsgHandler,
+		UTextureRenderTarget2D* VideoSource = nullptr,
+		bool DedicatedChannel = false);
+
 
 protected:
 	// timer callback to capture frames
 	void CaptureFrame();
+
+  UPROPERTY()
+  ESynavisState ConnectionState = ESynavisState::Offline;
 
 	// Pending GPU readback record for non-blocking zero-copy path
 	struct FPendingNV12Readback
@@ -104,6 +155,9 @@ protected:
 
 	// Pending readbacks queue; processed in TickComponent
 	TArray<FPendingNV12Readback> PendingReadbacks;
+
+  // TSet of registered data handlers
+  TSet<FSynavisHandlers> RegisteredDataHandlers;
 
 	// Encode planar I420 buffers using libav and send via WebRTC (defined in cpp)
 	void EncodeI420AndSend(const TArray<uint8>& Y, const TArray<uint8>& U, const TArray<uint8>& V, int Width, int Height);
@@ -130,9 +184,8 @@ protected:
 	struct FWebRTCInternal
 	{
 			std::shared_ptr<rtc::PeerConnection> PeerConnection;
-			std::shared_ptr<rtc::DataChannel> DataChannel;
+			std::shared_ptr<rtc::DataChannel> SystemDataChannel;
 			std::shared_ptr<rtc::WebSocket> Signalling;
-			std::shared_ptr<rtc::Track> VideoTrack;
 			std::shared_ptr<rtc::RtpPacketizer> Packetizer;
 			FWebRTCInternal() {}
 			~FWebRTCInternal(); // defined in cpp
