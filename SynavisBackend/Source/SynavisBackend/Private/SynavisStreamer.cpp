@@ -378,8 +378,7 @@ void USynavisStreamer::StartSignalling()
 	// onOpen: communicate local SDP(s)
 	WebRTCInternal->Signalling->onOpen([this]() {
 		UE_LOG(LogTemp, Log, TEXT("Synavis: Signalling websocket opened"));
-    this->ConnectionState = ESynavisState::SignallingUp;
-		CommunicateSDPs();
+		this->ConnectionState = ESynavisState::SignallingUp;
 	});
 
 	// onMessage: receive signalling JSON messages (offer/answer/iceCandidate and simple control messages)
@@ -400,7 +399,41 @@ void USynavisStreamer::StartSignalling()
 				if (Parsed.HasField(TEXT("type")))
 					Type = Parsed.GetStringField(TEXT("type"));
 
-				if (Type.Equals(TEXT("answer"), ESearchCase::IgnoreCase) || Type.Equals(TEXT("offer"), ESearchCase::IgnoreCase))
+				if (Type.Equals(TEXT("playerConnected"), ESearchCase::IgnoreCase))
+				{
+					bool dataChannel = false;
+					bool sfu = false;
+					FString PlayerId;
+					if (Parsed.HasField(TEXT("playerId")))
+						PlayerId = Parsed.GetStringField(TEXT("playerId"));
+					if (Parsed.HasField(TEXT("dataChannel")))
+						dataChannel = Parsed.GetBoolField(TEXT("dataChannel"));
+					if (Parsed.HasField(TEXT("sfu")))
+						sfu = Parsed.GetBoolField(TEXT("sfu"));
+
+					UE_LOG(LogTemp, Log, TEXT("Synavis: Received playerConnected (playerId=%s dataChannel=%s sfu=%s)"), *PlayerId, dataChannel ? TEXT("true") : TEXT("false"), sfu ? TEXT("true") : TEXT("false"));
+
+					// Only proceed to communicate SDPs when the client intends to use dataChannel and is not SFU.
+					if (dataChannel && !sfu)
+					{
+						if (!this->bPlayerConnected)
+						{
+							this->bPlayerConnected = true;
+							this->ConnectionState = ESynavisState::Negotiating;
+							// Send our local SDP via signalling websocket now that a player is connected
+							CommunicateSDPs();
+						}
+						else
+						{
+							UE_LOG(LogTemp, Verbose, TEXT("Synavis: playerConnected already processed - ignoring duplicate"));
+						}
+					}
+					else
+					{
+						UE_LOG(LogTemp, Warning, TEXT("Synavis: Ignoring playerConnected - client not using dataChannel or is SFU"));
+					}
+				}
+				else if (Type.Equals(TEXT("answer"), ESearchCase::IgnoreCase) || Type.Equals(TEXT("offer"), ESearchCase::IgnoreCase))
 				{
 					// set remote description
 					if (Parsed.HasField(TEXT("sdp")))
@@ -412,6 +445,14 @@ void USynavisStreamer::StartSignalling()
 						{
 							WebRTCInternal->PeerConnection->setRemoteDescription(remote);
 							UE_LOG(LogTemp, Log, TEXT("Synavis: Set remote description (type=%s)"), *Type);
+
+              // when we have the remote description, we can send the ICE candidates
+              for (auto candidate : WebRTCInternal->PeerConnection->localDescription().value().extractCandidates())
+              {
+                //json ice = { {"type","iceCandidate"}, {"candidate", {{"candidate",candidate.candidate()}, {"sdpMid",candidate.mid()}, {"sdpMLineIndex",std::stoi(candidate.mid())}}} };
+                std::string ice = "{\"type\":\"iceCandidate\",\"candidate\":{\"candidate\":\"" + candidate.candidate() + "\",\"sdpMid\":\"" + candidate.mid() + "\",\"sdpMLineIndex\":" + std::to_string(std::stoi(candidate.mid())) + "}}";
+                WebRTCInternal->Signalling->send(ice);
+              }
 						}
 					}
 				}
@@ -452,11 +493,11 @@ bool USynavisStreamer::TryParseJSON(std::string message, FJsonObject& OutJsonObj
 
 void USynavisStreamer::CommunicateSDPs()
 {
-	if (!WebRTCInternal || !WebRTCInternal->Signalling || !WebRTCInternal->PeerConnection)
-		return;
-
 	if (!WebRTCInternal->Signalling->isOpen())
-		return;
+	{
+    UE_LOG(LogTemp, Warning, TEXT("Synavis: Signalling websocket not open - cannot send local SDP"));
+    return;
+  }
 
 	auto descriptionOpt = WebRTCInternal->PeerConnection->localDescription();
 	if (!descriptionOpt)

@@ -198,6 +198,8 @@ protected:
 	// internal state
 	bool bStreaming = false;
 
+	bool bPlayerConnected = false;
+
 	// Opaque pimpl for WebRTC internals (defined here so UHT sees a complete type)
 	struct FWebRTCInternal
 	{
