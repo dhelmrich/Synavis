@@ -25,6 +25,9 @@ extern "C" {
 #endif
 #include "SynavisStreamer.generated.h"
 
+class UTextureRenderTarget2D;
+class USceneCaptureComponent2D;
+
 DECLARE_DYNAMIC_DELEGATE_OneParam(FSynavisMessage, FString, Message);
 DECLARE_DYNAMIC_DELEGATE_OneParam(FSynavisData, const TArray<uint8>&, Data);
 
@@ -50,14 +53,27 @@ enum class ESynavisState : uint8
 struct FSynavisHandlers
 {
   // Video: Source -> Destination
-  // a TOptional<TPair<std::shared_ptr<rtc::Track>, UTextureRenderTarget2D*>>
-  TOptional<TPair<std::shared_ptr<rtc::Track>, UTextureRenderTarget2D*>> Video;
+	// a TOptional<TPair<std::shared_ptr<rtc::Track>, USceneCaptureComponent2D*>>
+	// Store the scene capture component so we can validate it (ensure it has a TextureTarget)
+	TOptional<TPair<std::shared_ptr<rtc::Track>, USceneCaptureComponent2D*>> Video;
 
   std::optional<std::shared_ptr<rtc::DataChannel>> DataChannel;
 
   FSynavisData DataHandler;
   FSynavisMessage MsgHandler;
   uint32 HandlerID = 0;
+  
+	// Provide hashing and equality so FSynavisHandlers can be used in UE containers (TSet/TMap)
+	friend FORCEINLINE uint32 GetTypeHash(const FSynavisHandlers& H)
+	{
+		// Use the HandlerID as the stable unique key for hashing
+		return H.HandlerID;
+	}
+
+	friend FORCEINLINE bool operator==(const FSynavisHandlers& A, const FSynavisHandlers& B)
+	{
+		return A.HandlerID == B.HandlerID;
+	}
 };
 
 UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
@@ -126,7 +142,7 @@ public:
    * Register data source for this streamer instance.
    * @param DataHandler Callback to receive binary data messages
    * @param MsgHandler Callback to receive text messages
-   * @param VideoSource optional reference to a UTextureRenderTarget2D to use as video source
+   * @param SceneCapture optional reference to a USceneCaptureComponent2D to use as video source. The capture must have a valid TextureTarget.
    * @param DedicatedChannel set to false by default but if true, will trigger the creation of a dedicated DataChannel for this handler
    * @return Handler ID that can be used to unregister later
    */
@@ -134,9 +150,12 @@ public:
 	int RegisterDataSource(
 		FSynavisData DataHandler,
 		FSynavisMessage MsgHandler,
-		UTextureRenderTarget2D* VideoSource = nullptr,
+		USceneCaptureComponent2D* SceneCapture = nullptr,
 		bool DedicatedChannel = false);
 
+    
+    // Send raw encoded frame bytes to a target RTC track or datachannel
+    void SendFrameBytes(const TArray<uint8>& Bytes, const FString& Name, const FString& Format, std::shared_ptr<rtc::Track> TargetTrack);
 
 protected:
 	// timer callback to capture frames
@@ -151,6 +170,10 @@ protected:
 		FRHIGPUTextureReadback* ReadbackY = nullptr;
 		FRHIGPUTextureReadback* ReadbackUV = nullptr;
 		double EnqueuedAt = 0.0;
+		// optional track to send encoded data to
+		std::shared_ptr<rtc::Track> TargetTrack = nullptr;
+		int Width = 0;
+		int Height = 0;
 	};
 
 	// Pending readbacks queue; processed in TickComponent
@@ -159,23 +182,18 @@ protected:
   // TSet of registered data handlers
   TSet<FSynavisHandlers> RegisteredDataHandlers;
 
-	// Encode planar I420 buffers using libav and send via WebRTC (defined in cpp)
-	void EncodeI420AndSend(const TArray<uint8>& Y, const TArray<uint8>& U, const TArray<uint8>& V, int Width, int Height);
-
-	// Encode NV12 buffers using libav and send via WebRTC (Y plane + packed interleaved UV)
-	// Y: size Width*Height, UV: size (Width * Height)/2, typical strides: YStride=Width, UVStride=Width
-	void EncodeNV12AndSend(const TArray<uint8>& Y, const TArray<uint8>& UV, int YStride, int UVStride, int Width, int Height);
-
 	// Zero-copy variant: accept FRHIGPUTextureReadback readbacks for Y and UV (NV12). The helper will wrap
 	// the readback pointers into AVBufferRefs that free/unlock the readbacks when FFmpeg is done.
-	void EncodeNV12ReadbackAndSend(class FRHIGPUTextureReadback* ReadbackY, class FRHIGPUTextureReadback* ReadbackUV, int Width, int Height);
-
-	// helper to send bytes via DataConnector (use UE types in public API)
-	void SendFrameBytes(const TArray<uint8>& Bytes, const FString& Name, const FString& Format);
+	// TargetTrack is required and the encoded packets will be sent to that track.
+	void EncodeNV12ReadbackAndSend(class FRHIGPUTextureReadback* ReadbackY, class FRHIGPUTextureReadback* ReadbackUV, int Width, int Height, std::shared_ptr<rtc::Track> TargetTrack);
 
   void OnDataChannelMessage(const rtc::message_variant& message);
 
   bool TryParseJSON(std::string message, FJsonObject& OutJsonObject);
+
+	// Signalling helpers (ported behavior from DataConnector)
+	void CommunicateSDPs();
+	void RegisterRemoteCandidate(const FJsonObject& Content);
 
 	// internal state
 	bool bStreaming = false;

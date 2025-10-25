@@ -2,6 +2,9 @@
 
 
 #include "SynavisStreamer.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
@@ -10,6 +13,7 @@
 #include "RendererInterface.h"
 #include "RenderUtils.h"
 #include "Engine/Texture2D.h"
+#include "Components/SceneCaptureComponent2D.h"
 #include "Misc/ScopeLock.h"
 #include <memory>
 #include <string>
@@ -23,6 +27,8 @@ THIRD_PARTY_INCLUDES_START
 #include <rtc/rtppacketizer.hpp>
 #include <rtc/rtppacketizationconfig.hpp>
 #include <rtc/frameinfo.hpp>
+#include <rtc/datachannel.hpp>
+#include <rtc/configuration.hpp>
 #if defined(LIBAV_AVAILABLE)
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -63,23 +69,48 @@ using rtc::binary;
 
 static const TMap<FString, TArray<TTuple<FString,FString,uint32>>> DataConnectionHeaderMap
 {
-	{TEXT("control"), { {TEXT("ID"), TEXT("int"), 1} }},
-	{TEXT("video"),   {
-	  {TEXT("Width"), TEXT("int"), 2},
-    {TEXT("Height"), TEXT("int"), 2},
+		{TEXT("control"), { {TEXT("ID"), TEXT("int"), 1} }},
+		{TEXT("video"),   {
+			{TEXT("Width"), TEXT("int"), 2},
+		{TEXT("Height"), TEXT("int"), 2},
+		}},
+	{TEXT("geometry"), {
+		{TEXT("VertexCount"), TEXT("int"), 4},
+		{TEXT("TriangleCount"), TEXT("int"), 4},
+		{TEXT("HasNTCVMap"), TEXT("uint"), 1}, /*Has Normal, Tangent, Cotangent, Vertex Colour: bool packed NNTTCCVV as uint8*/
 	}},
-  {TEXT("geometry"), {
-    {TEXT("VertexCount"), TEXT("int"), 4},
-    {TEXT("TriangleCount"), TEXT("int"), 4},
-    {TEXT("HasNTCVMap"), TEXT("uint"), 1}, /*Has Normal, Tangent, Cotangent, Vertex Colour: bool packed NNTTCCVV as uint8*/
-  }},
-  {TEXT("INCamera"), {
-		{TEXT("parameter"), TEXT("type"), 4 /*size of parameter in bytes*/},
-	}},
-  {TEXT("messagetemplate"), {
-		{TEXT("parameter"), TEXT("type"), 4 /*size of parameter in bytes*/},
-	}},
+	{TEXT("INCamera"), {
+				{TEXT("parameter"), TEXT("type"), 4 /*size of parameter in bytes*/},
+		}},
+	{TEXT("messagetemplate"), {
+				{TEXT("parameter"), TEXT("type"), 4 /*size of parameter in bytes*/},
+		}},
+	// Additional command types mirrored from DataConnector
+	{TEXT("buffer"), {
+				{TEXT("start"), TEXT("string"), 0},
+				{TEXT("stop"), TEXT("string"), 0},
+				{TEXT("size"), TEXT("int"), 4},
+				{TEXT("format"), TEXT("string"), 0},
+		}},
+	{TEXT("directbase64"), {
+				{TEXT("points"), TEXT("string"), 0},
+				{TEXT("triangles"), TEXT("string"), 0},
+		}},
+	{TEXT("message"), {
+				{TEXT("text"), TEXT("string"), 0},
+		}},
+	{TEXT("candidate"), {
+				{TEXT("candidate"), TEXT("string"), 0},
+				{TEXT("sdpMLineIndex"), TEXT("int"), 4},
+				{TEXT("sdpMid"), TEXT("string"), 0},
+		}},
+	{TEXT("iceCandidate"), {
+				{TEXT("candidate"), TEXT("string"), 0},
+				{TEXT("sdpMLineIndex"), TEXT("int"), 4},
+				{TEXT("sdpMid"), TEXT("string"), 0},
+		}},
 };
+
 
 // Sets default values for this component's properties
 USynavisStreamer::USynavisStreamer()
@@ -125,7 +156,7 @@ void USynavisStreamer::TickComponent(float DeltaTime, ELevelTick TickType, FActo
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	if (!bStreaming || !RenderTarget)
+	if (!bStreaming)
 		return;
 
 	// Process any pending NV12 GPU readbacks (non-blocking)
@@ -143,8 +174,8 @@ void USynavisStreamer::TickComponent(float DeltaTime, ELevelTick TickType, FActo
 		// If readbacks ready, encode and remove from queue
 		if (rec.ReadbackY->IsReady() && rec.ReadbackUV->IsReady())
 		{
-			UE_LOG(LogTemp, Verbose, TEXT("Synavis: Pending readback ready, starting zero-copy encode (Width=%d Height=%d)"), RenderTarget->SizeX, RenderTarget->SizeY);
-			EncodeNV12ReadbackAndSend(rec.ReadbackY, rec.ReadbackUV, RenderTarget->SizeX, RenderTarget->SizeY);
+			UE_LOG(LogTemp, Verbose, TEXT("Synavis: Pending readback ready, starting zero-copy encode (Width=%d Height=%d)"), rec.Width, rec.Height);
+			EncodeNV12ReadbackAndSend(rec.ReadbackY, rec.ReadbackUV, rec.Width, rec.Height, rec.TargetTrack);
 			// EncodeNV12ReadbackAndSend takes ownership of the readbacks (via AVBuffer free callback),
 			// so do not delete them here.
 			PendingReadbacks.RemoveAtSwap(i);
@@ -197,7 +228,7 @@ USynavisStreamer::FLibAVEncoderState::~FLibAVEncoderState()
 }
 
 
-ESynavisState USynavisStreamer::GetConnectionState()
+ESynavisState USynavisStreamer::GetConnectionState() const
 {
   // return connection state --> we need to do callback-based updates here
   return this->ConnectionState;
@@ -275,25 +306,51 @@ void USynavisStreamer::StartSignalling()
 			}
 	  }
 	);
+  {
+		TArray<FSynavisHandlers> HandlersCopy = RegisteredDataHandlers.Array();
+		for (FSynavisHandlers HandlerCopy : HandlersCopy)
+		{
+			if (!HandlerCopy.Video.IsSet())
+				continue; // handler did not register a video source
+			TPair<std::shared_ptr<rtc::Track>, USceneCaptureComponent2D*> Pair = HandlerCopy.Video.GetValue();
+			// If a track already exists, skip
+			if (Pair.Key)
+				continue;
+			USceneCaptureComponent2D* SceneCap = Pair.Value;
+			if (!SceneCap)
+				continue;
+			UTextureRenderTarget2D* VideoSource = SceneCap->TextureTarget;
+			if (!VideoSource)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("Synavis: Handler %d has no valid TextureTarget - skipping track creation"), HandlerCopy.HandlerID);
+				continue;
+			}
 
-	rtc::Description::Video media("video", rtc::Description::Direction::SendOnly);
-	media.addVP9Codec(96);
-	media.setBitrate(90000);
-	WebRTCInternal->VideoTrack = WebRTCInternal->PeerConnection->addTrack(media);
-	if (WebRTCInternal->VideoTrack)
-	{
-		WebRTCInternal->VideoTrack->onOpen([]() {  });
+			// Build media description and add a track for this handler
+			rtc::Description::Video media("video", rtc::Description::Direction::SendOnly);
+			media.addVP9Codec(96);
+			media.setBitrate(90000);
+			auto Track = WebRTCInternal->PeerConnection->addTrack(media);
+			if (!Track)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("Synavis: Failed to create video track for handler %d"), HandlerCopy.HandlerID);
+				continue;
+			}
 
-		// Attach an RTP packetizer/media handler to the track so libdatachannel handles RTP packetization
-    using namespace rtc;
-    // Create RTP packetization config: choose random SSRC and default payload type 96 (VP9)
-    SSRC ssrc = static_cast<SSRC>(std::rand());
-    auto rtpCfg = std::make_shared<RtpPacketizationConfig>(ssrc, std::string("synavis"), 96, RtpPacketizer::VideoClockRate);
-    auto packetizer = std::make_shared<RtpPacketizer>(rtpCfg);
-    // Attach packetizer to the track (media handler chain)
-    WebRTCInternal->VideoTrack->setMediaHandler(packetizer);
-    // Keep a reference so we can reuse it for frame metadata if needed
-    WebRTCInternal->Packetizer = packetizer;
+			// Attach callbacks and packetizer
+			FString LogPrefix = LogSetup(HandlerCopy.HandlerID, SceneCap);
+			Track->onOpen([LogPrefix]() { UE_LOG(LogTemp, Warning, TEXT("%s: Video track opened"), *LogPrefix); });
+			// Create RTP packetization config and attach a packetizer specific to this track
+			rtc::SSRC ssrc = static_cast<rtc::SSRC>(std::rand());
+			auto rtpCfg = std::make_shared<rtc::RtpPacketizationConfig>(ssrc, std::string("synavis"), 96, rtc::RtpPacketizer::VideoClockRate);
+			auto packetizer = std::make_shared<rtc::RtpPacketizer>(rtpCfg);
+			Track->setMediaHandler(packetizer);
+
+			// Update the handler stored in RegisteredDataHandlers: remove and re-add with track filled in
+			RegisteredDataHandlers.Remove(HandlerCopy);
+			HandlerCopy.Video.Emplace(Track, SceneCap);
+			RegisteredDataHandlers.Add(HandlerCopy);
+		}
 	}
 
 	// handle incoming signalling messages if you want to accept answers via websocket
@@ -313,6 +370,169 @@ void USynavisStreamer::StartSignalling()
 	});
 
 	WebRTCInternal->PeerConnection->setLocalDescription();
+
+	// Create signalling websocket and hook handlers (mirror DataConnector behavior)
+	if (!WebRTCInternal->Signalling)
+		WebRTCInternal->Signalling = std::make_shared<rtc::WebSocket>();
+
+	// onOpen: communicate local SDP(s)
+	WebRTCInternal->Signalling->onOpen([this]() {
+		UE_LOG(LogTemp, Log, TEXT("Synavis: Signalling websocket opened"));
+    this->ConnectionState = ESynavisState::SignallingUp;
+		CommunicateSDPs();
+	});
+
+	// onMessage: receive signalling JSON messages (offer/answer/iceCandidate and simple control messages)
+	WebRTCInternal->Signalling->onMessage([this](auto messageOrData) {
+		try {
+			if (std::holds_alternative<std::string>(messageOrData))
+			{
+				const std::string& msg = std::get<std::string>(messageOrData);
+				FJsonObject Parsed;
+				if (!TryParseJSON(msg, Parsed))
+				{
+					UE_LOG(LogTemp, Warning, TEXT("Synavis: Received non-JSON signalling message"));
+					return;
+				}
+
+				// extract type field
+				FString Type;
+				if (Parsed.HasField(TEXT("type")))
+					Type = Parsed.GetStringField(TEXT("type"));
+
+				if (Type.Equals(TEXT("answer"), ESearchCase::IgnoreCase) || Type.Equals(TEXT("offer"), ESearchCase::IgnoreCase))
+				{
+					// set remote description
+					if (Parsed.HasField(TEXT("sdp")))
+					{
+						std::string sdp = TCHAR_TO_UTF8(*Parsed.GetStringField(TEXT("sdp")));
+						std::string typestr = TCHAR_TO_UTF8(*Type);
+						rtc::Description remote(sdp, typestr);
+						if (WebRTCInternal && WebRTCInternal->PeerConnection)
+						{
+							WebRTCInternal->PeerConnection->setRemoteDescription(remote);
+							UE_LOG(LogTemp, Log, TEXT("Synavis: Set remote description (type=%s)"), *Type);
+						}
+					}
+				}
+				else if (Type.Equals(TEXT("iceCandidate"), ESearchCase::IgnoreCase) || Type.Equals(TEXT("candidate"), ESearchCase::IgnoreCase))
+				{
+					RegisterRemoteCandidate(Parsed);
+				}
+				else
+				{
+					// forward other signalling messages to log
+					UE_LOG(LogTemp, Verbose, TEXT("Synavis: Signalling message type=%s"), *Type);
+				}
+			}
+			else
+			{
+				// binary signalling messages are unexpected; log and ignore
+				UE_LOG(LogTemp, Warning, TEXT("Synavis: Received binary signalling message (ignored)"));
+			}
+		}
+		catch (const std::exception& e)
+		{
+			UE_LOG(LogTemp, Error, TEXT("Synavis: Exception in signalling onMessage: %s"), ANSI_TO_TCHAR(e.what()));
+		}
+	});
+}
+
+bool USynavisStreamer::TryParseJSON(std::string message, FJsonObject& OutJsonObject)
+{
+	FString In = FString(UTF8_TO_TCHAR(message.c_str()));
+	TSharedPtr<FJsonObject> Parsed;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(In);
+	if (!FJsonSerializer::Deserialize(Reader, Parsed) || !Parsed.IsValid())
+		return false;
+	// Copy parsed into OutJsonObject
+	OutJsonObject = *Parsed;
+	return true;
+}
+
+void USynavisStreamer::CommunicateSDPs()
+{
+	if (!WebRTCInternal || !WebRTCInternal->Signalling || !WebRTCInternal->PeerConnection)
+		return;
+
+	if (!WebRTCInternal->Signalling->isOpen())
+		return;
+
+	auto descriptionOpt = WebRTCInternal->PeerConnection->localDescription();
+	if (!descriptionOpt)
+		return;
+
+	// Build a JSON object with type and sdp and send via signalling websocket
+	TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+	std::string typestr = descriptionOpt->typeString();
+	std::string sdpStr = static_cast<std::string>(*descriptionOpt);
+	Obj->SetStringField(TEXT("type"), FString(UTF8_TO_TCHAR(typestr.c_str())));
+	Obj->SetStringField(TEXT("sdp"), FString(UTF8_TO_TCHAR(sdpStr.c_str())));
+
+	FString Out; 
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
+	if (FJsonSerializer::Serialize(Obj.ToSharedRef(), Writer))
+	{
+		std::string outcpp = TCHAR_TO_UTF8(*Out);
+		try {
+			WebRTCInternal->Signalling->send(outcpp);
+			UE_LOG(LogTemp, Log, TEXT("Synavis: Sent local SDP via signalling"));
+		}
+		catch (...) { UE_LOG(LogTemp, Warning, TEXT("Synavis: Failed to send SDP over signalling")); }
+	}
+}
+
+void USynavisStreamer::RegisterRemoteCandidate(const FJsonObject& Content)
+{
+	if (!WebRTCInternal || !WebRTCInternal->PeerConnection)
+		return;
+
+	FString candStr; FString sdpMid; int32 sdpMLineIndex = -1;
+
+	// candidate may be an object or a string
+	const TSharedPtr<FJsonValue>* val = nullptr;
+	if (Content.HasField(TEXT("candidate")))
+	{
+		const TSharedPtr<FJsonValue> CandidateVal = Content.TryGetField(TEXT("candidate"));
+		if (CandidateVal.IsValid() && CandidateVal->Type == EJson::Object)
+		{
+			TSharedPtr<FJsonObject> Inner = CandidateVal->AsObject();
+			if (Inner.IsValid() && Inner->HasField(TEXT("candidate")))
+				candStr = Inner->GetStringField(TEXT("candidate"));
+			if (Inner.IsValid() && Inner->HasField(TEXT("sdpMid")))
+				sdpMid = Inner->GetStringField(TEXT("sdpMid"));
+			if (Inner.IsValid() && Inner->HasField(TEXT("sdpMLineIndex")))
+				sdpMLineIndex = Inner->GetNumberField(TEXT("sdpMLineIndex"));
+		}
+		else if (CandidateVal.IsValid() && CandidateVal->Type == EJson::String)
+		{
+			candStr = CandidateVal->AsString();
+		}
+	}
+
+	if (Content.HasField(TEXT("sdpMid")) && sdpMid.IsEmpty())
+		sdpMid = Content.GetStringField(TEXT("sdpMid"));
+	if (Content.HasField(TEXT("sdpMLineIndex")) && sdpMLineIndex == -1)
+		sdpMLineIndex = Content.GetNumberField(TEXT("sdpMLineIndex"));
+
+	if (candStr.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Synavis: Received iceCandidate message with no candidate field"));
+		return;
+	}
+
+	// Convert to std::string and add to peer connection
+	std::string scand = TCHAR_TO_UTF8(*candStr);
+	std::string smid = TCHAR_TO_UTF8(*sdpMid);
+	try {
+		rtc::Candidate ice(scand, smid);
+		WebRTCInternal->PeerConnection->addRemoteCandidate(ice);
+		UE_LOG(LogTemp, Log, TEXT("Synavis: Registered remote candidate"));
+	}
+	catch (const std::exception& e)
+	{
+		UE_LOG(LogTemp, Error, TEXT("Synavis: Exception registering candidate: %s"), ANSI_TO_TCHAR(e.what()));
+	}
 }
 
 static uint32 CreatePawnHandle()
@@ -321,33 +541,116 @@ static uint32 CreatePawnHandle()
 	return NextPawnHandle++;
 }
 
+FORCEINLINE FString LogSetup(auto ID, USceneComponent* Child)
+{
+  // get actor name
+  FString ActorName = Child->GetOwner() ? Child->GetOwner()->GetName() : TEXT("NoOwner");
+  FString CompName = Child->GetName();
+  return FString::Printf(TEXT("%d<%s:%s>"), ID, *ActorName, *CompName);
+}
+
 int USynavisStreamer::RegisterDataSource(
-  FSynavisData DataHandler,
-  FSynavisMessage MsgHandler,
-  UTextureRenderTarget2D* VideoSource,
-  bool DedicatedChannel)
+	FSynavisData DataHandler,
+	FSynavisMessage MsgHandler,
+	USceneCaptureComponent2D* SceneCapture,
+	bool DedicatedChannel)
 {
   FSynavisHandlers Handler;
   Handler.DataHandler = DataHandler;
   Handler.MsgHandler = MsgHandler;
   Handler.HandlerID = CreatePawnHandle();
+	auto LogPrefix = LogSetup(Handler.HandlerID, SceneCapture);
 
-  // create a video track and bind conversion to each tick if VideoSource is valid
-  if (VideoSource)
+  // If we don't have an active PeerConnection yet, register the handler with a null track (offline).
+  // If we do have a PeerConnection, create the send-only video track now according to the source policy.
+  if (SceneCapture)
   {
-    auto VideoTrack = WebRTCInternal->PeerConnection->addTrack(rtc::Description::Video("video", rtc::Description::Direction::SendOnly));
-    if (VideoTrack)
+    // Ensure the SceneCapture has a render target we can use
+    UTextureRenderTarget2D* VideoSource = SceneCapture->TextureTarget;
+    if (!VideoSource)
     {
-      VideoTrack->onOpen([]() {  });
-      // Create RTP packetization config: choose random SSRC and default payload type 96 (VP9)
-      rtc::SSRC ssrc = static_cast<rtc::SSRC>(std::rand());
-      auto rtpCfg = std::make_shared<rtc::RtpPacketizationConfig>(ssrc, std::string("synavis"), 96, rtc::RtpPacketizer::VideoClockRate);
-      auto packetizer = std::make_shared<rtc::RtpPacketizer>(rtpCfg);
-      // Attach packetizer to the track (media handler chain)
-      VideoTrack->setMediaHandler(packetizer);
-      // Keep a reference so we can reuse it for frame metadata if needed
-      WebRTCInternal->Packetizer = packetizer;
+      UE_LOG(LogTemp, Warning, TEXT("%s: SceneCapture provided but has no TextureTarget - skipping video registration"), *LogPrefix);
     }
+    else
+    {
+      // If no PeerConnection yet, treat as offline: record video source but no rtc::Track (will be created later)
+      if (this->ConnectionState == ESynavisState::Offline)
+      {
+        UE_LOG(LogTemp, Verbose, TEXT("%s: Pre-Streaming initialization of track - registering video source without track"), *LogPrefix);
+        Handler.Video.Emplace(nullptr, SceneCapture);
+      }
+      else if(this->SourcePolicy == ESynavisSourcePolicy::RemainStatic)
+      {
+        UE_LOG(LogTemp, Verbose, TEXT("%s: Source policy is remain static - will refuse new source."), *LogPrefix);
+      }
+      else
+      {
+        // Online: create a send-only VP9 track now (ignore failure-policy distinctions for now)
+        rtc::Description::Video media("video", rtc::Description::Direction::SendOnly);
+        media.addVP9Codec(96);
+        media.setBitrate(90000);
+
+        auto Track = WebRTCInternal->PeerConnection->addTrack(media);
+        if (!Track)
+        {
+          UE_LOG(LogTemp, Warning, TEXT("%s: Failed to create video track for handler - registering without track"), *LogPrefix);
+          Handler.Video.Emplace(nullptr, SceneCapture);
+        }
+        else
+        {
+          // attach basic callbacks and packetizer (same behavior as StartSignalling)
+          Handler.Video.Emplace(Track, SceneCapture);
+          Track->onOpen([LogPrefix]() { UE_LOG(LogTemp, Warning, TEXT("%s: Video track opened"), *LogPrefix); });
+
+          rtc::SSRC ssrc = static_cast<rtc::SSRC>(std::rand());
+          auto rtpCfg = std::make_shared<rtc::RtpPacketizationConfig>(ssrc, std::string("synavis"), 96, rtc::RtpPacketizer::VideoClockRate);
+          auto packetizer = std::make_shared<rtc::RtpPacketizer>(rtpCfg);
+          Track->setMediaHandler(packetizer);
+
+          UE_LOG(LogTemp, Log, TEXT("%s: Created video track for handler (SSRC=%u)"), *LogPrefix, (uint32)ssrc);
+        }
+      }
+    }
+  }
+
+  if (DedicatedChannel)
+  {
+    // create dedicated datachannel for this handler
+    std::string channelName = "synavis-datahandler-" + std::to_string(Handler.HandlerID);
+			Handler.DataChannel = WebRTCInternal->PeerConnection->createDataChannel(channelName);
+			// Capture the log prefix by value for use inside the callback
+			FString DedicatedLog = LogPrefix;
+			if (Handler.DataChannel.has_value() && Handler.DataChannel.value())
+			{
+				auto DedicatedDC = Handler.DataChannel.value();
+				DedicatedDC->onOpen([DedicatedLog]() {
+					UE_LOG(LogTemp, Warning, TEXT("%s: Opening dedicated data channel for handler"), *DedicatedLog);
+				});
+				DedicatedDC->onClosed([]() {  });
+				DedicatedDC->onError([](std::string err) {  });
+				DedicatedDC->onMessage(
+					[this, Handler](const rtc::message_variant& msg)
+					{
+						if (std::holds_alternative<rtc::binary>(msg))
+						{
+							const rtc::binary& data = std::get<rtc::binary>(msg);
+							TArray<uint8> container;
+							//try to std::move into container
+
+						}
+						else if (std::holds_alternative<std::string>(msg))
+						{
+							const std::string& str = std::get<std::string>(msg);
+							FString fmsg = FString(UTF8_TO_TCHAR(str.c_str()));
+							// Handler.MsgHandler.Broadcast(fmsg);
+						}
+					}
+				);
+			}
+  }
+  else
+  {
+    Handler.DataChannel = WebRTCInternal->SystemDataChannel;
   }
 
   RegisteredDataHandlers.Add(Handler);
@@ -356,78 +659,58 @@ int USynavisStreamer::RegisterDataSource(
 
 void USynavisStreamer::CaptureFrame()
 {
-	if (!RenderTarget)
+	// Capture frames for registered handlers using only the zero-copy NV12 path.
+	// The registration step is expected to have created a valid video track for each handler.
+	if (!bStreaming)
 		return;
 
-	FTextureRenderTargetResource* RTResource = RenderTarget->GameThread_GetRenderTargetResource();
-	if (!RTResource)
-		return;
-
-	int Width = RenderTarget->SizeX;
-	int Height = RenderTarget->SizeY;
-	// First try zero-copy GPU NV12 path: enqueue RDG compute to produce NV12 and get two FRHIGPUTextureReadback objects.
-	// If successful we immediately call the zero-copy encoder helper which will poll the readbacks briefly and
-	// wrap them into AVBufferRefs so FFmpeg can take ownership without an extra CPU copy.
-	FRHIGPUTextureReadback* ReadbackY = nullptr;
-	FRHIGPUTextureReadback* ReadbackUV = nullptr;
-	if (EnqueueNV12ReadbackFromRenderTarget(RenderTarget, ReadbackY, ReadbackUV))
+	for (const FSynavisHandlers& Handler : RegisteredDataHandlers)
 	{
-		// Non-blocking: store the readbacks in PendingReadbacks so TickComponent can process them
-		FPendingNV12Readback rec;
-		rec.ReadbackY = ReadbackY;
-		rec.ReadbackUV = ReadbackUV;
-		rec.EnqueuedAt = FPlatformTime::Seconds();
-		PendingReadbacks.Add(rec);
-		UE_LOG(LogTemp, Verbose, TEXT("Synavis: CaptureFrame enqueued NV12 readback (Width=%d Height=%d). PendingReadbacks=%d"), Width, Height, PendingReadbacks.Num());
-		return;
+			if (!Handler.Video.IsSet())
+			continue;
+			TPair<std::shared_ptr<rtc::Track>, USceneCaptureComponent2D*> videoPair = Handler.Video.GetValue();
+			USceneCaptureComponent2D* SceneCapture = videoPair.Value;
+			std::shared_ptr<rtc::Track> targetTrack = videoPair.Key;
+			if (!SceneCapture || !targetTrack)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Synavis: Handler missing required RenderTarget or Track - skipping"));
+			continue;
+		}
+			UTextureRenderTarget2D* HandlerRT = SceneCapture->TextureTarget;
+			if (!HandlerRT)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("Synavis: SceneCapture has no TextureTarget - skipping"));
+				continue;
+			}
+
+			FTextureRenderTargetResource* RTResource = HandlerRT->GameThread_GetRenderTargetResource();
+			if (!RTResource)
+				continue;
+
+			int Width = HandlerRT->SizeX;
+			int Height = HandlerRT->SizeY;
+		FRHIGPUTextureReadback* ReadbackY = nullptr;
+		FRHIGPUTextureReadback* ReadbackUV = nullptr;
+		if (EnqueueNV12ReadbackFromRenderTarget(HandlerRT, ReadbackY, ReadbackUV))
+		{
+			FPendingNV12Readback rec;
+			rec.ReadbackY = ReadbackY;
+			rec.ReadbackUV = ReadbackUV;
+			rec.EnqueuedAt = FPlatformTime::Seconds();
+			rec.TargetTrack = targetTrack;
+			rec.Width = Width;
+			rec.Height = Height;
+			PendingReadbacks.Add(rec);
+			UE_LOG(LogTemp, Verbose, TEXT("Synavis: Enqueued NV12 readback for handler (W=%d H=%d)"), Width, Height);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Synavis: Failed to enqueue NV12 readback for handler"));
+		}
 	}
-
-	// Next, try the older GPU path that produces I420 via a compute shader and CPU-side deinterleave.
-	TArray<uint8> Ygpu, Ugpu, Vgpu;
-	if (ConvertRenderTargetToI420_GPU(RenderTarget, Ygpu, Ugpu, Vgpu))
-	{
-		EncodeI420AndSend(Ygpu, Ugpu, Vgpu, Width, Height);
-		return;
-	}
-
-	// GPU path not available or failed: fall back to CPU readback + conversion
-	TArray<FColor> Bitmap;
-	Bitmap.AddUninitialized(Width * Height);
-
-	// read pixels from render target (game thread safe call)
-	bool bRead = RTResource->ReadPixels(Bitmap);
-	if (!bRead)
-	{
-		return;
-	}
-
-	// Convert on CPU using existing helper and then encode
-	TArray<uint8> RGBA;
-	RGBA.SetNumUninitialized(Width * Height * 4);
-	for (int i = 0; i < Width * Height; ++i)
-	{
-		const FColor& C = Bitmap[i];
-		RGBA[i * 4 + 0] = C.R;
-		RGBA[i * 4 + 1] = C.G;
-		RGBA[i * 4 + 2] = C.B;
-		RGBA[i * 4 + 3] = C.A;
-	}
-
-	TArray<uint8> Ycpu, Ucpu, Vcpu;
-	if (ConvertRGBA8ToI420_CPU(RGBA.GetData(), Width, Height, Ycpu, Ucpu, Vcpu))
-	{
-		EncodeI420AndSend(Ycpu, Ucpu, Vcpu, Width, Height);
-		return;
-	}
-
-	// Last-resort: send raw RGBA
-	FString Name = TEXT("frame");
-	SendFrameBytes(RGBA, Name, TEXT("raw_rgba"));
 }
 
-// EncodeFrameToVP9 removed; replaced by EncodeI420AndSend which takes I420 planes (GPU or CPU-produced)
-
-void USynavisStreamer::SendFrameBytes(const TArray<uint8>& Bytes, const FString& Name, const FString& Format)
+void USynavisStreamer::SendFrameBytes(const TArray<uint8>& Bytes, const FString& Name, const FString& Format, std::shared_ptr<rtc::Track> TargetTrack)
 {
 	// Send outbound bytes via libdatachannel (DataChannel) when available.
 	if (WebRTCInternal)
@@ -439,11 +722,12 @@ void USynavisStreamer::SendFrameBytes(const TArray<uint8>& Bytes, const FString&
 
 		// Prefer sending via the send-only VideoTrack when available (video packets);
 		// fall back to the reliable DataChannel for arbitrary bytes.
-		if (WebRTCInternal->VideoTrack && WebRTCInternal->VideoTrack->isOpen())
+		if (TargetTrack && TargetTrack->isOpen())
 		{
-			WebRTCInternal->VideoTrack->send(buf);
+			TargetTrack->send(buf);
 			return;
 		}
+		// No global VideoTrack fallback; prefer handler TargetTrack, otherwise system data channel
 		else if (WebRTCInternal->SystemDataChannel && WebRTCInternal->SystemDataChannel->isOpen())
 		{
 			WebRTCInternal->SystemDataChannel->sendBuffer(buf);
@@ -470,278 +754,11 @@ void USynavisStreamer::OnDataChannelMessage(const rtc::message_variant& message)
   }
 }
 
-// Helper: encode planar I420 buffers using libav (ffmpeg) and send via WebRTC DataChannel/VideoTrack
-void USynavisStreamer::EncodeI420AndSend(const TArray<uint8>& Y, const TArray<uint8>& U, const TArray<uint8>& V, int Width, int Height)
-{
-	if (Y.Num() == 0 || U.Num() == 0 || V.Num() == 0)
-		return;
+// (CPU-based I420/NV12 helpers removed; use EncodeNV12ReadbackAndSend for GPU zero-copy)
 
-	if (!LibAVState || !LibAVState->Codec)
-		return;
-
-	// Initialize or resize codec context/frame if needed
-	{
-		FScopeLock guard(&LibAVState->Mutex);
-		if (!LibAVState->CodecCtx || LibAVState->Width != Width || LibAVState->Height != Height)
-		{
-			// cleanup existing
-			if (LibAVState->Packet) { av_packet_free(&LibAVState->Packet); LibAVState->Packet = nullptr; }
-			if (LibAVState->Frame) { av_frame_free(&LibAVState->Frame); LibAVState->Frame = nullptr; }
-			if (LibAVState->CodecCtx) { avcodec_free_context(&LibAVState->CodecCtx); LibAVState->CodecCtx = nullptr; }
-
-			LibAVState->CodecCtx = avcodec_alloc_context3(LibAVState->Codec);
-			if (!LibAVState->CodecCtx)
-			{
-				UE_LOG(LogTemp, Error, TEXT("Failed to allocate AVCodecContext"));
-				return;
-			}
-			LibAVState->CodecCtx->width = Width;
-			LibAVState->CodecCtx->height = Height;
-			LibAVState->CodecCtx->time_base = AVRational{1,30};
-			LibAVState->CodecCtx->pix_fmt = AV_PIX_FMT_YUV420P;
-			LibAVState->CodecCtx->bit_rate = 200000;
-			av_opt_set_int(LibAVState->CodecCtx->priv_data, "deadline", 1, 0);
-
-			int ret = avcodec_open2(LibAVState->CodecCtx, LibAVState->Codec, NULL);
-			if (ret < 0)
-			{
-				char errbuf[128]; av_strerror(ret, errbuf, sizeof(errbuf));
-				UE_LOG(LogTemp, Error, TEXT("avcodec_open2 failed: %s"), ANSI_TO_TCHAR(errbuf));
-				avcodec_free_context(&LibAVState->CodecCtx);
-				return;
-			}
-
-			LibAVState->Frame = av_frame_alloc();
-			if (!LibAVState->Frame)
-			{
-				UE_LOG(LogTemp, Error, TEXT("av_frame_alloc failed"));
-				avcodec_free_context(&LibAVState->CodecCtx);
-				return;
-			}
-			LibAVState->Frame->format = LibAVState->CodecCtx->pix_fmt;
-			LibAVState->Frame->width = LibAVState->CodecCtx->width;
-			LibAVState->Frame->height = LibAVState->CodecCtx->height;
-			if ((ret = av_frame_get_buffer(LibAVState->Frame, 32)) < 0)
-			{
-				char errbuf[128]; av_strerror(ret, errbuf, sizeof(errbuf));
-				UE_LOG(LogTemp, Error, TEXT("av_frame_get_buffer failed: %s"), ANSI_TO_TCHAR(errbuf));
-				av_frame_free(&LibAVState->Frame);
-				avcodec_free_context(&LibAVState->CodecCtx);
-				return;
-			}
-
-			LibAVState->Packet = av_packet_alloc();
-			LibAVState->Width = Width;
-			LibAVState->Height = Height;
-		}
-	}
-
-	// Encode using persistent state
-	{
-		FScopeLock guard(&LibAVState->Mutex);
-		// Copy Y plane
-		for (int y = 0; y < Height; ++y)
-		{
-			memcpy(LibAVState->Frame->data[0] + y * LibAVState->Frame->linesize[0], Y.GetData() + y * Width, Width);
-		}
-		int ChW = (Width + 1) / 2;
-		int ChH = (Height + 1) / 2;
-		for (int y = 0; y < ChH; ++y)
-		{
-			memcpy(LibAVState->Frame->data[1] + y * LibAVState->Frame->linesize[1], U.GetData() + y * ChW, ChW);
-			memcpy(LibAVState->Frame->data[2] + y * LibAVState->Frame->linesize[2], V.GetData() + y * ChW, ChW);
-		}
-
-		int ret = avcodec_send_frame(LibAVState->CodecCtx, LibAVState->Frame);
-		if (ret < 0)
-		{
-			char errbuf[128]; av_strerror(ret, errbuf, sizeof(errbuf));
-			UE_LOG(LogTemp, Error, TEXT("avcodec_send_frame failed: %s"), ANSI_TO_TCHAR(errbuf));
-			return;
-		}
-
-		while ((ret = avcodec_receive_packet(LibAVState->CodecCtx, LibAVState->Packet)) >= 0)
-		{
-			if (WebRTCInternal)
-			{
-				size_t sz = static_cast<size_t>(LibAVState->Packet->size);
-				const uint8_t* data = LibAVState->Packet->data;
-				if (WebRTCInternal->VideoTrack && WebRTCInternal->VideoTrack->isOpen())
-				{
-					// Prefer sendFrame so the attached RtpPacketizer/media handler will packetize RTP
-					rtc::binary pktbuf(sz);
-					if (sz) memcpy(pktbuf.data(), data, sz);
-					// Build FrameInfo: prefer packet PTS if available
-					uint32_t ts = 0;
-					if (LibAVState->Packet && LibAVState->Packet->pts != AV_NOPTS_VALUE)
-						ts = static_cast<uint32_t>(LibAVState->Packet->pts);
-					rtc::FrameInfo fi(ts);
-					fi.payloadType = 96; // VP9 payload type as configured earlier
-					WebRTCInternal->VideoTrack->sendFrame(std::move(pktbuf), fi);
-				}
-				else if (WebRTCInternal->SystemDataChannel && WebRTCInternal->SystemDataChannel->isOpen())
-				{
-					static thread_local rtc::binary dcbuf;
-					dcbuf.resize(sz);
-					if (sz) memcpy(dcbuf.data(), data, sz);
-					WebRTCInternal->SystemDataChannel->sendBuffer(dcbuf);
-				}
-			}
-			av_packet_unref(LibAVState->Packet);
-		}
-	}
-}
-
-// Encode NV12 buffers using libav and send via WebRTC (Y plane + packed UV plane)
-void USynavisStreamer::EncodeNV12AndSend(const TArray<uint8>& Y, const TArray<uint8>& UV, int YStride, int UVStride, int Width, int Height)
-{
-	if (Y.Num() == 0 || UV.Num() == 0)
-		return;
-
-	if (!LibAVState || !LibAVState->Codec)
-		return;
-
-	// Initialize or resize codec context/frame if needed
-	{
-		FScopeLock guard(&LibAVState->Mutex);
-		if (!LibAVState->CodecCtx || LibAVState->Width != Width || LibAVState->Height != Height)
-		{
-			// cleanup existing
-			if (LibAVState->Packet) { av_packet_free(&LibAVState->Packet); LibAVState->Packet = nullptr; }
-			if (LibAVState->Frame) { av_frame_free(&LibAVState->Frame); LibAVState->Frame = nullptr; }
-			if (LibAVState->CodecCtx) { avcodec_free_context(&LibAVState->CodecCtx); LibAVState->CodecCtx = nullptr; }
-
-			LibAVState->CodecCtx = avcodec_alloc_context3(LibAVState->Codec);
-			if (!LibAVState->CodecCtx)
-			{
-				UE_LOG(LogTemp, Error, TEXT("Failed to allocate AVCodecContext"));
-				return;
-			}
-			LibAVState->CodecCtx->width = Width;
-			LibAVState->CodecCtx->height = Height;
-			LibAVState->CodecCtx->time_base = AVRational{1,30};
-			// NOTE: here is where we would switch the pixel format for NV12
-			// If you want to encode NV12 use AV_PIX_FMT_NV12. If using I420 keep AV_PIX_FMT_YUV420P.
-			// The rest of the code must set frame->data[] accordingly. Changing here may require
-			// reinitializing the encoder with different codec options.
-			LibAVState->CodecCtx->pix_fmt = AV_PIX_FMT_NV12; // <-- change this switch depending on format
-			LibAVState->CodecCtx->bit_rate = 200000;
-			av_opt_set_int(LibAVState->CodecCtx->priv_data, "deadline", 1, 0);
-
-			int ret = avcodec_open2(LibAVState->CodecCtx, LibAVState->Codec, NULL);
-			if (ret < 0)
-			{
-				char errbuf[128]; av_strerror(ret, errbuf, sizeof(errbuf));
-				UE_LOG(LogTemp, Error, TEXT("avcodec_open2 failed: %s"), ANSI_TO_TCHAR(errbuf));
-				avcodec_free_context(&LibAVState->CodecCtx);
-				return;
-			}
-
-			LibAVState->Frame = av_frame_alloc();
-			if (!LibAVState->Frame)
-			{
-				UE_LOG(LogTemp, Error, TEXT("av_frame_alloc failed"));
-				avcodec_free_context(&LibAVState->CodecCtx);
-				return;
-			}
-			LibAVState->Frame->format = LibAVState->CodecCtx->pix_fmt;
-			LibAVState->Frame->width = LibAVState->CodecCtx->width;
-			LibAVState->Frame->height = LibAVState->CodecCtx->height;
-			// We will not call av_frame_get_buffer because we will attach external buffers
-			// via av_buffer_create to avoid copying.
-
-			LibAVState->Packet = av_packet_alloc();
-			LibAVState->Width = Width;
-			LibAVState->Height = Height;
-		}
-	}
-
-	// Encode using persistent state
-	{
-		FScopeLock guard(&LibAVState->Mutex);
-		// Create AVFrame and attach external buffers without copying
-		AVFrame* frame = LibAVState->Frame;
-
-		// Attach pointers directly. Important: ensure that the memory backing Y and UV
-		// remains valid until FFmpeg is done with the frame. To be safe wrap them in
-		// AVBufferRefs via av_buffer_create when possible. Here we create copies into
-		// av_buffers so FFmpeg manages their lifetime.
-
-		// Allocate and copy Y buffer into an AVBuffer
-		uint8_t* Ycopy = (uint8_t*)av_malloc(Y.Num());
-		if (!Ycopy) return;
-		memcpy(Ycopy, Y.GetData(), Y.Num());
-	AVBufferRef* bufY = av_buffer_create(Ycopy, Y.Num(), AvFreeOpaque, Ycopy, 0);
-
-		// Allocate and copy UV buffer into an AVBuffer
-		uint8_t* UVcopy = (uint8_t*)av_malloc(UV.Num());
-		if (!UVcopy)
-		{
-			av_buffer_unref(&bufY);
-			return;
-		}
-		memcpy(UVcopy, UV.GetData(), UV.Num());
-	AVBufferRef* bufUV = av_buffer_create(UVcopy, UV.Num(), AvFreeOpaque, UVcopy, 0);
-
-		// Set frame data pointers and linesizes
-		frame->buf[0] = bufY;
-		frame->buf[1] = bufUV;
-		frame->data[0] = bufY->data;
-		frame->linesize[0] = YStride;
-		frame->data[1] = bufUV->data;
-		frame->linesize[1] = UVStride;
-
-		// Set pts if needed
-		// frame->pts = ...
-
-		int ret = avcodec_send_frame(LibAVState->CodecCtx, frame);
-		if (ret < 0)
-		{
-			char errbuf[128]; av_strerror(ret, errbuf, sizeof(errbuf));
-			UE_LOG(LogTemp, Error, TEXT("avcodec_send_frame (NV12) failed: %s"), ANSI_TO_TCHAR(errbuf));
-			av_buffer_unref(&bufY);
-			av_buffer_unref(&bufUV);
-			return;
-		}
-
-		while ((ret = avcodec_receive_packet(LibAVState->CodecCtx, LibAVState->Packet)) >= 0)
-		{
-			if (WebRTCInternal)
-			{
-				size_t sz = static_cast<size_t>(LibAVState->Packet->size);
-				const uint8_t* data = LibAVState->Packet->data;
-				if (WebRTCInternal->VideoTrack && WebRTCInternal->VideoTrack->isOpen())
-				{
-					rtc::binary pktbuf(sz);
-					if (sz) memcpy(pktbuf.data(), data, sz);
-					uint32_t ts = 0;
-					if (LibAVState->Packet && LibAVState->Packet->pts != AV_NOPTS_VALUE)
-						ts = static_cast<uint32_t>(LibAVState->Packet->pts);
-					rtc::FrameInfo fi(ts);
-					fi.payloadType = 96; // keep same payload type as configured
-					WebRTCInternal->VideoTrack->sendFrame(std::move(pktbuf), fi);
-				}
-				else if (WebRTCInternal->SystemDataChannel && WebRTCInternal->SystemDataChannel->isOpen())
-				{
-					static thread_local rtc::binary dcbuf;
-					dcbuf.resize(sz);
-					if (sz) memcpy(dcbuf.data(), data, sz);
-					WebRTCInternal->SystemDataChannel->sendBuffer(dcbuf);
-				}
-			}
-			av_packet_unref(LibAVState->Packet);
-		}
-
-		// Cleanup buffers (FFmpeg has refs now)
-		av_buffer_unref(&bufY);
-		av_buffer_unref(&bufUV);
-	}
-}
-
-#if defined(LIBAV_AVAILABLE)
 // Zero-copy: accept two FRHIGPUTextureReadback objects, wrap their locked pointers into
 // AVBufferRefs so FFmpeg manages lifetime and calls our free-callback to unlock/delete readbacks.
-void USynavisStreamer::EncodeNV12ReadbackAndSend(FRHIGPUTextureReadback* ReadbackY, FRHIGPUTextureReadback* ReadbackUV, int Width, int Height)
+void USynavisStreamer::EncodeNV12ReadbackAndSend(FRHIGPUTextureReadback* ReadbackY, FRHIGPUTextureReadback* ReadbackUV, int Width, int Height, std::shared_ptr<rtc::Track> TargetTrack)
 {
 	if (!ReadbackY || !ReadbackUV) return;
 
@@ -815,22 +832,24 @@ void USynavisStreamer::EncodeNV12ReadbackAndSend(FRHIGPUTextureReadback* Readbac
 
 	while ((ret = avcodec_receive_packet(LibAVState->CodecCtx, LibAVState->Packet)) >= 0)
 	{
-			if (WebRTCInternal)
+		if (WebRTCInternal)
 		{
 			size_t sz = static_cast<size_t>(LibAVState->Packet->size);
 			const uint8_t* data = LibAVState->Packet->data;
-			if (WebRTCInternal->VideoTrack && WebRTCInternal->VideoTrack->isOpen())
+			rtc::binary pktbuf(sz);
+			if (sz) memcpy(pktbuf.data(), data, sz);
+
+			if (TargetTrack && TargetTrack->isOpen())
 			{
-					UE_LOG(LogTemp, Verbose, TEXT("Synavis: Sending encoded packet size=%d"), (int)sz);
-				rtc::binary pktbuf(sz);
-				if (sz) memcpy(pktbuf.data(), data, sz);
+				UE_LOG(LogTemp, Verbose, TEXT("Synavis: Sending encoded packet size=%d to handler track"), (int)sz);
 				uint32_t ts = 0;
 				if (LibAVState->Packet && LibAVState->Packet->pts != AV_NOPTS_VALUE)
 					ts = static_cast<uint32_t>(LibAVState->Packet->pts);
 				rtc::FrameInfo fi(ts);
 				fi.payloadType = 96;
-				WebRTCInternal->VideoTrack->sendFrame(std::move(pktbuf), fi);
+				TargetTrack->sendFrame(std::move(pktbuf), fi);
 			}
+			// No global VideoTrack fallback: prefer handler TargetTrack; otherwise fall back to system DataChannel
 			else if (WebRTCInternal->SystemDataChannel && WebRTCInternal->SystemDataChannel->isOpen())
 			{
 				static thread_local rtc::binary dcbuf;
@@ -844,12 +863,4 @@ void USynavisStreamer::EncodeNV12ReadbackAndSend(FRHIGPUTextureReadback* Readbac
 
 	av_frame_free(&frame);
 }
-#else
-void USynavisStreamer::EncodeNV12ReadbackAndSend(FRHIGPUTextureReadback* ReadbackY, FRHIGPUTextureReadback* ReadbackUV, int Width, int Height)
-{
-	UE_LOG(LogTemp, Warning, TEXT("EncodeNV12ReadbackAndSend called but LIBAV_AVAILABLE not defined"));
-	if (ReadbackY) { ReadbackY->Unlock(); delete ReadbackY; }
-	if (ReadbackUV) { ReadbackUV->Unlock(); delete ReadbackUV; }
-}
-#endif
 
