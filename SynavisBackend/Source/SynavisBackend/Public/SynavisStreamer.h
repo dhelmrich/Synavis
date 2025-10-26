@@ -4,6 +4,12 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+
+
+
+THIRD_PARTY_INCLUDES_START
+#include <variant>
+#include <unordered_map>
 #include <memory>
 
 #include "RHIGPUReadback.h"
@@ -23,6 +29,10 @@ extern "C" {
 	// forward-declare to allow pointer members without bringing libav into every compile unit
 	struct AVCodecContext; struct AVFrame; struct AVPacket; struct AVCodec;
 #endif
+
+THIRD_PARTY_INCLUDES_END
+
+
 #include "SynavisStreamer.generated.h"
 
 class UTextureRenderTarget2D;
@@ -50,6 +60,18 @@ enum class ESynavisState : uint8
   Failure      UMETA(DisplayName = "Failure"),
 };
 
+UENUM(BlueprintType)
+enum class EPeerState : uint8
+{
+  NoConnection      UMETA(DisplayName = "No Connection"),
+  SynavisConnecting      UMETA(DisplayName = "Synavis Connecting"), // received playerConnected from Signalling
+  ReceivedOffer      UMETA(DisplayName = "Received Offer"),
+  ReceivedAnswer      UMETA(DisplayName = "Received Answer"),
+  ICE      UMETA(DisplayName = "ICE"),
+  ChannelOpen      UMETA(DisplayName = "Channel Open"),
+  AllOpen      UMETA(DisplayName = "All Open"),
+};
+
 struct FSynavisHandlers
 {
   // Video: Source -> Destination
@@ -57,7 +79,11 @@ struct FSynavisHandlers
 	// Store the scene capture component so we can validate it (ensure it has a TextureTarget)
 	TOptional<TPair<std::shared_ptr<rtc::Track>, USceneCaptureComponent2D*>> Video;
 
-  std::optional<std::shared_ptr<rtc::DataChannel>> DataChannel;
+	std::optional<std::shared_ptr<rtc::DataChannel>> DataChannel;
+	// Media description created at registration time; actual rtc::Track is created per-connection
+	std::shared_ptr<rtc::Description::Video> MediaDesc;
+	// If true, the handler requested a dedicated datachannel; this will be created per-connection
+	bool WantsDedicatedChannel = false;
 
   FSynavisData DataHandler;
   FSynavisMessage MsgHandler;
@@ -75,6 +101,38 @@ struct FSynavisHandlers
 		return A.HandlerID == B.HandlerID;
 	}
 };
+
+struct FSynavisConnection
+{
+
+  /**********************************
+   * Connection Objects             *
+   * ********************************/
+  std::shared_ptr<rtc::PeerConnection> PeerConnection;
+  std::shared_ptr<rtc::RtpPacketizer> Packetizer;
+  std::shared_ptr<rtc::DataChannel> DataChannel;
+
+  /**********************************
+   * Media Objects                  *
+   * ********************************/
+		// Per-connection mapping from registered handler ID to an outbound Track
+		std::unordered_map<uint32, std::shared_ptr<rtc::Track>> TracksByHandler;
+
+	// Per-connection mapping from handler ID to a dedicated DataChannel (if requested)
+	std::unordered_map<uint32, std::shared_ptr<rtc::DataChannel>> DataChannelsByHandler;
+
+  int ConnectionID = 0;
+	// Per-connection flag indicating whether this connection should receive encoded video
+	// frames. This replaces the previous global bStreaming flag which no longer fits
+	// the multi-connection model.
+	bool bStreaming = false;
+  EPeerState State = EPeerState::NoConnection;
+  FSynavisConnection() = default;
+	FSynavisConnection(const FSynavisConnection&) = delete;
+	FSynavisConnection(FSynavisConnection&&) = default;
+	FSynavisConnection& operator=(FSynavisConnection&&) = default;
+};
+
 
 UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
 class SYNAVISBACKEND_API USynavisStreamer : public UActorComponent
@@ -111,11 +169,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Streaming")
 	void StartStreaming();
 
-	UFUNCTION(BlueprintCallable, Category = "Streaming")
+	// Stop streaming globally for all connections (non-blueprint helper)
 	void StopStreaming();
-
-	UFUNCTION(BlueprintCallable, Category = "Streaming")
-	void SetCaptureFPS(float FPS);
 
 	// Connection Policy for handling additional requests to stream cameras
   // from within Unreal: If set, the streamer will attempt to renegotiate
@@ -164,6 +219,8 @@ protected:
   UPROPERTY()
   ESynavisState ConnectionState = ESynavisState::Offline;
 
+
+
 	// Pending GPU readback record for non-blocking zero-copy path
 	struct FPendingNV12Readback
 	{
@@ -171,7 +228,7 @@ protected:
 		FRHIGPUTextureReadback* ReadbackUV = nullptr;
 		double EnqueuedAt = 0.0;
 		// optional track to send encoded data to
-		std::shared_ptr<rtc::Track> TargetTrack = nullptr;
+		TArray<std::shared_ptr<rtc::Track>> TargetTracks;
 		int Width = 0;
 		int Height = 0;
 	};
@@ -182,10 +239,12 @@ protected:
   // TSet of registered data handlers
   TSet<FSynavisHandlers> RegisteredDataHandlers;
 
+  void TakeSignallingMessage(const FString& Message);
+
 	// Zero-copy variant: accept FRHIGPUTextureReadback readbacks for Y and UV (NV12). The helper will wrap
 	// the readback pointers into AVBufferRefs that free/unlock the readbacks when FFmpeg is done.
-	// TargetTrack is required and the encoded packets will be sent to that track.
-	void EncodeNV12ReadbackAndSend(class FRHIGPUTextureReadback* ReadbackY, class FRHIGPUTextureReadback* ReadbackUV, int Width, int Height, std::shared_ptr<rtc::Track> TargetTrack);
+	// TargetTracks contains one or more tracks that should receive the encoded packets.
+	void EncodeNV12ReadbackAndSend(class FRHIGPUTextureReadback* ReadbackY, class FRHIGPUTextureReadback* ReadbackUV, int Width, int Height, const TArray<std::shared_ptr<rtc::Track>>& TargetTracks);
 
   void OnDataChannelMessage(const rtc::message_variant& message);
 
@@ -196,21 +255,24 @@ protected:
 	void RegisterRemoteCandidate(const FJsonObject& Content);
 
 	// internal state
-	bool bStreaming = false;
+	// NOTE: streaming is now per-connection (FSynavisConnection::bStreaming). Use
+	// StartStreaming/StopStreaming to influence existing connections; new
+	// connections default to bStreaming=false and will be enabled by StartStreaming.
+	bool AnyConnectionStreaming() const;
 
+	// Remote playerConnected state: only send local SDP after a playerConnected message
+	// with dataChannel=true and sfu=false is received from the signalling server.
 	bool bPlayerConnected = false;
+  
+  std::shared_ptr<rtc::WebSocket> Signalling;
 
-	// Opaque pimpl for WebRTC internals (defined here so UHT sees a complete type)
-	struct FWebRTCInternal
-	{
-			std::shared_ptr<rtc::PeerConnection> PeerConnection;
-			std::shared_ptr<rtc::DataChannel> SystemDataChannel;
-			std::shared_ptr<rtc::WebSocket> Signalling;
-			std::shared_ptr<rtc::RtpPacketizer> Packetizer;
-			FWebRTCInternal() {}
-			~FWebRTCInternal(); // defined in cpp
-	};
-	FWebRTCInternal* WebRTCInternal = nullptr;
+	TMap<int32, FSynavisConnection> Connections;
+
+	// Global/system datachannel used as fallback when per-handler tracks are not available
+	std::shared_ptr<rtc::DataChannel> SystemDataChannel;
+
+	// Teardown a connection and free its resources (PeerConnection, DataChannels, Tracks)
+	void TeardownConnection(int32 PlayerID);
 
   // Persistent libav encoder context to avoid allocations per-frame
   struct FLibAVEncoderState
@@ -226,4 +288,24 @@ protected:
 	  ~FLibAVEncoderState(); // defined in cpp
   };
   FLibAVEncoderState* LibAVState = nullptr;
+
+	// Signalling handlers (moved to member functions to reduce lambda use)
+	void HandleSignallingOpen();
+	void HandleSignallingClose();
+	void HandleSignallingError(const std::string& Err);
+	void HandleSignallingMessage(const std::variant<rtc::binary, std::string>& Message);
+
+	// Create a new peerconnection for a remote player identified by PlayerID
+	void CreateConnectionForPlayer(int32 PlayerID);
+	// Send local SDP for a specific connection via the signalling websocket
+	void CommunicateSDPForConnection(const FSynavisConnection& Conn);
+	// Register remote ICE candidate for a given connection (content contains candidate obj)
+	void RegisterRemoteCandidateForConnection(const FJsonObject& Content, FSynavisConnection& Conn);
+	// Find connection by ConnectionID (PlayerID). Returns nullptr if not found.
+	FSynavisConnection* FindConnectionByPlayerID(int32 PlayerID);
+	const FSynavisConnection* FindConnectionByPlayerID(int32 PlayerID) const;
+    
+	// Stop streaming for a specific connection (marks connection not to receive video).
+	UFUNCTION(BlueprintCallable, Category = "Streaming")
+	void StopStreaming(int32 ConnectionID);
 };

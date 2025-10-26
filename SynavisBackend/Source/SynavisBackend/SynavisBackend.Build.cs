@@ -35,6 +35,8 @@ public class SynavisBackend : ModuleRules
 				"CoreUObject",
 				"Engine",
 				"Projects",
+				"Json",
+				"JsonUtilities",
 			}
 			);
 			
