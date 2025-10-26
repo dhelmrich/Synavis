@@ -190,7 +190,6 @@ void USynavisStreamer::BeginPlay()
 void USynavisStreamer::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-
 	// If no connection currently requests streaming, early-out. Streaming is
 	// managed per-connection via FSynavisConnection::bStreaming.
 	bool anyStreaming = false;
@@ -198,47 +197,65 @@ void USynavisStreamer::TickComponent(float DeltaTime, ELevelTick TickType, FActo
 	if (!anyStreaming)
 		return;
 
-	// Process any pending NV12 GPU readbacks (non-blocking).
-	// Iterate backwards so we can RemoveAtSwap safely while iterating.
-	const double Now = FPlatformTime::Seconds();
-	const double LocalReadbackTimeout = 0.5; // seconds - local fallback if no global provided
+	// Capture frames for all registered handlers for this tick. This will enqueue
+	// NV12 GPU readbacks (FRHIGPUTextureReadback) for each active handler/source.
+	CaptureFrame();
+
+	const double MaxTickWait = 0.5; // seconds maximum to wait inside a single tick
+	const double NowStart = FPlatformTime::Seconds();
+	const double Deadline = NowStart + MaxTickWait;
+	const double LocalReadbackTimeout = 0.5; // per-readback age timeout
+
 	if (LibAVState)
 	{
-		for (int32 i = PendingReadbacks.Num() - 1; i >= 0; --i)
+		while (FPlatformTime::Seconds() < Deadline)
 		{
-			FPendingNV12Readback& rec = PendingReadbacks[i];
+			bool DidWorkThisIteration = false;
 
-			// Validate readbacks
-			if (!rec.ReadbackY || !rec.ReadbackUV)
+			for (int32 i = PendingReadbacks.Num() - 1; i >= 0; --i)
 			{
-				// Nothing to do, remove malformed entry
-				PendingReadbacks.RemoveAtSwap(i);
-				continue;
-			}
+				FPendingNV12Readback& rec = PendingReadbacks[i];
 
-			// If readbacks ready, perform zero-copy encode and send to all target tracks
-			if (rec.ReadbackY->IsReady() && rec.ReadbackUV->IsReady())
-			{
-				UE_LOG(LogTemp, Verbose, TEXT("Synavis: Pending readback ready, starting zero-copy encode (Width=%d Height=%d)"), rec.Width, rec.Height);
-				EncodeNV12ReadbackAndSend(rec.ReadbackY, rec.ReadbackUV, rec.Width, rec.Height, rec.TargetTracks);
-				// EncodeNV12ReadbackAndSend takes ownership of the readbacks via AVBuffer free callbacks,
-				// so do not unlock/delete them here - remove entry from queue.
-				PendingReadbacks.RemoveAtSwap(i);
-				continue;
-			}
-
-			// If timeout expired: clean up and drop the readback (unlock & delete on render thread)
-			if (Now - rec.EnqueuedAt > LocalReadbackTimeout)
-			{
-				UE_LOG(LogTemp, Warning, TEXT("Synavis: Pending readback timed out after %.3fs, cleaning up"), Now - rec.EnqueuedAt);
-				FRHIGPUTextureReadback* Yrb = rec.ReadbackY;
-				FRHIGPUTextureReadback* UVrb = rec.ReadbackUV;
-				ENQUEUE_RENDER_COMMAND(Synavis_CleanupReadback)([Yrb, UVrb](FRHICommandListImmediate& RHICmdList)
+				// Validate readbacks
+				if (!rec.ReadbackY || !rec.ReadbackUV)
 				{
-					if (Yrb) { Yrb->Unlock(); delete Yrb; }
-					if (UVrb) { UVrb->Unlock(); delete UVrb; }
-				});
-				PendingReadbacks.RemoveAtSwap(i);
+					PendingReadbacks.RemoveAtSwap(i);
+					DidWorkThisIteration = true;
+					continue;
+				}
+
+				// If readbacks ready, perform zero-copy encode and send to all target tracks
+				if (rec.ReadbackY->IsReady() && rec.ReadbackUV->IsReady())
+				{
+					UE_LOG(LogTemp, Verbose, TEXT("Synavis: Pending readback ready, starting zero-copy encode (Width=%d Height=%d)"), rec.Width, rec.Height);
+					EncodeNV12ReadbackAndSend(rec.ReadbackY, rec.ReadbackUV, rec.Width, rec.Height, rec.TargetTracks);
+					PendingReadbacks.RemoveAtSwap(i);
+					DidWorkThisIteration = true;
+					continue;
+				}
+
+				if (FPlatformTime::Seconds() - rec.EnqueuedAt > LocalReadbackTimeout)
+				{
+					UE_LOG(LogTemp, Warning, TEXT("Synavis: Pending readback timed out after %.3fs, cleaning up"), FPlatformTime::Seconds() - rec.EnqueuedAt);
+					FRHIGPUTextureReadback* Yrb = rec.ReadbackY;
+					FRHIGPUTextureReadback* UVrb = rec.ReadbackUV;
+					ENQUEUE_RENDER_COMMAND(Synavis_CleanupReadback)([Yrb, UVrb](FRHICommandListImmediate& RHICmdList)
+					{
+						if (Yrb) { Yrb->Unlock(); delete Yrb; }
+						if (UVrb) { UVrb->Unlock(); delete UVrb; }
+					});
+					PendingReadbacks.RemoveAtSwap(i);
+					DidWorkThisIteration = true;
+				}
+			}
+
+			if (PendingReadbacks.Num() == 0)
+				break;
+
+			// If we made progress this iteration, continue polling immediately; otherwise sleep briefly
+			if (!DidWorkThisIteration)
+			{
+				FPlatformProcess::Sleep(0.001f);
 			}
 		}
 	}
@@ -999,8 +1016,6 @@ void USynavisStreamer::OnDataChannelMessage(const rtc::message_variant& message)
 		
   }
 }
-
-// (CPU-based I420/NV12 helpers removed; use EncodeNV12ReadbackAndSend for GPU zero-copy)
 
 // Zero-copy: accept two FRHIGPUTextureReadback objects, wrap their locked pointers into
 // AVBufferRefs so FFmpeg manages lifetime and calls our free-callback to unlock/delete readbacks.
