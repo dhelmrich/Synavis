@@ -64,12 +64,52 @@ jobs:
           # binaries are built against the container libc (avoids GLIBC mismatch)
           CIBW_BEFORE_BUILD: |
             set -euo pipefail
+            set -x
+            echo "CIBW_BEFORE_BUILD: starting vcpkg bootstrap/install (logs -> /tmp/vcpkg-setup.log)"
+            exec > >(tee /tmp/vcpkg-setup.log) 2>&1
+
+            retry() {
+              local -r max=$1; shift
+              local -i i=0
+              until "$@"; do
+                i=$((i+1))
+                if [ $i -ge $max ]; then
+                  echo "Command failed after $i attempts: $*" >&2
+                  return 1
+                fi
+                echo "Retry $i/$max for: $*" >&2
+                sleep 2
+              done
+            }
+
             if [ ! -d /project/vcpkg ]; then
-              git clone --single-branch --depth=1 https://github.com/microsoft/vcpkg.git /project/vcpkg
-              /project/vcpkg/bootstrap-vcpkg.sh
+              echo "Cloning vcpkg into /project/vcpkg"
+              retry 3 git clone --single-branch --depth=1 https://github.com/microsoft/vcpkg.git /project/vcpkg
+            else
+              echo "vcpkg already present at /project/vcpkg"
             fi
-            # Install the vcpkg ports inside the container (container-native binaries)
-            /project/vcpkg/vcpkg install openssl libpcap curl libuv ffmpeg zlib --triplet x64-linux
+
+            # Try bootstrapping vcpkg (may download a prebuilt binary or build from source)
+            pushd /project/vcpkg
+            if [ ! -x ./vcpkg ]; then
+              echo "Bootstrapping vcpkg"
+              retry 3 ./bootstrap-vcpkg.sh || {
+                echo "bootstrap-vcpkg.sh failed; printing /tmp/vcpkg-setup.log and aborting" >&2
+                cat /tmp/vcpkg-setup.log || true
+                exit 1
+              }
+            else
+              echo "vcpkg executable already present"
+            fi
+
+            # Install the requested ports inside the container (container-native binaries)
+            echo "Installing vcpkg ports: openssl libpcap curl libuv ffmpeg zlib"
+            retry 3 ./vcpkg install openssl libpcap curl libuv ffmpeg zlib --triplet x64-linux || {
+              echo "vcpkg install failed; printing /tmp/vcpkg-setup.log" >&2
+              cat /tmp/vcpkg-setup.log || true
+              exit 1
+            }
+            popd
         run: |
           python -m cibuildwheel --platform linux --output-dir wheelhouse
 
