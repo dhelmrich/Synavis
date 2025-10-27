@@ -62,8 +62,12 @@ jobs:
           CIBW_ENVIRONMENT: "CMAKE_ARGS='-DCMAKE_TOOLCHAIN_FILE=/project/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux -DBUILD_WITH_APPS=Off -DBUILD_WITH_DECODING=On -DPY_PACKAGE_NAME=synavis'"
           # Run vcpkg bootstrap and install inside the manylinux container so
           # binaries are built against the container libc (avoids GLIBC mismatch)
+          # The manylinux runner invokes the before-build script with /bin/sh, which
+          # doesn't support process-substitution (exec > >(tee ...)). Run the
+          # script under bash so the logging redirection works and we capture
+          # /tmp/vcpkg-setup.log as intended.
           CIBW_BEFORE_BUILD: |
-            set -euo pipefail
+            bash -lc 'set -euo pipefail
             set -x
             echo "CIBW_BEFORE_BUILD: starting vcpkg bootstrap/install (logs -> /tmp/vcpkg-setup.log)"
             exec > >(tee /tmp/vcpkg-setup.log) 2>&1
@@ -109,7 +113,7 @@ jobs:
               cat /tmp/vcpkg-setup.log || true
               exit 1
             }
-            popd
+            popd'
         run: |
           python -m cibuildwheel --platform linux --output-dir wheelhouse
 
