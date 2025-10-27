@@ -94,12 +94,9 @@ jobs:
           CIBW_CMAKE_BUILD: "1"
           # build multiple Python versions; adjust as needed
           CIBW_BUILD: "cp311-* cp312-*"
-          # inside the manylinux container the project is copied to /project,
-          # so point the CMake toolchain to the vcpkg path inside the container and
-          # explicitly provide OpenSSL locations from the vcpkg installation so
-          # CMake can find them during the wheel build. Also expose vcpkg's
-          # pkg-config directories so pkg-config/Find modules can locate
-          # FFmpeg and libpcap installed by vcpkg.
+
+          CIBW_BEFORE_BUILD: "pip install pybind11 pybind11_json"
+
           CIBW_ENVIRONMENT: "PKG_CONFIG_PATH=/project/vcpkg/installed/x64-linux/lib/pkgconfig:/project/vcpkg/installed/x64-linux/share/pkgconfig CMAKE_ARGS='-DCMAKE_TOOLCHAIN_FILE=/project/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux -DOPENSSL_ROOT_DIR=/project/vcpkg/installed/x64-linux -DOPENSSL_INCLUDE_DIR=/project/vcpkg/installed/x64-linux/include -DOPENSSL_CRYPTO_LIBRARY=/project/vcpkg/installed/x64-linux/lib/libcrypto.so -DOPENSSL_SSL_LIBRARY=/project/vcpkg/installed/x64-linux/lib/libssl.so -DBUILD_WITH_APPS=Off -DBUILD_WITH_DECODING=On -DPY_PACKAGE_NAME=synavis'"
         run: |
           python -m cibuildwheel --platform linux --output-dir wheelhouse
@@ -141,6 +138,10 @@ jobs:
         env:
           CIBW_CMAKE_BUILD: "1"
           CIBW_BUILD: "cp38-* cp39-* cp310-* cp311-* cp312-*"
+          # Ensure pybind11 and pybind11_json are installed for Windows builds
+          # before cibuildwheel invokes CMake so their CMake config files are
+          # discoverable.
+          CIBW_BEFORE_BUILD: "pip install pybind11 pybind11_json"
           # set CMAKE_POLICY_VERSION_MINIMUM so third-party CMakeLists with old minima can configure
           CIBW_ENVIRONMENT: "CMAKE_ARGS='-DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}\\vcpkg\\scripts\\buildsystems\\vcpkg.cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DVCPKG_TARGET_TRIPLET=x64-windows -DBUILD_WITH_APPS=Off -DBUILD_WITH_DECODING=On -DPY_PACKAGE_NAME=synavis'"
         run: |
