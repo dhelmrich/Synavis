@@ -35,34 +35,19 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install scikit-build-core scikit-build cibuildwheel wheel
 
-      - name: Bootstrap vcpkg (manylinux)
-        if: matrix.platform == 'manylinux_x86_64'
-        run: |
-          set -euo pipefail
-          if [ ! -d "${{ github.workspace }}/vcpkg" ]; then
-            git clone --single-branch --depth=1 https://github.com/microsoft/vcpkg.git "${{ github.workspace }}/vcpkg"
-            pushd "${{ github.workspace }}/vcpkg"
-            ./bootstrap-vcpkg.sh
-          else
-            pushd "${{ github.workspace }}/vcpkg"
-          fi
-          # Ensure required system build tools are available for ports like ffmpeg and openssl
-          sudo apt-get update
-          sudo apt-get install -y build-essential linux-libc-dev pkg-config nasm yasm
-          ./vcpkg install openssl libpcap curl libuv ffmpeg zlib --triplet x64-linux
-          popd
-          mkdir -p "${{ github.workspace }}/wheelhouse/vcpkg"
-          cp -r "${{ github.workspace }}/vcpkg/installed" "${{ github.workspace }}/wheelhouse/vcpkg/installed"
-          cp -r "${{ github.workspace }}/vcpkg/packages" "${{ github.workspace }}/wheelhouse/vcpkg/packages"
+      # vcpkg will be bootstrapped and run inside the manylinux container
+      # to ensure binaries (pkgconf, pkg-config tools, etc.) are compatible with
+      # the container's glibc. We do not perform host-side vcpkg bootstrap for manylinux.
 
-      - name: Cache vcpkg installed packages (manylinux)
+      - name: Restore vcpkg cache (manylinux)
         if: matrix.platform == 'manylinux_x86_64'
         uses: actions/cache@v4
         with:
           path: |
             vcpkg/installed
             vcpkg/packages
-          key: vcpkg-linux-${{ runner.os }}-${{ hashFiles('**/vcpkg/installed/**') }}
+            vcpkg/downloads
+          key: vcpkg-linux-${{ runner.os }}-${{ hashFiles('**/vcpkg/ports/**') }}
           restore-keys: |
             vcpkg-linux-
 
@@ -75,6 +60,16 @@ jobs:
           # inside the manylinux container the project is copied to /project,
           # so point the CMake toolchain to the vcpkg path inside the container
           CIBW_ENVIRONMENT: "CMAKE_ARGS='-DCMAKE_TOOLCHAIN_FILE=/project/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux -DBUILD_WITH_APPS=Off -DBUILD_WITH_DECODING=On -DPY_PACKAGE_NAME=synavis'"
+          # Run vcpkg bootstrap and install inside the manylinux container so
+          # binaries are built against the container libc (avoids GLIBC mismatch)
+          CIBW_BEFORE_BUILD: |
+            set -euo pipefail
+            if [ ! -d /project/vcpkg ]; then
+              git clone --single-branch --depth=1 https://github.com/microsoft/vcpkg.git /project/vcpkg
+              /project/vcpkg/bootstrap-vcpkg.sh
+            fi
+            # Install the vcpkg ports inside the container (container-native binaries)
+            /project/vcpkg/vcpkg install openssl libpcap curl libuv ffmpeg zlib --triplet x64-linux
         run: |
           python -m cibuildwheel --platform linux --output-dir wheelhouse
 
@@ -115,7 +110,8 @@ jobs:
         env:
           CIBW_CMAKE_BUILD: "1"
           CIBW_BUILD: "cp38-* cp39-* cp310-* cp311-* cp312-*"
-          CIBW_ENVIRONMENT: "CMAKE_ARGS='-DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}\\vcpkg\\scripts\\buildsystems\\vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows -DBUILD_WITH_APPS=Off -DBUILD_WITH_DECODING=On -DPY_PACKAGE_NAME=synavis'"
+          # set CMAKE_POLICY_VERSION_MINIMUM so third-party CMakeLists with old minima can configure
+          CIBW_ENVIRONMENT: "CMAKE_ARGS='-DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}\\vcpkg\\scripts\\buildsystems\\vcpkg.cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DVCPKG_TARGET_TRIPLET=x64-windows -DBUILD_WITH_APPS=Off -DBUILD_WITH_DECODING=On -DPY_PACKAGE_NAME=synavis'"
         run: |
           python -m cibuildwheel --platform windows --output-dir wheelhouse
 
