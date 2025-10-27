@@ -72,7 +72,9 @@ jobs:
           CIBW_CMAKE_BUILD: "1"
           # build multiple Python versions; adjust as needed
           CIBW_BUILD: "cp38-* cp39-* cp310-* cp311-*"
-          CIBW_ENVIRONMENT: "CMAKE_ARGS='-DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux -DBUILD_WITH_APPS=Off -DBUILD_WITH_DECODING=On -DPY_PACKAGE_NAME=synavis'"
+          # inside the manylinux container the project is copied to /project,
+          # so point the CMake toolchain to the vcpkg path inside the container
+          CIBW_ENVIRONMENT: "CMAKE_ARGS='-DCMAKE_TOOLCHAIN_FILE=/project/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux -DBUILD_WITH_APPS=Off -DBUILD_WITH_DECODING=On -DPY_PACKAGE_NAME=synavis'"
         run: |
           python -m cibuildwheel --platform linux --output-dir wheelhouse
 
