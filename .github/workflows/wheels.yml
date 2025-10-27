@@ -93,7 +93,7 @@ jobs:
         env:
           CIBW_CMAKE_BUILD: "1"
           # build multiple Python versions; adjust as needed
-          CIBW_BUILD: "cp38-* cp39-* cp310-* cp311-*"
+          CIBW_BUILD: "cp311-* cp312-*"
           # inside the manylinux container the project is copied to /project,
           # so point the CMake toolchain to the vcpkg path inside the container and
           # explicitly provide OpenSSL locations from the vcpkg installation so
