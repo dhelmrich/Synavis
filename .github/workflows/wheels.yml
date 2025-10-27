@@ -46,7 +46,7 @@ jobs:
           else
             pushd "${{ github.workspace }}/vcpkg"
           fi
-          ./vcpkg install openssl libpcap libcurl libuv ffmpeg zlib --triplet x64-linux
+          ./vcpkg install openssl libpcap curl libuv ffmpeg zlib --triplet x64-linux
           popd
           mkdir -p "${{ github.workspace }}/wheelhouse/vcpkg"
           cp -r "${{ github.workspace }}/vcpkg/installed" "${{ github.workspace }}/wheelhouse/vcpkg/installed"
@@ -86,7 +86,7 @@ jobs:
             Pop-Location
           }
           Push-Location $vcpkgDir
-          .\vcpkg.exe install openssl libpcap libcurl libuv ffmpeg zlib --triplet x64-windows
+          .\vcpkg.exe install openssl libpcap curl libuv ffmpeg zlib --triplet x64-windows
           Pop-Location
           Write-Host "Copying vcpkg packages to output directory"
           New-Item -ItemType Directory -Path "$Env:GITHUB_WORKSPACE\wheelhouse\vcpkg" -Force
