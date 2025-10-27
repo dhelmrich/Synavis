@@ -46,6 +46,9 @@ jobs:
           else
             pushd "${{ github.workspace }}/vcpkg"
           fi
+          # Ensure required system build tools are available for ports like ffmpeg and openssl
+          sudo apt-get update
+          sudo apt-get install -y build-essential linux-libc-dev pkg-config nasm yasm
           ./vcpkg install openssl libpcap curl libuv ffmpeg zlib --triplet x64-linux
           popd
           mkdir -p "${{ github.workspace }}/wheelhouse/vcpkg"
