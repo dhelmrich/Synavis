@@ -59,25 +59,22 @@ jobs:
 
       - name: Prepare vcpkg inside manylinux container
         if: matrix.platform == 'manylinux_x86_64'
+        # Inside the container install distro-specific: curl/zip/unzip/tar, the Perl IPC::Cmd package
+        # and Linux kernel headers so vcpkg ports (e.g. openssl) can build.
         run: |
           echo "Bootstrapping vcpkg inside manylinux image"
           docker run --rm -v "${{ github.workspace }}:/project" quay.io/pypa/manylinux_2_28_x86_64:2025.10.10-1 \
             bash -lc 'set -euo pipefail
-            # make a best-effort to install zip/unzip/curl/tar and the Perl IPC::Cmd module
-            # which vcpkg's openssl port needs (IPC::Cmd). Handle multiple package managers.
             if command -v apt-get >/dev/null 2>&1; then
-              # Debian/Ubuntu based manylinux images
               apt-get update && apt-get install -y --no-install-recommends \
                 curl zip unzip tar libipc-cmd-perl linux-libc-dev perl || true
             elif command -v dnf >/dev/null 2>&1; then
-              # RHEL/AlmaLinux/Fedora style
               dnf install -y \
                 curl zip unzip tar perl-IPC-Cmd kernel-headers perl || true
             elif command -v yum >/dev/null 2>&1; then
               yum install -y \
                 curl zip unzip tar perl-IPC-Cmd kernel-headers perl || true
             elif command -v apk >/dev/null 2>&1; then
-              # Alpine package naming for Perl modules
               apk add --no-cache \
                 zip unzip curl tar perl-ipc-cmd linux-headers perl || true
             else
