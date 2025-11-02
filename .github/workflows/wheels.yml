@@ -1,10 +1,10 @@
 name: Build wheels
-
 on:
   push:
-    branches: [ main, feature/migration ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build-wheels:
