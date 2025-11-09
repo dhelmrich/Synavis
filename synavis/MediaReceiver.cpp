@@ -105,7 +105,14 @@ void Synavis::MediaReceiver::Initialize()
   Track->onMessage(std::bind(&MediaReceiver::MediaHandler, this, std::placeholders::_1));
 
 
-  PeerConnection->setLocalDescription();
+  // Only create a local description here if this connector is configured to take the first step
+  // (i.e. to be the offerer). If TakeFirstStep is false we must wait for a remote offer and
+  // avoid producing a local SDP proactively to prevent DTLS role ambiguity.
+  if (TakeFirstStep)
+  {
+    // Explicitly request an offer when configured to take the first step.
+    PeerConnection->setLocalDescription(rtc::Description::Type::Offer);
+  }
   if (!PeerConnection->hasMedia())
   {
     std::cout << "Media Constructor: PeerConnection has no media" << std::endl;

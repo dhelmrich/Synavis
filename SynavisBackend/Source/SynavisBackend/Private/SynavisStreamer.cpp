@@ -46,6 +46,7 @@ extern "C" {
 }
 #endif
 
+
 void USynavisStreamer::TeardownConnection(int32 PlayerID)
 {
   FSynavisConnection* Conn = FindConnectionByPlayerID(PlayerID);
@@ -421,6 +422,9 @@ USynavisStreamer::~USynavisStreamer()
 {
   if (SignallingId != 0)
   {
+    // send close first
+    rtcClose(SignallingId);
+
     rtcDeleteWebSocket(SignallingId);
     SignallingId = 0;
   }
@@ -1026,12 +1030,16 @@ void USynavisStreamer::CreateConnectionForPlayer(int32 PlayerID)
   // Insert into connections map before starting ICE so callbacks can find it
   Connections.Add(PlayerID, MoveTemp(Conn));
 
-  // Finally, start ICE gathering by requesting a local description via C API
+  // Finally, start ICE gathering by requesting a local description via C API.
+  // Only do this if the streamer is configured to take the first step (offerer).
   FSynavisConnection& StoredConn = Connections[PlayerID];
-  int localRes = rtcSetLocalDescription(StoredConn.PeerConnection, nullptr);
-  if (localRes != RTC_ERR_SUCCESS)
+  if (bTakeFirstStep)
   {
-    UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcSetLocalDescription returned %d for player %d"), localRes, PlayerID);
+    int localRes = rtcSetLocalDescription(StoredConn.PeerConnection, "offer");
+    if (localRes != RTC_ERR_SUCCESS)
+    {
+      UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcSetLocalDescription returned %d for player %d"), localRes, PlayerID);
+    }
   }
 
   UE_LOG(LogTemp, Log, TEXT("Synavis: Created connection object for player %d (pc=%d dc=%d)"), PlayerID, StoredConn.PeerConnection, StoredConn.DataChannel);
@@ -1191,10 +1199,12 @@ void USynavisStreamer::HandleSignallingMessage(const std::variant<TArray<uint8>,
       {
         UE_LOG(LogTemp, Log, TEXT("Synavis: Set remote description for player %d"), TargetPlayer);
       }
-      // If remote sent an offer, request the C API to set local description (type NULL lets libdatachannel choose)
+      // If remote sent an offer, explicitly create an answer via the C API.
+      // Passing NULL lets libdatachannel pick a role which can lead to actpass/actpass
+      // if the far end also used NULL. Use explicit "answer" to avoid DTLS role ambiguity.
       if (Type.Equals(TEXT("offer"), ESearchCase::IgnoreCase))
       {
-        int localRes = rtcSetLocalDescription(Conn->PeerConnection, nullptr);
+        int localRes = rtcSetLocalDescription(Conn->PeerConnection, "answer");
         if (localRes != RTC_ERR_SUCCESS)
         {
           UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcSetLocalDescription returned %d for player %d"), localRes, TargetPlayer);

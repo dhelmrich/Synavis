@@ -187,6 +187,11 @@ public:
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Streaming|Signalling")
   int32 SignallingPort = 9000;
 
+  // If true the streamer will create local SDPs (take the first step / be offerer).
+  // Set to false to let remote endpoints offer first and make this component passive.
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Streaming|Signalling")
+  bool bTakeFirstStep = true;
+
   UFUNCTION(BlueprintCallable, Category = "Streaming|Signalling")
   void StartSignalling();
 
