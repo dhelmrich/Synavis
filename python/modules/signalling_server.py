@@ -200,6 +200,7 @@ def get_interface_ip(interface) :
   return ip
 #enddef
 
+
 # a method that returns all connections that do not have any other connections assigned to them
 # parameter role: "server" or "client"
 def get_unassigned_connections(role : str = "client") :
@@ -348,7 +349,7 @@ async def handle(connection, message) :
   #endif
 #enddef
 
-async def connection(websocket, path) :
+async def connection(websocket, path = None) :
   global connections, glog, active_server, active_client, global_options
   glog.log_many("info", "{" , str([id for id in connections]) , "}")
   connection = next((connections[id] for id in connections if connections[id].websocket == websocket), Connection(websocket))
@@ -400,14 +401,14 @@ async def connection(websocket, path) :
   if connection.role == "client" :
     for server_id in connection.connected_ids :
       try :
-        if connections[server_id].websocket.open :
+        if connections[server_id].websocket.state == ws.protocol.State.OPEN :
           await connections[server_id].send(json.dumps({"type":"playerDisconnected", "playerId": str(connection.id)}))
       finally:
         connections[server_id].unassign(connection)
   elif connection.role == "server" :
     for client_id in connection.connected_ids :
       try :
-        if connections[client_id].websocket.open :
+        if connections[client_id].websocket.state == ws.protocol.State.OPEN :
           await connections[client_id].send(json.dumps({"type":"serverDisconnected", "serverId": connection.id}))
       finally:
         connections[client_id].unassign(connection)
