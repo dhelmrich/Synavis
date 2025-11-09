@@ -131,6 +131,26 @@ static uint32 CreatePawnHandle();
 static uint32 CreateConnectionHandle();
 static FString LogSetup(uint32 ID, USceneComponent* Child);
 
+// C-style logger callback for libdatachannel. Matches rtcLogCallbackFunc = void(*)(rtcLogLevel,const char*)
+static void Synavis_Rtc_Logger(rtcLogLevel level, const char* message)
+{
+  switch (level)
+  {
+  case RTC_LOG_ERROR:
+    UE_LOG(LogActor, Error, TEXT("Synavis LibDataChannel: %s"), ANSI_TO_TCHAR(message));
+    break;
+  case RTC_LOG_WARNING:
+    UE_LOG(LogActor, Warning, TEXT("Synavis LibDataChannel: %s"), ANSI_TO_TCHAR(message));
+    break;
+  case RTC_LOG_INFO:
+  case RTC_LOG_DEBUG:
+  case RTC_LOG_VERBOSE:
+  default:
+    UE_LOG(LogActor, Log, TEXT("Synavis LibDataChannel: %s"), ANSI_TO_TCHAR(message));
+    break;
+  }
+}
+
 
 // Static hex-dump logger. Logs the byte values of the provided buffer as hex
 // for debugging encoding/round-trip issues. Keep this function static to
@@ -390,6 +410,9 @@ USynavisStreamer::USynavisStreamer()
   // off to improve performance if you don't need them.
   PrimaryComponentTick.bCanEverTick = true;
   this->WebSocketUri.reserve(100);
+
+  // set the logging level for libdatachannel to verbose
+  rtcInitLogger(RTC_LOG_VERBOSE, Synavis_Rtc_Logger);
 
   // ...
 }

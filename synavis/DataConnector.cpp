@@ -821,7 +821,43 @@ void Synavis::DataConnector::Initialize()
             PeerConnection->setRemoteDescription(remote);
           else if (content["type"] == "offer" && !TakeFirstStep)
           {
+            // We received an offer and are configured to answer. Set the remote
+            // description first, then explicitly create and set an answer. Avoid
+            // calling the no-arg setLocalDescription which lets the library guess
+            // (and can create an offer in races).
             PeerConnection->setRemoteDescription(remote);
+
+              try
+              {
+                // Explicitly request the library to create and set a local Answer.
+                PeerConnection->setLocalDescription(rtc::Description::Type::Answer);
+
+                // Log the type and DTLS setup line for diagnostics
+                if (PeerConnection->localDescription().has_value())
+                {
+                  std::string localSdp = PeerConnection->localDescription().value();
+                  auto pos = localSdp.find("a=setup:");
+                  if (pos != std::string::npos)
+                  {
+                    auto end = localSdp.find('\n', pos);
+                    std::string setupLine = localSdp.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+                    lconnector(ELogVerbosity::Info) << "Created explicit answer; local a=setup line: " << setupLine << std::endl;
+                  }
+                  else
+                  {
+                    lconnector(ELogVerbosity::Info) << "Created explicit answer; no a=setup line found in local SDP" << std::endl;
+                  }
+                }
+                else
+                {
+                  lconnector(ELogVerbosity::Warning) << "Created answer but localDescription() is not available" << std::endl;
+                }
+              }
+            catch (const std::exception& e)
+            {
+              lconnector(ELogVerbosity::Error) << "Failed to create/set explicit answer: " << e.what() << std::endl;
+            }
+
             SubmissionHandler.AddTask(std::bind(&DataConnector::CommunicateSDPs, this));
           }
           if (!InitializedRemote)
@@ -942,7 +978,45 @@ void Synavis::DataConnector::Initialize()
           if (content["role"] == "server")
           {
             this->IsServer = true;
-            PeerConnection->setLocalDescription();
+            // If we are configured to take the first step, explicitly create an
+            // offer and set it as the local description. Avoid the no-arg
+            // setLocalDescription() which can let the library guess and cause
+            // dual-offer races.
+            if (TakeFirstStep)
+            {
+              try
+              {
+                // Explicitly request the library to create and set a local Offer.
+                PeerConnection->setLocalDescription(rtc::Description::Type::Offer);
+                if (PeerConnection->localDescription().has_value())
+                {
+                  std::string localSdp = PeerConnection->localDescription().value();
+                  auto pos = localSdp.find("a=setup:");
+                  if (pos != std::string::npos)
+                  {
+                    auto end = localSdp.find('\n', pos);
+                    std::string setupLine = localSdp.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+                    lconnector(ELogVerbosity::Info) << "Created explicit offer; local a=setup line: " << setupLine << std::endl;
+                  }
+                  else
+                  {
+                    lconnector(ELogVerbosity::Info) << "Created explicit offer; no a=setup line found in local SDP" << std::endl;
+                  }
+                }
+                else
+                {
+                  lconnector(ELogVerbosity::Warning) << "Created offer but localDescription() is not available" << std::endl;
+                }
+              }
+              catch (const std::exception& e)
+              {
+                lconnector(ELogVerbosity::Error) << "Failed to create/set explicit offer: " << e.what() << std::endl;
+              }
+            }
+            else
+            {
+              lconnector(ELogVerbosity::Info) << "Role=server received but TakeFirstStep==false; deferring to remote offer." << std::endl;
+            }
           }
         }
         else if (content["type"] == "playerConnected")
