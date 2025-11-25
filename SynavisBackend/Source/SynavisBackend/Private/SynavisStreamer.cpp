@@ -22,6 +22,7 @@
 #include "SynavisStreamerRendering.h"
 #include "Misc/Char.h"
 #include "Containers/StringConv.h"
+#include "Logging/LogVerbosity.h"
 
 THIRD_PARTY_INCLUDES_START
 #include "rtc/rtc.h"
@@ -147,7 +148,7 @@ static void Synavis_Rtc_Logger(rtcLogLevel level, const char* message)
   case RTC_LOG_DEBUG:
   case RTC_LOG_VERBOSE:
   default:
-    UE_LOG(LogActor, Log, TEXT("Synavis LibDataChannel: %s"), ANSI_TO_TCHAR(message));
+    UE_LOG(LogActor, Display, TEXT("Synavis LibDataChannel: %s"), ANSI_TO_TCHAR(message));
     break;
   }
 }
@@ -412,9 +413,6 @@ USynavisStreamer::USynavisStreamer()
   PrimaryComponentTick.bCanEverTick = true;
   this->WebSocketUri.reserve(100);
 
-  // set the logging level for libdatachannel to verbose
-  rtcInitLogger(RTC_LOG_VERBOSE, Synavis_Rtc_Logger);
-
   // ...
 }
 
@@ -450,6 +448,15 @@ USynavisStreamer::~USynavisStreamer()
 void USynavisStreamer::BeginPlay()
 {
   Super::BeginPlay();
+
+  // set the logging level for libdatachannel to verbose only when UE global verbosity is VeryVerbose
+  if (UE_GET_LOG_VERBOSITY(LogTemp) >= ELogVerbosity::VeryVerbose)
+  {
+    rtcInitLogger(RTC_LOG_VERBOSE, Synavis_Rtc_Logger);
+  }
+
+  // sanity check: fire function
+  Synavis_Rtc_Logger(RTC_LOG_INFO, "SynavisStreamer initialized");
 
 }
 
