@@ -1,8 +1,4 @@
 import numpy as np
-#import tensorflow as tf
-#import tensorflow.keras.backend as K
-#import horovod.tensorflow.keras as hvd
-import cv2
 import threading
 import time
 import sys
@@ -21,7 +17,11 @@ sys.path.append(path)
 import PySynavis as rtc
 from signalling_server import start_signalling
 
-#start_signalling(False)
+syn.SetGlobalLogVerbosity(syn.LogVerbosity.LogDebug)
+pylog = syn.Logger()
+pylog.setidentity("Chamber Experiment")
+
+pylog.log("Starting extraction module")
 
 HEIGHT = 512
 WIDTH = 512
@@ -44,7 +44,7 @@ def get_message() :
 # a callback function for the data connector
 def message_callback(msg) :
   global message_buffer
-  print("Received message: ", msg)
+  pylog.log("Received message: ", msg)
   # decode from utf-8
   message_buffer.append(str(msg))
 
@@ -55,8 +55,8 @@ def data_callback(data) :
 def frame_callback(frame) :
   print("Received frame.")
 
-m = rtc.MediaReceiver()
-f = rtc.FrameDecode()
+m = syn.MediaReceiver()
+f = syn.FrameDecode()
 f.SetFrameCallback(frame_callback)
 m.Initialize()
 #Media.SetConfigFile("config.json")
@@ -66,8 +66,15 @@ m.StartSignalling()
 m.SetDataCallback(data_callback)
 m.SetMessageCallback(message_callback)
 m.SetFrameReceptionCallback(f.CreateAcceptor(data_callback))
+m.SetRetryOnErrorResponse(True)
+m.LockUntilConnected(1000)
 
-while not m.GetState() == rtc.EConnectionState.CONNECTED:
+while not m.GetState() == syn.EConnectionState.CONNECTED:
   time.sleep(0.1)
 
-print("Starting")
+pylog.log("""
+####################################################################
+# Synavis Extraction Module is running.                        #
+# Waiting for messages...                                         #
+####################################################################
+""")

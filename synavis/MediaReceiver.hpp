@@ -47,7 +47,6 @@ public:
 
 
 protected:
-  std::shared_ptr<rtc::Track> Track;
   std::shared_ptr<rtc::Track> theirTrack;
   rtc::Description::Video MediaDescription{"video", rtc::Description::Direction::RecvOnly};
   std::shared_ptr<BridgeSocket> FrameRelay;

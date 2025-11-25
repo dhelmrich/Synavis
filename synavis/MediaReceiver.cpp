@@ -60,7 +60,7 @@ void Synavis::MediaReceiver::Initialize()
   PeerConnection->onTrack([this](std::shared_ptr<rtc::Track> Track)
   {
     lmedia(ELogVerbosity::Debug) << "PeerConnection onTrack" << std::endl;
-    if (Track != this->Track)
+    if (Track != this->theirTrack)
     {
       // check if track is a video track
       auto description = Track->description();
@@ -92,17 +92,6 @@ void Synavis::MediaReceiver::Initialize()
       }
     }
   });
-  Track = PeerConnection->addTrack(MediaDescription);
-  Track->onAvailable([]() {});
-  Track->onOpen([this]()
-  {
-    lmedia(ELogVerbosity::Debug) << "OUR Track opened" << std::endl;
-    if (this->DataChannel->isOpen())
-    {
-      //StartStreaming();
-    }
-  });
-  Track->onMessage(std::bind(&MediaReceiver::MediaHandler, this, std::placeholders::_1));
 
 
   // Only create a local description here if this connector is configured to take the first step
@@ -112,6 +101,10 @@ void Synavis::MediaReceiver::Initialize()
   {
     // Explicitly request an offer when configured to take the first step.
     PeerConnection->setLocalDescription(rtc::Description::Type::Offer);
+  }
+  else
+  {
+    PeerConnection->setLocalDescription(rtc::Description::Type::Answer);
   }
   if (!PeerConnection->hasMedia())
   {
@@ -147,12 +140,12 @@ void Synavis::MediaReceiver::PrintCommunicationData()
 {
   DataConnector::PrintCommunicationData();
   lmedia(ELogVerbosity::Info) << "FrameRelay: " << FrameRelay->GetAddress() << ":" << FrameRelay->GetSocketPort() << std::endl;
-  lmedia(ELogVerbosity::Info) << "Track (" << Track->mid() << ") has a maximum Message size of " << Track->maxMessageSize() << std::endl;
+  lmedia(ELogVerbosity::Info) << "Track (" << theirTrack->mid() << ") has a maximum Message size of " << theirTrack->maxMessageSize() << std::endl;
 }
 
 void Synavis::MediaReceiver::RequestKeyFrame()
 {
-  Track->requestKeyframe();
+  theirTrack->requestKeyframe();
 }
 
 void Synavis::MediaReceiver::SendMouseClick()

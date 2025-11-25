@@ -382,6 +382,27 @@ namespace Synavis
       {
         return FormattedTime(std::chrono::system_clock::now(), true);
       }
+      // to_string operator for ELogVerbosity
+      __forceinline std::string_view ToString(ELogVerbosity Verbosity) const
+      {
+        switch (Verbosity)
+        {
+        case ELogVerbosity::Silent:
+          return "Silent";
+        case ELogVerbosity::Error:
+          return "Error";
+        case ELogVerbosity::Warning:
+          return "Warning";
+        case ELogVerbosity::Info:
+          return "Info";
+        case ELogVerbosity::Debug:
+          return "Debug";
+        case ELogVerbosity::Verbose:
+          return "Verbose";
+        default:
+          return "Unknown";
+        }
+      }
 
       std::string Instigator;
       Logger* Parent;
@@ -391,6 +412,7 @@ namespace Synavis
       Logger& operator<<(T&& Message) const
       {
         *Parent << "[" << Instigator << "]"
+          << "[" << this->ToString(Parent->GetVerbosity()) << "]"
           << "[" << TimeStamp() << "]: "
           << Message;
         return *Parent;

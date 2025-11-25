@@ -21,6 +21,7 @@ if(BUILD_WITH_DECODING)
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
     PUBLIC ${CMAKE_CURRENT_BINARY_DIR}
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../synavis
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../synavis/$<CONFIG>
     ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/include
     ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/deps/json/single_include/nlohmann/
 
