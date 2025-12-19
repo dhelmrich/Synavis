@@ -11,9 +11,14 @@ THIRD_PARTY_INCLUDES_START
 #include <variant>
 #include <unordered_map>
 #include <memory>
+#include <functional>
 
 #include "RHIGPUReadback.h"
-#if __has_include(<rtc/rtc.hpp>)
+#if 0
+// Do NOT include the C++ libdatachannel headers from this public header to avoid
+// exposing C++ API types across DLL boundaries. All interaction with libdatachannel
+// in this module uses the C API (rtc.h) and integer ids. If you need the C++ API
+// in a .cpp file, include <rtc/rtc.hpp> there.
 #else
 namespace rtc { class PeerConnection; class DataChannel; class WebSocket; class Track; }
 #endif
@@ -78,16 +83,13 @@ struct FSynavisHandlers
     // Store the scene capture component so we can validate it (ensure it has a TextureTarget)
   TOptional<TPair<int32, USceneCaptureComponent2D*>> Video;
 
-  // DataChannel id (C API) assigned when creating a dedicated channel; nullopt if none
-  std::optional<int> DataChannel;
-  // Media description placeholder: we no longer keep C++ Description objects across DLL boundary.
-  // Use an integer placeholder (0 = none) or recreate track init when needed.
   int MediaDesc = 0;
-  // If true, the handler requested a dedicated datachannel; this will be created per-connection
-  bool WantsDedicatedChannel = false;
 
   FSynavisData DataHandler;
   FSynavisMessage MsgHandler;
+  // Optional C++ callbacks (for registration from native code)
+  std::function<void(int32, const TArray<uint8>&)> DataCbCpp;
+  std::function<void(int32, const FString&)> MsgCbCpp;
   uint32 HandlerID = 0;
 
   // Provide hashing and equality so FSynavisHandlers can be used in UE containers (TSet/TMap)
@@ -113,15 +115,13 @@ struct FSynavisConnection
   int PeerConnection = 0;
   int Packetizer = 0;
   int DataChannel = 0;
+  // will set FSynavisConnection::DataChannel to not equal to System when opened.
+  bool bWantsDedicatedDataChannel = false;
 
   /**********************************
-   * Media Objects                  *
+   * Meta Info on Connection        *
    * ********************************/
-   // Per-connection mapping from registered handler ID to an outbound Track id (C API)
-  std::unordered_map<uint32, int> TracksByHandler;
-
-  // Per-connection mapping from handler ID to a dedicated DataChannel id (C API)
-  std::unordered_map<uint32, int> DataChannelsByHandler;
+  uint32 MaxMessageSize = 0;
 
   int ConnectionID = 0;
   // Per-connection flag indicating whether this connection should receive encoded video
@@ -228,6 +228,32 @@ public:
     USceneCaptureComponent2D* SceneCapture = nullptr,
     bool DedicatedChannel = false);
 
+  // C++ registration API: register native callbacks without Blueprint indirection.
+  // Returns a stable HandlerID (positive) or 0 on failure.
+  int32 RegisterDataSourceCpp(
+    const std::function<void(int32, const TArray<uint8>&)>& OnData,
+    const std::function<void(int32, const FString&)>& OnMessage,
+    USceneCaptureComponent2D* SceneCapture = nullptr,
+    bool DedicatedChannel = false);
+
+  // Unregister a previously registered handler.
+  void UnregisterDataSource(int32 HandlerId);
+
+  // Send raw bytes/text to a specific connection via the handler's dedicated channel
+  // If ConnectionPlayerID < 0 the message will be broadcast to all connections
+  UFUNCTION(BlueprintCallable, Category = "Streaming|Data")
+  bool SendTextToConnection(int32 HandlerId, int32 ConnectionPlayerID, const FString& Text);
+
+  bool SendToConnection(int32 HandlerId, int32 ConnectionPlayerID, const TArray<uint8>& Data);
+  // Send a potentially large binary payload by chunking it into DataChannel-friendly pieces.
+  bool SendBinaryToConnection(int32 HandlerId, int32 ConnectionPlayerID, const TArray<uint8>& Data);
+
+  bool BroadcastText(int32 HandlerId, const FString& Text);
+  bool BroadcastBinary(int32 HandlerId, const TArray<uint8>& Data);
+
+  bool SendTextViaSystemChannel(const FString& Text);
+  bool SendBinaryViaSystemChannel(const TArray<uint8>& Data);
+
 
   // Send raw encoded frame bytes to a target RTC track or datachannel
   void SendFrameBytes(const TArray<uint8>& Bytes, const FString& Name, const FString& Format, int32 TargetTrackId);
@@ -258,6 +284,9 @@ protected:
 
   // TSet of registered data handlers
   TSet<FSynavisHandlers> RegisteredDataHandlers;
+
+  // Next handler id for C++ registrations
+  uint32 NextHandlerId = 1;
 
   void TakeSignallingMessage(const FString& Message);
 
@@ -293,6 +322,10 @@ protected:
 
   // Global/system datachannel used as fallback when per-handler tracks are not available
   int SystemDataChannel = 0;
+
+  // Reverse map: DataChannel id -> (HandlerID, ConnectionPlayerID)
+  // Used for O(1) dispatch of incoming messages to registered handlers.
+  TMap<int32, TPair<uint32, int32>> DataChannelToHandler;
 
   // Teardown a connection and free its resources (PeerConnection, DataChannels, Tracks)
   void TeardownConnection(int32 PlayerID);

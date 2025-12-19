@@ -71,16 +71,8 @@ void USynavisStreamer::TeardownConnection(int32 PlayerID)
   {
     rtcClose(Conn->DataChannel);
     rtcDeleteDataChannel(Conn->DataChannel);
+    DataChannelToHandler.Remove(Conn->DataChannel);
     Conn->DataChannel = 0;
-  }
-  for (auto& kv : Conn->DataChannelsByHandler)
-  {
-    int dc = kv.second;
-    if (dc)
-    {
-      rtcClose(dc);
-      rtcDeleteDataChannel(dc);
-    }
   }
 
   // Delete any created tracks for this connection
@@ -93,8 +85,6 @@ void USynavisStreamer::TeardownConnection(int32 PlayerID)
     }
   }
 
-
-  Conn->DataChannelsByHandler.clear();
 
   // Finally remove from map
   Connections.Remove(PlayerID);
@@ -787,8 +777,121 @@ void USynavisStreamer::HandlePcGatheringStateChangeCallback(int pc, int state)
 
 void USynavisStreamer::HandleDataChannelMessageCallback(int dc, const std::variant<TArray<uint8>, std::string>& message)
 {
-  // Forward to generic handler which will parse and dispatch messages
+  // Fast path: lookup handler via reverse map
+  if (DataChannelToHandler.Contains(dc))
+  {
+    TPair<uint32, int32> Pair = DataChannelToHandler[dc];
+    uint32 HandlerId = Pair.Key;
+    int32 ConnectionPlayerID = Pair.Value;
+
+    // find handler entry in registered set (uses HandlerID equality)
+    FSynavisHandlers Key;
+    Key.HandlerID = HandlerId;
+    const FSynavisHandlers* H = RegisteredDataHandlers.Find(Key);
+    if (H)
+    {
+      // dispatch based on payload type
+      if (std::holds_alternative<std::string>(message))
+      {
+        const std::string& s = std::get<std::string>(message);
+        FString Msg = FString(UTF8_TO_TCHAR(s.c_str()));
+        if (H->MsgHandler.IsBound()) H->MsgHandler.Execute(Msg);
+        if (H->MsgCbCpp) H->MsgCbCpp(ConnectionPlayerID, Msg);
+        return;
+      }
+      else
+      {
+        const TArray<uint8>& b = std::get<TArray<uint8>>(message);
+        if (H->DataHandler.IsBound()) H->DataHandler.Execute(b);
+        if (H->DataCbCpp) H->DataCbCpp(ConnectionPlayerID, b);
+        return;
+      }
+    }
+    // If handler id exists in map but not registered (race/unregister), fallthrough
+  }
+
+  // If not matched by reverse map, check system datachannels and fall back to generic
+  for (auto& Pair : Connections)
+  {
+    FSynavisConnection& C = Pair.Value;
+    if (C.DataChannel == dc)
+    {
+      OnDataChannelMessage(message);
+      return;
+    }
+  }
+
+  // fallback generic handler
   OnDataChannelMessage(message);
+}
+
+
+int32 USynavisStreamer::RegisterDataSourceCpp(const std::function<void(int32, const TArray<uint8>&)>& OnData,
+  const std::function<void(int32, const FString&)>& OnMessage,
+  USceneCaptureComponent2D* SceneCapture,
+  bool DedicatedChannel)
+{
+  FSynavisHandlers H;
+  H.HandlerID = NextHandlerId++;
+  H.DataCbCpp = OnData;
+  H.MsgCbCpp = OnMessage;
+  H.Video = SceneCapture ? TOptional<TPair<int32, USceneCaptureComponent2D*>>(TPair<int32, USceneCaptureComponent2D*>(0, SceneCapture)) : TOptional<TPair<int32, USceneCaptureComponent2D*>>();
+  RegisteredDataHandlers.Add(H);
+  return static_cast<int32>(H.HandlerID);
+}
+
+void USynavisStreamer::UnregisterDataSource(int32 HandlerId)
+{
+  FSynavisHandlers ToRemove;
+  ToRemove.HandlerID = HandlerId;
+  RegisteredDataHandlers.Remove(ToRemove);
+  // remove per-connection mappings and reverse map entries
+  for (auto& Pair : Connections)
+  {
+    FSynavisConnection& C = Pair.Value;
+  }
+}
+
+bool USynavisStreamer::SendToConnection(int32 HandlerId, int32 ConnectionPlayerID, const TArray<uint8>& Data)
+{
+  bool Sent = false;
+  if (ConnectionPlayerID >= 0)
+  {
+    FSynavisConnection* Conn = FindConnectionByPlayerID(ConnectionPlayerID);
+    if (!Conn) return false;
+  }
+}
+
+bool USynavisStreamer::SendBinaryToConnection(int32 HandlerId, int32 ConnectionPlayerID, const TArray<uint8>& Data)
+{
+  // find connection
+  bool Sent = false;
+  FSynavisConnection* Conn = FindConnectionByPlayerID(ConnectionPlayerID);
+  if (!Conn) return false;
+  auto dcid = Conn->DataChannel;
+  if (dcid != 0 && rtcIsOpen(dcid))
+  {
+    int sendRes = rtcSendMessage(dcid, reinterpret_cast<const char*>(Data.GetData()), static_cast<int>(Data.Num()));
+    Sent = (sendRes == RTC_ERR_SUCCESS);
+  }
+  return Sent;
+}
+  
+
+bool USynavisStreamer::SendTextToConnection(int32 HandlerId, int32 ConnectionPlayerID, const FString& Text)
+{
+  FTCHARToUTF8 Utf8(*Text);
+  const char* ptr = Utf8.Get();
+  int len = Utf8.Length();
+  Conn = FindConnectionByPlayerID(ConnectionPlayerID);
+  if (!Conn) return false;
+  auto dcid = Conn->DataChannel;
+  if (dcid != 0 && rtcIsOpen(dcid))
+  {
+    int sendRes = rtcSendMessage(dcid, ptr, - (len + 1)); // negative size for text messages
+    Sent = (sendRes == RTC_ERR_SUCCESS);
+  }
+  return Sent;
 }
 
 void USynavisStreamer::HandleDataChannelOpenCallback(int dc)
@@ -800,17 +903,11 @@ void USynavisStreamer::HandleDataChannelOpenCallback(int dc)
     if (C.DataChannel == dc)
     {
       C.State = EPeerState::ChannelOpen;
-      UE_LOG(LogTemp, Log, TEXT("Synavis: DataChannel %d opened for connection %d"), dc, C.ConnectionID);
+      // Query libdatachannel for the peer's max message size and store it on first open
+      int maxMsg = rtcMaxMessageSize(dc);
+      C.MaxMessageSize = static_cast<uint32>(maxMsg);
+      UE_LOG(LogTemp, Log, TEXT("Synavis: DataChannel %d opened for connection %d (max message size=%u)"), dc, C.ConnectionID, C.MaxMessageSize);
       return;
-    }
-    for (auto& kv : C.DataChannelsByHandler)
-    {
-      if (kv.second == dc)
-      {
-        C.State = EPeerState::ChannelOpen;
-        UE_LOG(LogTemp, Log, TEXT("Synavis: Dedicated DataChannel %d opened for handler %d player %d"), dc, kv.first, C.ConnectionID);
-        return;
-      }
     }
   }
 }
@@ -824,15 +921,9 @@ void USynavisStreamer::HandleDataChannelClosedCallback(int dc)
     {
       C.State = EPeerState::NoConnection;
       UE_LOG(LogTemp, Log, TEXT("Synavis: DataChannel %d closed for connection %d"), dc, C.ConnectionID);
+      // remove any reverse-map entry for system channel if present
+      DataChannelToHandler.Remove(dc);
       return;
-    }
-    for (auto& kv : C.DataChannelsByHandler)
-    {
-      if (kv.second == dc)
-      {
-        UE_LOG(LogTemp, Log, TEXT("Synavis: Dedicated DataChannel %d closed for handler %d player %d"), dc, kv.first, C.ConnectionID);
-        return;
-      }
     }
   }
 }
@@ -975,26 +1066,6 @@ void USynavisStreamer::CreateConnectionForPlayer(int32 PlayerID)
     rtcSetOpenCallback(dcid, Synavis_Rtc_DataChannel_OnOpen);
     rtcSetClosedCallback(dcid, Synavis_Rtc_DataChannel_OnClosed);
     rtcSetErrorCallback(dcid, Synavis_Rtc_DataChannel_OnError);
-  }
-
-  // Create dedicated datachannels for handlers that requested them and map per-connection
-  TArray<FSynavisHandlers> HandlersCopy = RegisteredDataHandlers.Array();
-  for (const FSynavisHandlers& HandlerCopy : HandlersCopy)
-  {
-    if (HandlerCopy.WantsDedicatedChannel)
-    {
-      std::string handlerChannelName = std::string("synavis-datahandler-") + std::to_string(HandlerCopy.HandlerID) + std::string("-p") + std::to_string(PlayerID);
-      int hdc = rtcCreateDataChannel(Conn.PeerConnection, handlerChannelName.c_str());
-      if (hdc > 0)
-      {
-        rtcSetUserPointer(hdc, this);
-        rtcSetMessageCallback(hdc, Synavis_Rtc_DataChannel_OnMessage);
-        rtcSetOpenCallback(hdc, Synavis_Rtc_DataChannel_OnOpen);
-        rtcSetClosedCallback(hdc, Synavis_Rtc_DataChannel_OnClosed);
-        rtcSetErrorCallback(hdc, Synavis_Rtc_DataChannel_OnError);
-        Conn.DataChannelsByHandler.emplace(HandlerCopy.HandlerID, hdc);
-      }
-    }
   }
 
   // Create outgoing send-only tracks for any registered handlers that have video sources.
@@ -1330,7 +1401,7 @@ int USynavisStreamer::RegisterDataSource(
   if (DedicatedChannel)
   {
     Handler.WantsDedicatedChannel = true;
-    Handler.DataChannel = std::nullopt;
+    Handler.DataChannel = -1;
   }
   else
   {
