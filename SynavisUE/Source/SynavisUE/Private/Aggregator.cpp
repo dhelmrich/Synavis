@@ -51,8 +51,8 @@ void AAggregator::OutlineAllActors()
       // construct outer box points
 
       // convert to screen space
-      FVector2D screenMinimum;
-      FVector2D screenMaximum;
+      FVector2D screenMinimum{};
+      FVector2D screenMaximum{};
       for (auto position : {
         origin + FVector(-extent.X, -extent.Y, -extent.Z),
         origin + FVector(-extent.X, -extent.Y, extent.Z),

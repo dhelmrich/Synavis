@@ -9,14 +9,13 @@
 #include "HAL/RunnableThread.h"
 #include "HAL/Runnable.h"
 #include "Containers/Map.h"
-#include "PixelStreamingInputComponent.h"
+//#include "PixelStreamingInputComponent.h"
 #include "ProceduralMeshComponent.h"
 #include "GenericPlatform/GenericPlatformProcess.h"
 
 #include "SynavisDrone.generated.h"
 
 // callback definition for blueprints
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FPixelStreamingResponseCallback, FString, Message);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FPixelStreamingDataCallback, TArray<int>, Data);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_SixParams(FPixelStreamingReceptionCallback, const TArray<FVector>&, Points, const TArray<FVector>&, Normals, const TArray<int>&, Triangles, const TArray<FVector2D>&, TexCoords, const TArray<float>&, Values, float, Time);
 
@@ -129,6 +128,8 @@ struct FTransmissionTarget
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBlueprintSignallingCallback, EBlueprintSignalling, Signal);
 
+class USynavisStreamer;
+
 UCLASS(Config = Game)
 class SYNAVISUE_API ASynavisDrone : public AActor
 {
@@ -144,11 +145,22 @@ public:
   // Sets default values for this actor's properties
   ASynavisDrone();
 
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Network")
+  FString SynavisEndpointName;
+
+  UFUNCTION(BlueprintCallable, Category = "Network")
+  void GenerateEndpointName(){
+    SynavisEndpointName = FString::Printf(TEXT("SynavisDrone_%llu_%llu"),
+      FPlatformTime::Cycles64(),
+      // random
+      static_cast<uint64>(FGenericPlatformMath::Rand32()) << 32 | FGenericPlatformMath::Rand32()
+      );
+  }
+
+
   UPROPERTY(BlueprintAssignable, Category = "Network")
     FPixelStreamingReceptionCallback OnPixelStreamingGeometry;
 
-  UPROPERTY(BlueprintAssignable, Category = "Network")
-    FPixelStreamingResponseCallback OnPixelStreamingResponse;
 
   UPROPERTY(BlueprintAssignable, Category = "Coupling")
     FBlueprintSignallingCallback OnBlueprintSignalling;
@@ -158,6 +170,10 @@ public:
 
   UFUNCTION(BlueprintCallable, Category = "Network")
     void SendError(FString Message);
+
+  // Send raw binary data via the registered Synavis handler's datachannel.
+  UFUNCTION(BlueprintCallable, Category = "Network")
+    bool SendBinary(const TArray<uint8>& Data, int PlayerID = -1);
 
   UFUNCTION(BlueprintCallable, Category = "Network")
     void ResetSynavisState();
@@ -307,8 +323,8 @@ public:
   UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "Network")
     int RawDataResolution = 256;
 
-  UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Network")
-    UPixelStreamingInput* RemoteInput;
+  //UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Network")
+  //  UPixelStreamingInput* RemoteInput;
 
   UFUNCTION(BlueprintCallable, Category = "View")
     void UpdateCamera();
@@ -398,6 +414,11 @@ protected:
   unsigned int TriangleCount = 0;
 
   uint8 Base64LookupTable[256];
+
+  // C++ registration: handler id returned by USynavisStreamer::RegisterDataSourceCpp
+  int32 RegisteredHandlerId = 0;
+  // Cached pointer to discovered streamer component
+  USynavisStreamer* SynavisStreamerRef = nullptr;
 
   FCollisionObjectQueryParams ActorFilter;
   FCollisionQueryParams CollisionFilter;

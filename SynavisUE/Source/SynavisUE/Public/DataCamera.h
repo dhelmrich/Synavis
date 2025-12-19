@@ -3,35 +3,33 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Components/SceneComponent.h"
+#include "GameFramework/Pawn.h"
 #include "DataCamera.generated.h"
 
-// forward declaration
+// Forward declarations
 class UCameraComponent;
 class USceneCaptureComponent2D;
 class UBoxComponent;
 class UTextureRenderTarget2D;
 class FRenderTextureTargetResource;
-
-UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
-class SYNAVISUE_API UDataCamera : public USceneComponent
+UCLASS(Blueprintable)
+class  ADataCamera : public APawn
 {
 	GENERATED_BODY()
 
 public:	
-	// Sets default values for this component's properties
-	UDataCamera();
-	
-  TFunctionRef<void(FRenderTextureTargetResource*, FRenderTextureTargetResource*)> *Callable;
+	// Sets default values for this pawn's properties
+	ADataCamera();
+
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "View")
-		USceneCaptureComponent2D* InfoCam;
+	USceneCaptureComponent2D* InfoCam;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "View")
-		USceneCaptureComponent2D* SceneCam;
+	USceneCaptureComponent2D* SceneCam;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "View")
-	  UBoxComponent* Flyspace;
+	UBoxComponent* Flyspace;
 		
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "View")
 	UTextureRenderTarget2D* InfoCamTarget;
@@ -39,43 +37,45 @@ public:
 	UTextureRenderTarget2D* SceneCamTarget;
 		
 	UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "View")
-	  float MaxVelocity = 10.f;
+	float MaxVelocity = 10.f;
 		
 	UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "View")
-	  float DistanceToLandscape = -1.f;
+	float DistanceToLandscape = -1.f;
 		
 	UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "View")
-	  float TurnWeight = 0.8f;
+	float TurnWeight = 0.8f;
 	UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "View")
-	  float CircleStrength = 0.02f;
+	float CircleStrength = 0.02f;
 	UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "View")
-	  float CircleSpeed = 0.3f;
+	float CircleSpeed = 0.3f;
 
 	UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "Time")
-	  float FrameCaptureTime = 10.f;
+	float FrameCaptureTime = 10.f;
 
 	UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "View")
-	  int RenderMode = 2;
+	int RenderMode = 2;
 	
 	UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "View")
-	  float DistanceScale = 2000.f;
+	float DistanceScale = 2000.f;
 	
 	UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "View")
-	  float BlackDistance = 0.f;
+	float BlackDistance = 0.f;
 	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "View")
-	  FVector BinScale{};
+	FVector BinScale{};
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "View")
-	  bool LockNavigation = false;
+	bool LockNavigation = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "View")
-	  bool EditorOrientedCamera = false;
+	bool EditorOrientedCamera = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "View")
-		bool Rain = false;
+	bool Rain = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "View")
-	  int RainParticlesPerSecond{10000};
+	int RainParticlesPerSecond{10000};
+
+  bool bIsStreaming = false;
 
 	FVector NextLocation;
 	FVector Velocity;
@@ -90,9 +90,12 @@ public:
 	float xprogress = 0.f;
 	float FrameCaptureCounter;
 	
-  FCollisionObjectQueryParams ActorFilter;
-  FCollisionQueryParams CollisionFilter;
+	FCollisionObjectQueryParams ActorFilter;
+	FCollisionQueryParams CollisionFilter;
+
+	UFUNCTION(BlueprintCallable)
 	void EnsureDistancePreservation();
+
 
 protected:
 	// Called when the game starts
@@ -100,6 +103,10 @@ protected:
 
 public:	
 	// Called every frame
-	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
-  virtual void OnComponentCreated() override;
+	virtual void Tick(float DeltaTime) override;
+
+private:
+	// Add private members for your streaming implementation (e.g., a pointer to your streamer logic)
+	// Example:
+	// TSharedPtr<FMyCustomStreamer> Streamer;
 };

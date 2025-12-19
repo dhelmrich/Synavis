@@ -1,6 +1,8 @@
 // Copyright Dirk Norbert Helmrich, 2023
 
 #include "SynavisDrone.h"
+#include "SynavisStreamer.h"
+#include "EngineUtils.h"
 
 #include "ImageUtils.h"
 #include "Kismet/GameplayStatics.h"
@@ -133,7 +135,7 @@ void ASynavisDrone::ParseInput(FString Descriptor)
     else
     {
       const uint64 size = FCStringAnsi::Strlen(reinterpret_cast<const ANSICHAR*>(*Descriptor));
-      UE_LOG(LogTemp, Warning, TEXT("Received data of size %d is not JSON but we are waiting for data."), size);
+      UE_LOG(LogTemp, Warning, TEXT("Received data of size %llu is not JSON but we are waiting for data."), size);
       const uint8* data = reinterpret_cast<const uint8*>(*Descriptor);
       // length of the data in bytes
 
@@ -238,7 +240,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
       }
       // we consumed the input, delete the file
       file.DeleteFile(*fname);
-      if (unixtime_start > 0)
+      if(unixtime_start > 0)
       {
         SendResponse(FString::Printf(TEXT("{\"type\":\"filegeometry\",\"starttime\":%f}"), unixtime_start), unixtime_start, pid);
       }
@@ -474,17 +476,17 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
         FString CameraToSwitchTo = Jason->GetStringField(TEXT("camera"));
         if (CameraToSwitchTo == "info")
         {
-          UE_LOG(LogTemp, Warning, TEXT("Switching to info cam"));
+          UE_LOG(LogActor, Warning, TEXT("Switching to info cam"));
           OnBlueprintSignalling.Broadcast(EBlueprintSignalling::SwitchToInfoCam);
         }
         else if (CameraToSwitchTo == TEXT("scene"))
         {
-          UE_LOG(LogTemp, Warning, TEXT("Switching to scene cam"));
+          UE_LOG(LogActor, Warning, TEXT("Switching to scene cam"));
           OnBlueprintSignalling.Broadcast(EBlueprintSignalling::SwitchToSceneCam);
         }
         else if (CameraToSwitchTo == "dual")
         {
-          UE_LOG(LogTemp, Warning, TEXT("Switching to dual cam"));
+          UE_LOG(LogActor, Warning, TEXT("Switching to dual cam"));
           OnBlueprintSignalling.Broadcast(EBlueprintSignalling::SwitchToBothCams);
         }
       }
@@ -606,7 +608,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
       }
       else if (Jason->HasField(TEXT("memory")))
       {
-        const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"memory\":%d}"), FPlatformMemory::GetStats().TotalPhysical);
+        const FString Response = FString::Printf(TEXT("{\"type\":\"info\",\"memory\":%llu}"), FPlatformMemory::GetStats().TotalPhysical);
         SendResponse(Response, unixtime_start, pid);
       }
       else if (Jason->HasField(TEXT("fps")))
@@ -736,7 +738,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
       FString dtype = Jason->GetStringField(TEXT("dtype"));
       FString Value = Jason->GetStringField(TEXT("value"));
 
-      auto Object = this->GetObjectFromJSON(Jason);
+      //auto Object = this->GetObjectFromJSON(Jason);
       auto Instance = this->WorldSpawner->GenerateInstanceFromName(MaterialSlot, false);
 
       if (dtype == TEXT("scalar"))
@@ -942,7 +944,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
           auto FileName = FPaths::ProjectDir() + "/Synavisue" + FString::FromInt(unixtime) + ".json";
           FFileHelper::SaveStringToFile(OutputString, *FileName);
         }
-        UE_LOG(LogTemp, Warning, TEXT("Read %d pixels from camera amounting to sizes of %d->%d"), CamData.Num(), CamData.Num() * sizeof(FColor), ReceptionFormat.Len());
+        UE_LOG(LogTemp, Warning, TEXT("Read %d pixels from camera amounting to sizes of %llu->%d"), CamData.Num(), CamData.Num() * sizeof(FColor), ReceptionFormat.Len());
         ReceptionBufferSize = 1;
         ReceptionBufferOffset = 0;
         auto BaseLength = ReceptionFormat.Len();
@@ -1102,12 +1104,12 @@ void ASynavisDrone::ParseGeometryFromJson(TSharedPtr<FJsonObject> Jason)
   // decode the base64 string
   Base64.Decode(points, Dest);
   // copy the data into the points array
-  Points.SetNumUninitialized(Dest.Num() / sizeof(FVector), true);
+  Points.SetNumUninitialized(Dest.Num() / sizeof(FVector));
   FMemory::Memcpy(Points.GetData(), Dest.GetData(), Dest.Num());
   auto normals = Jason->GetStringField(TEXT("normals"));
   Dest.Reset(MaxSize);
   Base64.Decode(normals, Dest);
-  Normals.SetNumUninitialized(Dest.Num() / sizeof(FVector), true);
+  Normals.SetNumUninitialized(Dest.Num() / sizeof(FVector));
   FMemory::Memcpy(Normals.GetData(), Dest.GetData(), Dest.Num());
   if (Normals.Num() != Points.Num())
   {
@@ -1117,7 +1119,7 @@ void ASynavisDrone::ParseGeometryFromJson(TSharedPtr<FJsonObject> Jason)
   auto triangles = Jason->GetStringField(TEXT("triangles"));
   Dest.Reset(MaxSize);
   Base64.Decode(triangles, Dest);
-  Triangles.SetNumUninitialized(Dest.Num() / sizeof(int), true);
+  Triangles.SetNumUninitialized(Dest.Num() / sizeof(int));
   FMemory::Memcpy(Triangles.GetData(), Dest.GetData(), Dest.Num());
   UVs.Reset();
   Dest.Reset(MaxSize);
@@ -1125,7 +1127,7 @@ void ASynavisDrone::ParseGeometryFromJson(TSharedPtr<FJsonObject> Jason)
   {
     auto uvs = Jason->GetStringField(TEXT("texcoords"));
     Base64.Decode(uvs, Dest);
-    UVs.SetNumUninitialized(Dest.Num() / sizeof(FVector2D), true);
+    UVs.SetNumUninitialized(Dest.Num() / sizeof(FVector2D));
     FMemory::Memcpy(UVs.GetData(), Dest.GetData(), Dest.Num());
   }
   if (Jason->HasField(TEXT("scalars")))
@@ -1136,7 +1138,7 @@ void ASynavisDrone::ParseGeometryFromJson(TSharedPtr<FJsonObject> Jason)
     {
       Dest.Reset();
       Base64.Decode(scalars, Dest);
-      Scalars.SetNumUninitialized(Dest.Num() / sizeof(float), true);
+      Scalars.SetNumUninitialized(Dest.Num() / sizeof(float));
       // for range calculation, we must move through the data manually
       auto ScalarData = reinterpret_cast<float*>(Dest.GetData());
       auto Min = std::numeric_limits<float>::max();
@@ -1158,13 +1160,13 @@ void ASynavisDrone::ParseGeometryFromJson(TSharedPtr<FJsonObject> Jason)
   {
     Dest.Reset();
     Base64.Decode(tangents, Dest);
-    Tangents.SetNumUninitialized(Dest.Num() / sizeof(FProcMeshTangent), true);
+    Tangents.SetNumUninitialized(Dest.Num() / sizeof(FProcMeshTangent));
     FMemory::Memcpy(Tangents.GetData(), Dest.GetData(), Dest.Num());
   }
   else
   {
     // calculate tangents
-    Tangents.SetNumUninitialized(Points.Num(), true);
+    Tangents.SetNumUninitialized(Points.Num());
     for (int p = 0; p < Points.Num(); ++p)
     {
       FVector TangentX = FVector::CrossProduct(Normals[p], FVector(0, 0, 1));
@@ -1197,13 +1199,35 @@ void ASynavisDrone::SendResponse(FString Descriptor, double StartTime, int Playe
   // logging the first 20 characters of the response
   if (LogResponses)
     UE_LOG(LogTemp, Warning, TEXT("Sending response: %s"), *Descriptor.Left(20));
-  OnPixelStreamingResponse.Broadcast(Response);
+  // Prefer direct C++ send via SynavisStreamer when available (per-connection/dedicated channel).
+  if (SynavisStreamerRef && RegisteredHandlerId != 0)
+  {
+    bool ok = SynavisStreamerRef->SendTextToConnection(RegisteredHandlerId, PlayerID, Response);
+    if (!ok)
+    {
+      UE_LOG(LogTemp, Warning, TEXT("SendTextToConnection failed, response not sent: %s"), *Descriptor.Left(200));
+    }
+  }
+  else
+  {
+    UE_LOG(LogTemp, Warning, TEXT("No SynavisStreamer available to send response: %s"), *Descriptor.Left(200));
+  }
 }
 
 void ASynavisDrone::SendError(FString Message)
 {
   FString Response = FString::Printf(TEXT("{\"type\":\"error\",\"message\":\"%s\"}"), *Message);
   SendResponse(Response);
+}
+
+bool ASynavisDrone::SendBinary(const TArray<uint8>& Data, int PlayerID)
+{
+  if (SynavisStreamerRef && RegisteredHandlerId != 0)
+  {
+    return SynavisStreamerRef->SendBinaryToConnection(RegisteredHandlerId, PlayerID, Data);
+  }
+  UE_LOG(LogTemp, Warning, TEXT("SendBinary: no SynavisStreamer registered or handler id missing"));
+  return false;
 }
 
 void ASynavisDrone::ResetSynavisState()
@@ -1351,7 +1375,7 @@ void ASynavisDrone::ApplyFromJSON(TSharedPtr<FJsonObject> Jason)
       FNumericProperty* fprop = CastField<FNumericProperty>(prop);
       if (fprop)
       {
-        UE_LOG(LogTemp, Warning, TEXT("Setting property %s to %f"), *fprop->GetFullName(), Key.Value->AsNumber());
+        UE_LOG(LogActor, Warning, TEXT("Setting property %s to %f"), *fprop->GetFullName(), Key.Value->AsNumber());
         fprop->SetFloatingPointPropertyValue(fprop->ContainerPtrToValuePtr<void>(this), Key.Value->AsNumber());
       }
     }
@@ -1360,7 +1384,7 @@ void ASynavisDrone::ApplyFromJSON(TSharedPtr<FJsonObject> Jason)
       FNumericProperty* iprop = CastField<FNumericProperty>(prop);
       if (iprop)
       {
-        UE_LOG(LogTemp, Warning, TEXT("Setting property %s to %d"), *iprop->GetFullName(), (int64)Key.Value->AsNumber());
+        UE_LOG(LogActor, Warning, TEXT("Setting property %s to %d"), *iprop->GetFullName(), (int64)Key.Value->AsNumber());
         iprop->SetIntPropertyValue(iprop->ContainerPtrToValuePtr<void>(this), (int64)Key.Value->AsNumber());
       }
     }
@@ -1399,7 +1423,7 @@ void ASynavisDrone::ApplyFromJSON(TSharedPtr<FJsonObject> Jason)
       FBoolProperty* bprop = CastField<FBoolProperty>(prop);
       if (bprop)
       {
-        UE_LOG(LogTemp, Warning, TEXT("Setting property %s to %d"), *bprop->GetFullName(), Key.Value->AsBool());
+        UE_LOG(LogActor, Warning, TEXT("Setting property %s to %d"), *bprop->GetFullName(), Key.Value->AsBool());
         bprop->SetPropertyValue(bprop->ContainerPtrToValuePtr<void>(this), Key.Value->AsBool());
       }
     }
@@ -1842,7 +1866,7 @@ void ASynavisDrone::SendRawFrame(TSharedPtr<FJsonObject> Jason, bool bFreezeID)
   // make a task in the game thread to send the chunks
   FGraphEventRef Task = FFunctionGraphTask::CreateAndDispatchWhenReady(
     [RenderTargetString = std::move(RenderTargetString), Base = std::move(Base), End = std::move(End),
-    SendResponse = std::bind(&ASynavisDrone::SendResponse, this, std::placeholders::_1, -1.0, -1),
+    SendResponse = [this](const FString& Response) { this->SendResponse(Response, -1.0, -1); },
     Delay = this->DataChannelBufferDelay, numChunks
     ]()
     {
@@ -1866,6 +1890,7 @@ const bool ASynavisDrone::IsInEditor() const
   return false;
 #endif
 }
+
 
 void ASynavisDrone::SetCameraResolution(int Resolution)
 {
@@ -1940,6 +1965,37 @@ void ASynavisDrone::BeginPlay()
   UGameplayStatics::GetAllActorsOfClass(world, APawn::StaticClass(), Found);
   CollisionFilter.AddIgnoredActors(Found);
   Found.Empty();
+
+  // Discover SynavisStreamer component in the world and register this Drone as a data source (C++ registration)
+  for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+  {
+    AActor* Actor = *It;
+    if (!Actor) continue;
+    USynavisStreamer* Comp = Actor->FindComponentByClass<USynavisStreamer>();
+    if (Comp)
+    {
+      SynavisStreamerRef = Comp;
+      // Register with dedicated datachannel requested
+      RegisteredHandlerId = SynavisStreamerRef->RegisterDataSourceCpp(
+        [this](int32 ConnId, const TArray<uint8>& Data)
+        {
+          // Attempt to interpret as UTF8 text and parse
+          if (Data.Num() > 0)
+          {
+            FString Msg = FString(UTF8_TO_TCHAR(reinterpret_cast<const char*>(Data.GetData())));
+            this->ParseInput(Msg);
+          }
+        },
+        [this](int32 ConnId, const FString& Msg)
+        {
+          this->ParseInput(Msg);
+        },
+        InfoCam,
+        true);
+      UE_LOG(LogTemp, Log, TEXT("SynavisDrone: Registered data handler %d with SynavisStreamer"), RegisteredHandlerId);
+      break;
+    }
+  }
 
   auto* Sun = Cast<ADirectionalLight>(UGameplayStatics::GetActorOfClass(GetWorld(),
     ADirectionalLight::StaticClass()));
@@ -2135,6 +2191,12 @@ void ASynavisDrone::EndPlay(const EEndPlayReason::Type EndPlayReason)
   {
     WorldSpawner->ReceiveStreamingCommunicatorRef(nullptr);
   }
+  // Unregister C++ handler if registered
+  if (SynavisStreamerRef && RegisteredHandlerId != 0)
+  {
+    SynavisStreamerRef->UnregisterDataSource(RegisteredHandlerId);
+    RegisteredHandlerId = 0;
+  }
   SendResponse(FString("{\"type\":\"closed\""));
 
 }
@@ -2161,7 +2223,7 @@ void ASynavisDrone::Tick(float DeltaTime)
     if (IsInEditor() && PrintScreenNewPosition)
     {
       GEngine->AddOnScreenDebugMessage(10, 30.f, FColor::Red, FString::Printf(
-        TEXT("L:(%d,%d,%d) - N:(%d,%d,%d) - M:%d/%d"), \
+        TEXT("L:(%f,%f,%f) - N:(%f,%f,%f) - M:%f/%f"), \
         GetActorLocation().X, GetActorLocation().Y, GetActorLocation().Z, \
         NextLocation.X, NextLocation.Y, NextLocation.Z, MeanVelocityLength, FGenericPlatformMath::Abs((GetActorLocation() - NextLocation).Size())));
     }
@@ -2214,7 +2276,7 @@ void ASynavisDrone::Tick(float DeltaTime)
 
 
 
-    FString Data = FString::Printf(TEXT("{\"type\":\"track\",\"time\":%n,\"data\":{"), Now);
+    FString Data = FString::Printf(TEXT("{\"type\":\"track\",\"time\":%d,\"data\":{"), Now);
 
     for (auto i = 0; i < TransmissionTargets.Num(); ++i)
     {
@@ -2226,13 +2288,13 @@ void ASynavisDrone::Tick(float DeltaTime)
         switch (Target.DataType)
         {
         case EDataTypeIndicator::Float:
-          Data.Append(FString::Printf(TEXT("%f"), Target.Property->ContainerPtrToValuePtr<float>(Target.Object)));
+          Data.Append(FString::Printf(TEXT("%f"), *Target.Property->ContainerPtrToValuePtr<float>(Target.Object)));
           break;
         case EDataTypeIndicator::Int:
-          Data.Append(FString::Printf(TEXT("%d"), Target.Property->ContainerPtrToValuePtr<int>(Target.Object)));
+          Data.Append(FString::Printf(TEXT("%d"), *Target.Property->ContainerPtrToValuePtr<int>(Target.Object)));
           break;
         case EDataTypeIndicator::Bool:
-          Data.Append(FString::Printf(TEXT("%s"), Target.Property->ContainerPtrToValuePtr<bool>(Target.Object) ? TEXT("true") : TEXT("false")));
+          Data.Append(FString::Printf(TEXT("%s"), (*Target.Property->ContainerPtrToValuePtr<bool>(Target.Object)) ? TEXT("true") : TEXT("false")));
           break;
         case EDataTypeIndicator::String:
           Data.Append(FString::Printf(TEXT("\"%s\""), **Target.Property->ContainerPtrToValuePtr<FString>(Target.Object)));
@@ -2284,8 +2346,8 @@ void ASynavisDrone::Tick(float DeltaTime)
     ReceptionBufferOffset++;
     if (LogResponses)
     {
-      UE_LOG(LogTemp, Warning, TEXT("Sending chunk %d of %d"), ReceptionBufferOffset, ReceptionBufferSize);
-      UE_LOG(LogTemp, Warning, TEXT("First and last 20 charactes of chunk %d: %s"), ReceptionBufferOffset, *(chunk.Mid(0, 20) + TEXT("...") + chunk.Mid(chunk.Len() - 20, 20)))
+      UE_LOG(LogActor, Warning, TEXT("Sending chunk %d of %d"), ReceptionBufferOffset, ReceptionBufferSize);
+      UE_LOG(LogActor, Warning, TEXT("First and last 20 charactes of chunk %d: %s"), ReceptionBufferOffset, *(chunk.Mid(0, 20) + TEXT("...") + chunk.Mid(chunk.Len() - 20, 20)))
     }
     SendResponse(Response);
   }

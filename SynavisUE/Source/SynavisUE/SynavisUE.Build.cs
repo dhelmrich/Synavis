@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using System.IO;
 using UnrealBuildTool;
 
 public class SynavisUE : ModuleRules
@@ -25,15 +26,17 @@ public class SynavisUE : ModuleRules
 		PublicDependencyModuleNames.AddRange(
 			new string[]
 			{
-        "Core", "CoreUObject", "Engine",
-        "DynamicMesh", 
-        "UMG", "Foliage","Json", 
-        "Landscape", "Niagara",
-        "ModelingComponents",
-        "ProceduralMeshComponent", 
-        "PixelStreaming",
-        "PixelStreamingBlueprint",
-        // ... add other public dependencies that you statically link with here ...
+		        "Core", "CoreUObject", "Engine",
+		        "DynamicMesh", 
+		        "UMG", "Foliage","Json", 
+		        "Landscape", "Niagara",
+		        "ModelingComponents",
+		        "ProceduralMeshComponent",
+		        "MediaIOCore",
+		        "MediaUtils",
+		        "PixelCapture",
+            "SynavisBackend"
+		        // ... add other public dependencies that you statically link with here ...
 			}
 			);
 			
@@ -44,7 +47,7 @@ public class SynavisUE : ModuleRules
 				"CoreUObject",
 				"Engine",
 				"Slate",
-				"SlateCore","DynamicMesh", "PixelStreaming"
+				"SlateCore","DynamicMesh"
                 // ... add private dependencies that you statically link with here ...	
 			}
 			);
