@@ -4,6 +4,10 @@
 
 #include "Modules/ModuleManager.h"
 
+#ifndef LIBAV_AVAILABLE
+#error "SynavisBackend module requires LIBAV_AVAILABLE to be defined"
+#endif
+
 class FSynavisBackendModule : public IModuleInterface
 {
 public:

@@ -582,6 +582,12 @@ ESynavisState USynavisStreamer::GetConnectionState() const
   return this->ConnectionState;
 }
 
+int USynavisStreamer::SetupDataChannel(const FSynavisConnection &Connection)
+{
+
+  return -1;
+}
+
 bool USynavisStreamer::AnyConnectionStreaming() const
 {
   for (const auto& Pair : Connections)
@@ -828,8 +834,7 @@ void USynavisStreamer::HandleDataChannelMessageCallback(int dc, const std::varia
 
 int32 USynavisStreamer::RegisterDataSourceCpp(const std::function<void(int32, const TArray<uint8>&)>& OnData,
   const std::function<void(int32, const FString&)>& OnMessage,
-  USceneCaptureComponent2D* SceneCapture,
-  bool DedicatedChannel)
+  USceneCaptureComponent2D* SceneCapture)
 {
   FSynavisHandlers H;
   H.HandlerID = NextHandlerId++;
@@ -1364,6 +1369,11 @@ FORCEINLINE FString LogSetup(uint32 ID, USceneComponent* Child)
 }
 
 
+FORCEINLINE bool IsInGame()
+{
+  return GetWorld()->IsRunning();
+}
+
 
 int USynavisStreamer::RegisterDataSource(
   FSynavisData DataHandler,
@@ -1406,7 +1416,26 @@ int USynavisStreamer::RegisterDataSource(
   else
   {
     Handler.WantsDedicatedChannel = false;
-    Handler.DataChannel = SystemDataChannel;
+    Handler.DataChannel = -1; // System data channel not necessarily clear yet
+  }
+
+  switch(this->SourcePolicy)
+  {
+    case ESourcePolicy::RemainStatic:
+      if (!IsInGame())
+      {
+        this->SetupDataChannel(Handler);
+      }
+    case ESourcePolicy::DynamicOptional:
+        this->SetupDataChannel(Handler);
+    case ESourcePolicy::DynamicMandatory:
+        if(!this->SetupDataChannel(Handler))
+        {
+          UE_LOG(LogTemp, Warning, TEXT("%s: Failed to setup data channel for dynamic mandatory source"), *LogPrefix);
+          return -1;
+        }
+    default:
+      break;
   }
 
   RegisteredDataHandlers.Add(Handler);

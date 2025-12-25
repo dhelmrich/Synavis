@@ -81,7 +81,6 @@ public class SynavisBackend : ModuleRules
 			RuntimeDependencies.Add(SoPath);
 		}
 
-		// ---- libvpx support (flat layout under Source/libvpx)
 		// ---- libav/ffmpeg support (flat layout under Source/libav)
 		string LibAvInclude = System.IO.Path.Combine(ModuleDirectory, "..", "libav", "include");
 		LibAvInclude = System.IO.Path.GetFullPath(LibAvInclude);

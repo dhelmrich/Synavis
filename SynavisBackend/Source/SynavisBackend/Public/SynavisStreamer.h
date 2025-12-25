@@ -213,6 +213,8 @@ public:
   UFUNCTION(BlueprintCallable, Category = "Streaming|Connection")
   ESynavisState GetConnectionState() const;
 
+  int SetupDataChannel(const FSynavisConnection& Handler);
+
   /**
    * Register data source for this streamer instance.
    * @param DataHandler Callback to receive binary data messages
@@ -233,8 +235,7 @@ public:
   int32 RegisterDataSourceCpp(
     const std::function<void(int32, const TArray<uint8>&)>& OnData,
     const std::function<void(int32, const FString&)>& OnMessage,
-    USceneCaptureComponent2D* SceneCapture = nullptr,
-    bool DedicatedChannel = false);
+    USceneCaptureComponent2D* SceneCapture = nullptr);
 
   // Unregister a previously registered handler.
   void UnregisterDataSource(int32 HandlerId);
