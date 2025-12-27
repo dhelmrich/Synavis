@@ -76,12 +76,17 @@ enum class EPeerState : uint8
   AllOpen      UMETA(DisplayName = "All Open"),
 };
 
+// Synavis Handler:
+// Represents a registered data source/sink with optional video source.
 struct FSynavisHandlers
 {
   // Video: Source -> Destination
     // a TOptional<TPair<int32 /*track id*/, USceneCaptureComponent2D*>>
     // Store the scene capture component so we can validate it (ensure it has a TextureTarget)
-  TOptional<TPair<int32, USceneCaptureComponent2D*>> Video;
+  TOptional<USceneCaptureComponent2D*> Video;
+
+  // As there could be multiple connections, we would conceivably get a track ID for each
+  TMap<int32 /*connection id*/, int32 /*track id*/> VideoTracksByConnection;
 
   int MediaDesc = 0;
 
@@ -105,6 +110,10 @@ struct FSynavisHandlers
   }
 };
 
+// Synavis Connection:
+// Represents a single PeerConnection instance with associated state.
+// This connection should be the primary connection to a device -> meaning that all offered
+// synthetic data streams should be sent over this connection
 struct FSynavisConnection
 {
 
@@ -122,6 +131,9 @@ struct FSynavisConnection
    * Meta Info on Connection        *
    * ********************************/
   uint32 MaxMessageSize = 0;
+
+  // Track ids for video/audio tracks -> TracksByHandler
+  std::unordered_map<uint32, int32> TracksByHandler;
 
   int ConnectionID = 0;
   // Per-connection flag indicating whether this connection should receive encoded video

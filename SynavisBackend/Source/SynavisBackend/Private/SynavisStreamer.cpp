@@ -1674,22 +1674,7 @@ void USynavisStreamer::EncodeNV12ReadbackAndSend(FRHIGPUTextureReadback* Readbac
     // Determine dispatch targets. Prefer explicit TargetTracks (populated at capture time),
     // otherwise fall back to all currently-open tracks across connections so we don't silently drop images.
     TArray<int32> DispatchTargets = TargetTracks;
-    if (DispatchTargets.Num() == 0)
-    {
-      // Gather all open tracks from all connections
-      for (const auto& Pair : Connections)
-      {
-        const FSynavisConnection& Conn = Pair.Value;
-        // if TracksByHandler exists for the connection, iterate it
-        for (const auto& kv : Conn.TracksByHandler)
-        {
-          int tr = kv.second;
-          if (tr != 0 && rtcIsOpen(tr))
-            DispatchTargets.Add(tr);
-        }
-      }
-    }
-
+    
     if (DispatchTargets.Num() > 0)
     {
       UE_LOG(LogTemp, Verbose, TEXT("Synavis: Sending encoded packet size=%d to %d handler track(s)"), (int)sz, DispatchTargets.Num());
