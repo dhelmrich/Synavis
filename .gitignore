@@ -75,3 +75,4 @@ SynavisUE/Build/*
 /CPlantBox
 /dist
 /synenv
+**/build_*/*
