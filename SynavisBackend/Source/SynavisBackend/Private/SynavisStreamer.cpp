@@ -582,12 +582,32 @@ ESynavisState USynavisStreamer::GetConnectionState() const
   return this->ConnectionState;
 }
 
-int USynavisStreamer::SetupDataChannel(const FSynavisConnection &Connection)
+int USynavisStreamer::SetupDataChannel(const FSynavisHandler &Handler)
 {
+  bool CreatedAny = false;
+  // Create a dedicated data channel for the given handler on every active connection.
+  for (auto& Pair : Connections)
+  {
+    FSynavisConnection& Conn = Pair.Value;
+    if (Conn.PeerConnection == 0) continue;
 
-  return -1;
+    std::string channelName = std::string("synavis-handler-") + std::to_string(Handler.HandlerID) + std::string("-") + std::to_string(Conn.ConnectionID);
+    int dcid = rtcCreateDataChannel(Conn.PeerConnection, channelName.c_str());
+    if (dcid > 0)
+    {
+      rtcSetUserPointer(dcid, this);
+      rtcSetMessageCallback(dcid, Synavis_Rtc_DataChannel_OnMessage);
+      rtcSetOpenCallback(dcid, Synavis_Rtc_DataChannel_OnOpen);
+      rtcSetClosedCallback(dcid, Synavis_Rtc_DataChannel_OnClosed);
+      rtcSetErrorCallback(dcid, Synavis_Rtc_DataChannel_OnError);
+      // record reverse mapping so incoming messages can be dispatched to the handler
+      Conn.HandlersByChannel[dcid] = Handler.HandlerID;
+      CreatedAny = true;
+    }
+  }
+
+  return CreatedAny ? 0 : -1;
 }
-
 bool USynavisStreamer::AnyConnectionStreaming() const
 {
   for (const auto& Pair : Connections)
@@ -791,9 +811,9 @@ void USynavisStreamer::HandleDataChannelMessageCallback(int dc, const std::varia
     int32 ConnectionPlayerID = Pair.Value;
 
     // find handler entry in registered set (uses HandlerID equality)
-    FSynavisHandlers Key;
+    FSynavisHandler Key;
     Key.HandlerID = HandlerId;
-    const FSynavisHandlers* H = RegisteredDataHandlers.Find(Key);
+    const FSynavisHandler* H = RegisteredDataHandlers.Find(Key);
     if (H)
     {
       // dispatch based on payload type
@@ -834,36 +854,28 @@ void USynavisStreamer::HandleDataChannelMessageCallback(int dc, const std::varia
 
 int32 USynavisStreamer::RegisterDataSourceCpp(const std::function<void(int32, const TArray<uint8>&)>& OnData,
   const std::function<void(int32, const FString&)>& OnMessage,
-  USceneCaptureComponent2D* SceneCapture)
+  USceneCaptureComponent2D* SceneCapture,
+  bool DedicatedChannel)
 {
-  FSynavisHandlers H;
+  FSynavisHandler H;
   H.HandlerID = NextHandlerId++;
   H.DataCbCpp = OnData;
   H.MsgCbCpp = OnMessage;
-  H.Video = SceneCapture ? TOptional<TPair<int32, USceneCaptureComponent2D*>>(TPair<int32, USceneCaptureComponent2D*>(0, SceneCapture)) : TOptional<TPair<int32, USceneCaptureComponent2D*>>();
+  H.Video = SceneCapture ? TOptional<USceneCaptureComponent2D*>(SceneCapture) : TOptional<USceneCaptureComponent2D*>();
+  H.WantsDedicatedChannel = DedicatedChannel;
   RegisteredDataHandlers.Add(H);
   return static_cast<int32>(H.HandlerID);
 }
 
 void USynavisStreamer::UnregisterDataSource(int32 HandlerId)
 {
-  FSynavisHandlers ToRemove;
+  FSynavisHandler ToRemove;
   ToRemove.HandlerID = HandlerId;
   RegisteredDataHandlers.Remove(ToRemove);
   // remove per-connection mappings and reverse map entries
   for (auto& Pair : Connections)
   {
     FSynavisConnection& C = Pair.Value;
-  }
-}
-
-bool USynavisStreamer::SendToConnection(int32 HandlerId, int32 ConnectionPlayerID, const TArray<uint8>& Data)
-{
-  bool Sent = false;
-  if (ConnectionPlayerID >= 0)
-  {
-    FSynavisConnection* Conn = FindConnectionByPlayerID(ConnectionPlayerID);
-    if (!Conn) return false;
   }
 }
 
@@ -886,9 +898,10 @@ bool USynavisStreamer::SendBinaryToConnection(int32 HandlerId, int32 ConnectionP
 bool USynavisStreamer::SendTextToConnection(int32 HandlerId, int32 ConnectionPlayerID, const FString& Text)
 {
   FTCHARToUTF8 Utf8(*Text);
+  bool Sent = false;
   const char* ptr = Utf8.Get();
   int len = Utf8.Length();
-  Conn = FindConnectionByPlayerID(ConnectionPlayerID);
+  auto* Conn = FindConnectionByPlayerID(ConnectionPlayerID);
   if (!Conn) return false;
   auto dcid = Conn->DataChannel;
   if (dcid != 0 && rtcIsOpen(dcid))
@@ -1075,7 +1088,7 @@ void USynavisStreamer::CreateConnectionForPlayer(int32 PlayerID)
 
   // Create outgoing send-only tracks for any registered handlers that have video sources.
   // Use the C API rtcAddTrackEx to create a per-connection track id and store it in TracksByHandler.
-  for (const FSynavisHandlers& HandlerCopy : HandlersCopy)
+  for (const FSynavisHandler& HandlerCopy : RegisteredDataHandlers)
   {
     if (HandlerCopy.Video.IsSet())
     {
@@ -1369,19 +1382,13 @@ FORCEINLINE FString LogSetup(uint32 ID, USceneComponent* Child)
 }
 
 
-FORCEINLINE bool IsInGame()
-{
-  return GetWorld()->IsRunning();
-}
-
-
 int USynavisStreamer::RegisterDataSource(
   FSynavisData DataHandler,
   FSynavisMessage MsgHandler,
   USceneCaptureComponent2D* SceneCapture,
   bool DedicatedChannel)
 {
-  FSynavisHandlers Handler;
+  FSynavisHandler Handler;
   Handler.DataHandler = DataHandler;
   Handler.MsgHandler = MsgHandler;
   Handler.HandlerID = CreatePawnHandle();
@@ -1403,37 +1410,35 @@ int USynavisStreamer::RegisterDataSource(
       Handler.MediaDesc = 0;
 
       // Register the video source but do not create a PeerConnection-local track here. Tracks are created when a connection is established.
-      Handler.Video.Emplace(0, SceneCapture);
+      Handler.Video.Emplace(SceneCapture);
     }
   }
 
   // If a dedicated channel was requested, mark it for creation per-connection; otherwise use the system channel
-  if (DedicatedChannel)
-  {
-    Handler.WantsDedicatedChannel = true;
-    Handler.DataChannel = -1;
-  }
-  else
-  {
-    Handler.WantsDedicatedChannel = false;
-    Handler.DataChannel = -1; // System data channel not necessarily clear yet
-  }
+  Handler.WantsDedicatedChannel = DedicatedChannel;
 
+  // Depending on the SourcePolicy, attempt to set up per-connection datachannels now.
   switch(this->SourcePolicy)
   {
-    case ESourcePolicy::RemainStatic:
+    case ESynavisSourcePolicy::RemainStatic:
       if (!IsInGame())
       {
         this->SetupDataChannel(Handler);
       }
-    case ESourcePolicy::DynamicOptional:
-        this->SetupDataChannel(Handler);
-    case ESourcePolicy::DynamicMandatory:
-        if(!this->SetupDataChannel(Handler))
-        {
-          UE_LOG(LogTemp, Warning, TEXT("%s: Failed to setup data channel for dynamic mandatory source"), *LogPrefix);
-          return -1;
-        }
+      break;
+    case ESynavisSourcePolicy::DynamicOptional:
+      this->SetupDataChannel(Handler);
+      break;
+    case ESynavisSourcePolicy::DynamicMandatory:
+    {
+      int Res = this->SetupDataChannel(Handler);
+      if (Res < 0)
+      {
+        UE_LOG(LogTemp, Warning, TEXT("%s: Failed to setup data channel for dynamic mandatory source"), *LogPrefix);
+        return -1;
+      }
+    }
+    break;
     default:
       break;
   }
@@ -1459,11 +1464,11 @@ void USynavisStreamer::CaptureFrame()
   if (!anyStreaming)
     return;
 
-  for (const FSynavisHandlers& Handler : RegisteredDataHandlers)
+  for (const FSynavisHandler& Handler : RegisteredDataHandlers)
   {
     if (!Handler.Video.IsSet())
       continue;
-    USceneCaptureComponent2D* SceneCapture = Handler.Video.GetValue().Value;
+    USceneCaptureComponent2D* SceneCapture = Handler.Video.GetValue();
     if (!SceneCapture)
     {
       UE_LOG(LogTemp, Warning, TEXT("Synavis: Handler missing required SceneCapture - skipping"));

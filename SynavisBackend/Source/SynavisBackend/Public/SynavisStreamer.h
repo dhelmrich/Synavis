@@ -77,15 +77,24 @@ enum class EPeerState : uint8
 };
 
 // Synavis Handler:
-// Represents a registered data source/sink with optional video source.
-struct FSynavisHandlers
+// Represents a registered data source/sink that provides synthetic data streams.
+// - Contains handlers for text and binary messages and optional native C++ callbacks.
+// - May reference a `USceneCaptureComponent2D` as a video source (validated via its TextureTarget).
+// - Can request a dedicated per-handler data channel when a separate channel is required.
+// - Maintains per-connection track IDs to efficiently prepare and send encoded video frames.
+// - `HandlerID` is a stable identifier used to register/unregister handlers.
+struct FSynavisHandler
 {
   // Video: Source -> Destination
     // a TOptional<TPair<int32 /*track id*/, USceneCaptureComponent2D*>>
     // Store the scene capture component so we can validate it (ensure it has a TextureTarget)
   TOptional<USceneCaptureComponent2D*> Video;
+  // will set FSynavisConnection::DataChannel to not equal to System when opened.
+  // Use a name without the `b` prefix to match usage in implementation files.
+  bool WantsDedicatedChannel = false;
 
-  // As there could be multiple connections, we would conceivably get a track ID for each
+  // Per-connection map of video track ids: connection id -> track id.
+  // Used to look up the specific media track to send encoded frames for a given connection.
   TMap<int32 /*connection id*/, int32 /*track id*/> VideoTracksByConnection;
 
   int MediaDesc = 0;
@@ -98,22 +107,26 @@ struct FSynavisHandlers
   uint32 HandlerID = 0;
 
   // Provide hashing and equality so FSynavisHandlers can be used in UE containers (TSet/TMap)
-  friend FORCEINLINE uint32 GetTypeHash(const FSynavisHandlers& H)
+  friend FORCEINLINE uint32 GetTypeHash(const FSynavisHandler& H)
   {
     // Use the HandlerID as the stable unique key for hashing
     return H.HandlerID;
   }
 
-  friend FORCEINLINE bool operator==(const FSynavisHandlers& A, const FSynavisHandlers& B)
+  friend FORCEINLINE bool operator==(const FSynavisHandler& A, const FSynavisHandler& B)
   {
     return A.HandlerID == B.HandlerID;
   }
 };
 
 // Synavis Connection:
-// Represents a single PeerConnection instance with associated state.
-// This connection should be the primary connection to a device -> meaning that all offered
-// synthetic data streams should be sent over this connection
+// Represents a single PeerConnection and its associated state.
+// - Stores C API object ids (PeerConnection, Packetizer, DataChannel) used by the C wrapper layer.
+// - `SystemDataChannel` is the global/system data channel used for handlers that do not use
+//   a dedicated per-handler channel; handler-domain association is performed via message dispatch.
+// - `TracksByHandler` maps handler ids to media track ids to support initialization and teardown.
+// - `HandlersByChannel` maps data channel ids to handler ids for efficient message dispatch.
+// - Track and channel ids are recorded so the connection can be properly initialized and torn down.
 struct FSynavisConnection
 {
 
@@ -124,16 +137,16 @@ struct FSynavisConnection
   int PeerConnection = 0;
   int Packetizer = 0;
   int DataChannel = 0;
-  // will set FSynavisConnection::DataChannel to not equal to System when opened.
-  bool bWantsDedicatedDataChannel = false;
 
   /**********************************
    * Meta Info on Connection        *
    * ********************************/
   uint32 MaxMessageSize = 0;
 
-  // Track ids for video/audio tracks -> TracksByHandler
+  // Map of handler id -> track id for video/audio tracks. Used during media setup/teardown.
   std::unordered_map<uint32, int32> TracksByHandler;
+  // Map of data channel id -> handler id for dispatching incoming messages to the correct handler.
+  std::unordered_map<int32, uint32> HandlersByChannel;
 
   int ConnectionID = 0;
   // Per-connection flag indicating whether this connection should receive encoded video
@@ -225,7 +238,7 @@ public:
   UFUNCTION(BlueprintCallable, Category = "Streaming|Connection")
   ESynavisState GetConnectionState() const;
 
-  int SetupDataChannel(const FSynavisConnection& Handler);
+  int SetupDataChannel(const FSynavisHandler& Handler);
 
   /**
    * Register data source for this streamer instance.
@@ -247,7 +260,8 @@ public:
   int32 RegisterDataSourceCpp(
     const std::function<void(int32, const TArray<uint8>&)>& OnData,
     const std::function<void(int32, const FString&)>& OnMessage,
-    USceneCaptureComponent2D* SceneCapture = nullptr);
+    USceneCaptureComponent2D* SceneCapture = nullptr,
+    bool DedicatedChannel = false);
 
   // Unregister a previously registered handler.
   void UnregisterDataSource(int32 HandlerId);
@@ -257,7 +271,6 @@ public:
   UFUNCTION(BlueprintCallable, Category = "Streaming|Data")
   bool SendTextToConnection(int32 HandlerId, int32 ConnectionPlayerID, const FString& Text);
 
-  bool SendToConnection(int32 HandlerId, int32 ConnectionPlayerID, const TArray<uint8>& Data);
   // Send a potentially large binary payload by chunking it into DataChannel-friendly pieces.
   bool SendBinaryToConnection(int32 HandlerId, int32 ConnectionPlayerID, const TArray<uint8>& Data);
 
@@ -278,6 +291,12 @@ protected:
   UPROPERTY()
   ESynavisState ConnectionState = ESynavisState::Offline;
 
+  // helper for whether we are in game
+  FORCEINLINE bool IsInGame()
+  {
+    UWorld* W = GetWorld();
+    return (W != nullptr) && W->IsGameWorld();
+  }
 
 
   // Pending GPU readback record for non-blocking zero-copy path
@@ -296,7 +315,7 @@ protected:
   TArray<FPendingNV12Readback> PendingReadbacks;
 
   // TSet of registered data handlers
-  TSet<FSynavisHandlers> RegisteredDataHandlers;
+  TSet<FSynavisHandler> RegisteredDataHandlers;
 
   // Next handler id for C++ registrations
   uint32 NextHandlerId = 1;
