@@ -76,9 +76,37 @@ public class SynavisBackend : ModuleRules
 		}
 		else if (Target.Platform == UnrealTargetPlatform.Linux)
 		{
-			string SoPath = System.IO.Path.Combine(LibDataChannelPath, "libdatachannel.so");
-			PublicAdditionalLibraries.Add(SoPath);
-			RuntimeDependencies.Add(SoPath);
+			// Prefer a versioned shared object if present (e.g. libdatachannel.so.0.23.2)
+			// This avoids packaging an unresolvable symlink `libdatachannel.so` which
+			// can confuse the Unreal AutomationTool when copying files between paths.
+			try
+			{
+				var versioned = System.IO.Directory.GetFiles(LibDataChannelPath, "libdatachannel.so.*");
+				if (versioned != null && versioned.Length > 0)
+				{
+					// Register all matching versioned SOs and use them for linking/runtime
+					foreach (var so in versioned)
+					{
+						PublicAdditionalLibraries.Add(so);
+						RuntimeDependencies.Add(so);
+					}
+				}
+				else
+				{
+					// Fallback to the unversioned soname if no versioned file is present
+					string SoPath = System.IO.Path.Combine(LibDataChannelPath, "libdatachannel.so");
+					PublicAdditionalLibraries.Add(SoPath);
+					RuntimeDependencies.Add(SoPath);
+				}
+			}
+			catch (System.Exception)
+			{
+				// If the directory cannot be read or no files exist, still add the canonical
+				// soname path so build will report a clear error later rather than crashing here.
+				string SoPath = System.IO.Path.Combine(LibDataChannelPath, "libdatachannel.so");
+				PublicAdditionalLibraries.Add(SoPath);
+				RuntimeDependencies.Add(SoPath);
+			}
 		}
 
 		// ---- libav/ffmpeg support (flat layout under Source/libav)
@@ -138,10 +166,25 @@ public class SynavisBackend : ModuleRules
 			string SoDir = LibAvPath;
 			if (System.IO.Directory.Exists(SoDir))
 			{
-				// Add core shared objects if present
+				// Add core shared objects if present in the plugin-local lib path
 				var soFiles = System.IO.Directory.GetFiles(SoDir, "libav*.so*");
 				foreach (var so in soFiles) { PublicAdditionalLibraries.Add(so); RuntimeDependencies.Add(so); }
 				PublicDefinitions.Add("LIBAV_AVAILABLE=1");
+			}
+			else
+			{
+				// ffmpeg should be loaded as module on HPC clusters
+        // if ffmpeg is not present, please talk to your administrators before using
+        // a vcpkg version or sth.
+				string[] wanted = new string[] { "avcodec", "avformat", "avutil", "swscale", "swresample" };
+        // we cannot catch a missing library error here: this is due to the fact
+        // that the module system will put it directly in path.
+        foreach (var name in wanted)
+        {
+          string soName = "lib" + name + ".so";
+          PublicAdditionalLibraries.Add(soName);
+        }
+        PublicDefinitions.Add("LIBAV_AVAILABLE=1");
 			}
 		}
 	}
