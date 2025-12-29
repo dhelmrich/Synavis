@@ -49,6 +49,14 @@ if(WIN32)
     PUBLIC ${CPlantBox_DIR}/../../src/functional/
     PUBLIC ${CPlantBox_DIR}/../../src/visualization/
   )
+else()
+  # slightly different as we are not in a build folder on Unix and thus need to traverse less
+  target_include_directories(${Folder}
+    PUBLIC ${CPlantBox_INCLUDE_DIRS}
+    PUBLIC ${CPlantBox_DIR}/../src/structural/
+    PUBLIC ${CPlantBox_DIR}/../src/functional/
+    PUBLIC ${CPlantBox_DIR}/../src/visualization/
+  )
 endif()
 if(UNIX)
   target_link_directories(${Folder} 
@@ -81,24 +89,80 @@ message(STATUS "TinyXML2_INCLUDE_DIRS: ${tinyxml2_INCLUDE_DIRS}")
 
 endif()
 
-# Find SuiteSparse (installed via vcpkg)
-find_library(AMD_LIB
+if(UNIX)
+  # Find SuiteSparse (installed via vcpkg) and its component libraries.
+  # On Windows the build path differs and this issue hasn't been observed there,
+  # so these additional finds are scoped to UNIX only.
+  find_library(AMD_LIB
     NAMES amd
     PATHS
-        "${VCPKG_INSTALLED_DIR}/installed/${VCPKG_TARGET_TRIPLET}/lib"
-        "${VCPKG_INSTALLED_DIR}/installed/${VCPKG_TARGET_TRIPLET}/debug/lib"
+    "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib"
+    "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/lib"
     REQUIRED
-)
+  )
+
+  find_library(SUITESPARSEC_CONFIG_LIB
+    NAMES suitesparseconfig SuiteSparse_config
+    PATHS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib"
+    "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/lib"
+    REQUIRED
+  )
+
+  find_library(BTF_LIB
+    NAMES btf
+    PATHS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib"
+    "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/lib"
+  )
+
+  find_library(CAMD_LIB
+    NAMES camd
+    PATHS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib"
+    "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/lib"
+  )
+
+  find_library(COLAMD_LIB
+    NAMES colamd
+    PATHS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib"
+    "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/lib"
+  )
+
+  find_library(CCOLAMD_LIB
+    NAMES ccolamd
+    PATHS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib"
+    "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/lib"
+  )
+
+  find_library(CHOLMOD_LIB
+    NAMES cholmod
+    PATHS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib"
+    "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/lib"
+  )
+
+  find_library(KLU_LIB
+    NAMES klu
+    PATHS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib"
+    "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/lib"
+  )
+endif()
 
 
 target_link_libraries(${Folder} 
   PUBLIC Synavis 
-    datachannel-static
-    nlohmann_json::nlohmann_json
-    datachannel-static
-    CPlantBox
-    ${tinyxml2_LIBRARIES}
-    ${MPI_CXX_LIBRARIES}
-    ${AMD_LIB}
+  datachannel-static
+  nlohmann_json::nlohmann_json
+  datachannel-static
+  CPlantBox
+  ${tinyxml2_LIBRARIES}
+  ${MPI_CXX_LIBRARIES}
+  ${AMD_LIB}
+  # The following SuiteSparse helper libs are required by libamd and
+  # by CPlantBox. They are found (above) only on UNIX via vcpkg.
+  ${SUITESPARSEC_CONFIG_LIB}
+  ${BTF_LIB}
+  ${CAMD_LIB}
+  ${COLAMD_LIB}
+  ${CCOLAMD_LIB}
+  ${CHOLMOD_LIB}
+  ${KLU_LIB}
 )
 

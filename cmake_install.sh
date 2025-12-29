@@ -8,6 +8,7 @@ BUILDTYPE="Release"
 DELBUILD=false
 ACTIVATE_DECODING=true
 PYTHON_ONLY=false
+VCPKG_TOOLCHAIN=""
 # determine parallelism
 # subtract one
 nproc=$((nproc-1))
@@ -41,11 +42,12 @@ while [[ $# -gt 0 ]]; do
     -B) BASEDIR="$2"; shift 2;;
     -v) VERBOSITY="$2"; shift 2;;
     -p) CPLANTBOX_DIR="$2"; shift 2;;
+    -x|--vcpkg) VCPKG_TOOLCHAIN="$2"; shift 2;;
     --python-only)
       PYTHON_ONLY=true; shift;;
     --clang) USE_CLANG=true; shift;;
     -h|--help)
-      echo "Usage: $0 [-d builddir] [-t buildtype] [-e deletebuild] [-j nproc] [-c activate_decoding] [-B basedir] [-v verbosity] [-p cplantbox_location] [--clang]"
+      echo "Usage: $0 [-d builddir] [-t buildtype] [-e deletebuild] [-j nproc] [-c activate_decoding] [-B basedir] [-v verbosity] [-p cplantbox_location] [-x vcpkg_toolchain] [--clang]"
       echo "  -d builddir       Specify the build directory name (default: build)"
       echo "  -t buildtype      Specify the build type (default: Release)"
       echo "  -e deletebuild    Delete the build directory after building (default: false, accepts optional true/false)"
@@ -54,6 +56,7 @@ while [[ $# -gt 0 ]]; do
       echo "  -B basedir        Specify the base directory (default: current directory)"
       echo "  -v verbosity      Enable verbose logging (default: false)"
       echo "  -p cplantbox_location  Specify the location of cplantbox (default: not set)"
+      echo "  -x, --vcpkg       Path to vcpkg's buildsystems/vcpkg.cmake (project expects this in VCPKG_CMAKE_PATH)"
       echo "  --clang           Use clang as the C/C++ compiler"
       exit 0
       ;;
@@ -142,8 +145,15 @@ else
   CPLANTBOX_DIR_OPTION="-DCPlantBox_DIR=$DIR/CPlantBox/build"
 fi
 
+# Vcpkg toolchain option (optional)
+VCPKG_TOOLCHAIN_OPTION=""
+if [ -n "$VCPKG_TOOLCHAIN" ]; then
+  echo "Using vcpkg toolchain file: $VCPKG_TOOLCHAIN"
+  VCPKG_TOOLCHAIN_OPTION="-DCMAKE_TOOLCHAIN_FILE=$VCPKG_TOOLCHAIN -DVCPKG_CMAKE_PATH=$VCPKG_TOOLCHAIN"
+fi
+
 # configure
-cmake -H$DIR -B$DIR/$BUILDDIR -DCMAKE_BUILD_TYPE=$BUILDTYPE -G "$GENERATOR" $LIBDATACHANNEL_VERBOSELOGGING $LIBDATACHANNEL_BUILD_TESTS $LIBDATACHANNEL_BUILD_EXAMPLES $LIBDATACHANNEL_SETTINGS $DECODING -DPYTHON_INCLUDE_DIR=$PYTHON_INCLUDE_DIRS -DPYTHON_LIBRARY=$PYTHON_LIBRARY $SYNAVIS_APPBUILD $CMAKE_VERBOSE_LOGGING $CPLANTBOX_DIR_OPTION $CMAKEOPT
+cmake -H$DIR -B$DIR/$BUILDDIR -DCMAKE_BUILD_TYPE=$BUILDTYPE -G "$GENERATOR" $LIBDATACHANNEL_VERBOSELOGGING $LIBDATACHANNEL_BUILD_TESTS $LIBDATACHANNEL_BUILD_EXAMPLES $LIBDATACHANNEL_SETTINGS $DECODING -DPYTHON_INCLUDE_DIR=$PYTHON_INCLUDE_DIRS -DPYTHON_LIBRARY=$PYTHON_LIBRARY $SYNAVIS_APPBUILD $CMAKE_VERBOSE_LOGGING $CPLANTBOX_DIR_OPTION $VCPKG_TOOLCHAIN_OPTION $CMAKEOPT
 
 # build
 if [ "$PYTHON_ONLY" = true ] ; then
@@ -151,4 +161,37 @@ if [ "$PYTHON_ONLY" = true ] ; then
   cmake --build $DIR/$BUILDDIR --target PySynavis -- -j $nproc
 else
   cmake --build $DIR/$BUILDDIR -- -j $nproc
+fi
+
+# Deploy libdatachannel headers and libs into SynavisBackend plugin layout (Unix)
+# Only copy libdatachannel artifacts; do NOT copy ffmpeg/libav (clusters usually provide ffmpeg).
+# This mirrors the Windows cmake install behavior but keeps ffmpeg handling to the environment.
+LIBDATACHANNEL_SRC_INCLUDE="$DIR/$BUILDDIR/_deps/libdatachannel-src/include"
+LIBDATACHANNEL_BUILD_LIBDIR="$DIR/$BUILDDIR/_deps/libdatachannel-build"
+DEST_LIBDATA_DIR="$DIR/SynavisBackend/Source/libdatachannel"
+
+if [ -d "$LIBDATACHANNEL_SRC_INCLUDE" ] || [ -d "$LIBDATACHANNEL_BUILD_LIBDIR" ]; then
+  echo "Preparing SynavisBackend libdatachannel layout at: $DEST_LIBDATA_DIR"
+  mkdir -p "$DEST_LIBDATA_DIR/include"
+  mkdir -p "$DEST_LIBDATA_DIR/lib"
+
+  if [ -d "$LIBDATACHANNEL_SRC_INCLUDE" ]; then
+    echo "Copying libdatachannel headers from $LIBDATACHANNEL_SRC_INCLUDE to $DEST_LIBDATA_DIR/include"
+    rsync -a --delete "$LIBDATACHANNEL_SRC_INCLUDE/" "$DEST_LIBDATA_DIR/include/"
+  else
+    echo "libdatachannel source include not found at $LIBDATACHANNEL_SRC_INCLUDE; skipping header copy"
+  fi
+
+  # Copy built shared objects or static libs produced by libdatachannel build
+  if [ -d "$LIBDATACHANNEL_BUILD_LIBDIR" ]; then
+    echo "Copying libdatachannel libraries from $LIBDATACHANNEL_BUILD_LIBDIR to $DEST_LIBDATA_DIR/lib"
+    # copy .so and .a artifacts
+    find "$LIBDATACHANNEL_BUILD_LIBDIR" -maxdepth 1 -type f \( -name 'libdatachannel.so*' -o -name 'libdatachannel.a' \) -exec cp -v --preserve=mode,timestamps {} "$DEST_LIBDATA_DIR/lib/" \;
+    # If SONAMEed file exists with versioned name, ensure unversioned symlink isn't broken
+    (cd "$DEST_LIBDATA_DIR/lib" && for f in libdatachannel.so.*; do [ -e "$f" ] && ln -sf "$f" libdatachannel.so || true; done) || true
+  else
+    echo "libdatachannel build lib dir not found at $LIBDATACHANNEL_BUILD_LIBDIR; skipping library copy"
+  fi
+else
+  echo "No libdatachannel build outputs found in $DIR/$BUILDDIR/_deps; skipping deploy step"
 fi
