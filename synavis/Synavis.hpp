@@ -36,6 +36,10 @@ bool ParseTimeFromString(std::string Source, std::chrono::utc_time<std::chrono::
 #include <fcntl.h>
 bool ParseTimeFromString(std::string Source, std::chrono::time_point<std::chrono::system_clock>& Destination);
 
+#ifndef __forceinline
+#define __forceinline inline __attribute__((always_inline))
+#endif
+
 #endif
 
 namespace Synavis
