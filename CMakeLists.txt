@@ -69,8 +69,10 @@ FetchContent_Declare(
   GIT_SHALLOW True
   GIT_TAG v0.23.2
 )
+message(STATUS " Declaring FetchContent for libdatachannel (may fetch from internet)")
 FetchContent_GetProperties(libdatachannel)
 if(NOT libdatachannel_POPULATED)
+  message(STATUS " Populating libdatachannel (fetching source)... this may take a while")
   FetchContent_Populate(libdatachannel)
   # Ensure both static and shared libraries are built
   set(BUILD_SHARED_LIBS ON CACHE BOOL "Build shared libraries globally" FORCE)
@@ -98,14 +100,14 @@ if(NOT libdatachannel_POPULATED)
     set(SYNAVIS_BACKEND_INCLUDE_PATH ${SYNAVIS_BACKEND_PATH}/Source/libdatachannel/include)
 
     add_custom_target(copy_datachannel ALL
-    COMMENT "🔧 Starting copy_datachannel: copying libdatachannel and headers to SynavisBackend"
+    COMMENT " Starting copy_datachannel: copying libdatachannel and headers to SynavisBackend"
 
     # Create destination directories
-    COMMAND ${CMAKE_COMMAND} -E echo "📁 Creating lib and include directories in SynavisBackend/Source/libdatachannel..."
+    COMMAND ${CMAKE_COMMAND} -E echo " Creating lib and include directories in SynavisBackend/Source/libdatachannel..."
     COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_LIB_PATH}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_INCLUDE_PATH}
 
-    COMMAND ${CMAKE_COMMAND} -E echo "📦 Copying libdatachannel binaries after build to ${SYNAVIS_BACKEND_LIB_PATH}/"
+    COMMAND ${CMAKE_COMMAND} -E echo " Copying libdatachannel binaries after build to ${SYNAVIS_BACKEND_LIB_PATH}/"
     COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:datachannel>" "${SYNAVIS_BACKEND_LIB_PATH}/"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_LINKER_FILE:datachannel>" "${SYNAVIS_BACKEND_LIB_PATH}/"
     # Use a small CMake script at build-time to copy the PDB only if it
@@ -123,17 +125,17 @@ if(NOT libdatachannel_POPULATED)
     -P "${CMAKE_SOURCE_DIR}/libdatachanneldeps.cmake"
       
       # Verify copy succeeded
-      COMMAND ${CMAKE_COMMAND} -E echo "🔍 Verifying that libdatachannel was copied..."
+      COMMAND ${CMAKE_COMMAND} -E echo " Verifying that libdatachannel was copied..."
       COMMAND ${CMAKE_COMMAND}
         -DDEST_DIR=${SYNAVIS_BACKEND_LIB_PATH}
         -DTARGET_PATH=$<TARGET_FILE:datachannel>
         -P ${CMAKE_SOURCE_DIR}/verify_datachannel.cmake
 
       # Copy headers
-      COMMAND ${CMAKE_COMMAND} -E echo "📚 Copying libdatachannel headers from ${libdatachannel_SOURCE_DIR}/include → ${SYNAVIS_BACKEND_INCLUDE_PATH}/"
+      COMMAND ${CMAKE_COMMAND} -E echo " Copying libdatachannel headers from ${libdatachannel_SOURCE_DIR}/include  ${SYNAVIS_BACKEND_INCLUDE_PATH}/"
       COMMAND ${CMAKE_COMMAND} -E copy_directory ${libdatachannel_SOURCE_DIR}/include ${SYNAVIS_BACKEND_INCLUDE_PATH}
 
-      COMMENT "✅ Finished copy_datachannel"
+      COMMENT " Finished copy_datachannel"
     )
 
     # Ensure this runs after all relevant targets are built
@@ -148,15 +150,19 @@ FetchContent_Declare(
   GIT_TAG v3.11.2
   GIT_SHALLOW True
 )
+message(STATUS " Declaring FetchContent for nlohmann/json (header-only)")
 FetchContent_GetProperties(json)
 if(NOT json_POPULATED)
+  message(STATUS " Populating nlohmann/json (fetching source)...")
   FetchContent_Populate(json)
 endif()
 
-if(WIN32 AND TARGET copy_datachannel)
+# The libdatachannel is seldomly a module available in HPC systems
+# as such, not only Windows but also Unix builds should copy the headers
+if(TARGET copy_datachannel)
   add_custom_command(TARGET copy_datachannel POST_BUILD
     # Copy json header-only library into the plugin include. Prefer the flat Source/libdatachannel/include if set.
-    COMMAND ${CMAKE_COMMAND} -E echo "📚 Copying json headers into plugin include folder"
+    COMMAND ${CMAKE_COMMAND} -E echo "Copying json headers into plugin include folder"
     COMMAND ${CMAKE_COMMAND} -E cmake_echo_color --blue "Destination: ${SYNAVIS_BACKEND_INCLUDE_PATH} (if set) else ${SYNAVIS_BACKEND_PATH}/include/json"
     COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_PATH}/include/json
     COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -196,10 +202,13 @@ if (NOT CXX_FORMAT_SUPPORT)
       GIT_TAG 8.1.0
       GIT_SHALLOW True
     )
+    message(STATUS " Declaring FetchContent for fmt (format library)")
     FetchContent_GetProperties(fmt)
     if(NOT fmt_POPULATED)
-        FetchContent_Populate(fmt)
-        add_subdirectory(${fmt_SOURCE_DIR} ${fmt_BINARY_DIR})
+      message(STATUS " Populating fmt (fetching source)...")
+      FetchContent_Populate(fmt)
+      message(STATUS " Adding fmt subdirectory to build")
+      add_subdirectory(${fmt_SOURCE_DIR} ${fmt_BINARY_DIR})
     endif()
   endif()
 else()
@@ -215,9 +224,12 @@ if(UNIX)
     GIT_TAG        v3.0.1
     GIT_SHALLOW True
   )
+  message(STATUS " Declaring FetchContent for date (time library)")
   FetchContent_GetProperties(date)
   if(NOT date_POPULATED)
+      message(STATUS " Populating date (fetching source)...")
       FetchContent_Populate(date)
+      message(STATUS " Adding date subdirectory to build")
       add_subdirectory(${date_SOURCE_DIR} ${date_BINARY_DIR})
   endif()
 
@@ -273,6 +285,8 @@ endif()
 
 # find pybind11
 find_package(pybind11 CONFIG)
+# Inform about pybind11 discovery/fetch
+message(STATUS " Searching for pybind11 (local or via FetchContent)")
 # if not found
 if(NOT pybind11_FOUND)
   FetchContent_Declare(
@@ -281,11 +295,13 @@ if(NOT pybind11_FOUND)
     GIT_TAG        v3.0.1
     GIT_SHALLOW True
   )
+  message(STATUS " Declaring FetchContent for pybind11 (may fetch from internet)")
 else()
   message(STATUS "Found pybind11 v${pybind11_VERSION}: ${pybind11_INCLUDE_DIRS}")
 endif()
 
 if(NOT pybind11_FOUND)
+  message(STATUS " Making pybind11 available (fetching/building as needed)")
   FetchContent_MakeAvailable(pybind11)
 endif()
 
@@ -300,8 +316,10 @@ if(NOT TARGET pybind11_json)
         GIT_TAG        0.2.13
         GIT_SHALLOW True
     )
+    message(STATUS " Declaring FetchContent for pybind11_json (may fetch from internet)")
     FetchContent_GetProperties(pybind11_json)
     if(NOT pybind11_json_POPULATED)
+        message(STATUS " Populating pybind11_json (fetching source)...")
         FetchContent_Populate(pybind11_json)
         #add_subdirectory(${pybind11_json_SOURCE_DIR} ${pybind11_json_BINARY_DIR})
         #add_subdirectory(${pybind11_json_SOURCE_DIR})
@@ -312,9 +330,12 @@ if(NOT TARGET pybind11_json)
   endif()
 endif()
 
+message(STATUS " Adding main project subdirectory: synavis")
 add_subdirectory(synavis)
+message(STATUS " Adding externtest subdirectory")
 add_subdirectory(externtest)
 if(BUILD_WITH_APPS)
+  message(STATUS " Adding native_modules subdirectory (apps build enabled)")
   add_subdirectory(native_modules)
 endif()
 
