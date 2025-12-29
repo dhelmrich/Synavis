@@ -26,6 +26,7 @@ set(BUILD_SHARED_LIBS ON)
 option(BUILD_WITH_DECODING "Build with decoding support" OFF)
 option(BUILD_WITH_APPS "Build with applications" OFF)
 option(BUILD_WHEEL "Build python wheel only" OFF)
+option(SKIP_COPY_LIBDATACHANNEL "Skip copying built libdatachannel into SynavisBackend" OFF)
 
 # option check: WIN32 + BUILD_WHEEL demands CMAKE_TOOLCHAIN_FILE
 if(WIN32 AND BUILD_WHEEL)
@@ -90,7 +91,7 @@ if(NOT libdatachannel_POPULATED)
 
   # On Windows, copy the built libdatachannel DLL and its dependencies to SynavisBackend
   # When BUILD_WHEEL is ON we do not want to perform repository-changing side effects
-  if(WIN32 AND NOT BUILD_WHEEL)
+  if(WIN32 AND NOT BUILD_WHEEL AND NOT SKIP_COPY_LIBDATACHANNEL)
     # Define the SynavisBackend target path
     set(SYNAVIS_BACKEND_PATH ${CMAKE_SOURCE_DIR}/SynavisBackend)
     # Create destination directories and copy binaries, dependencies, and headers
