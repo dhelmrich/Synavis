@@ -93,6 +93,12 @@ struct FSynavisHandler
   // Use a name without the `b` prefix to match usage in implementation files.
   bool WantsDedicatedChannel = false;
 
+  // If false, this handler is a source-only registration: it will provide
+  // outgoing media (video tracks) but will not receive inbound messages and
+  // the streamer will avoid allocating/dispatching callback handlers or
+  // datachannel bookkeeping for incoming data. Default = true for backward compatibility.
+  bool AcceptsInboundMessages = true;
+
   // Per-connection map of video track ids: connection id -> track id.
   // Used to look up the specific media track to send encoded frames for a given connection.
   TMap<int32 /*connection id*/, int32 /*track id*/> VideoTracksByConnection;
@@ -102,6 +108,7 @@ struct FSynavisHandler
   FSynavisData DataHandler;
   FSynavisMessage MsgHandler;
   // Optional C++ callbacks (for registration from native code)
+  // These may be left empty for source-only handlers (AcceptsInboundMessages == false)
   std::function<void(int32, const TArray<uint8>&)> DataCbCpp;
   std::function<void(int32, const FString&)> MsgCbCpp;
   uint32 HandlerID = 0;
@@ -253,7 +260,8 @@ public:
     FSynavisData DataHandler,
     FSynavisMessage MsgHandler,
     USceneCaptureComponent2D* SceneCapture = nullptr,
-    bool DedicatedChannel = false);
+    bool DedicatedChannel = false,
+    bool AcceptsInboundMessages = true);
 
   // C++ registration API: register native callbacks without Blueprint indirection.
   // Returns a stable HandlerID (positive) or 0 on failure.
@@ -261,7 +269,20 @@ public:
     const std::function<void(int32, const TArray<uint8>&)>& OnData,
     const std::function<void(int32, const FString&)>& OnMessage,
     USceneCaptureComponent2D* SceneCapture = nullptr,
-    bool DedicatedChannel = false);
+    bool DedicatedChannel = false,
+    bool AcceptsInboundMessages = true);
+
+  // Lightweight registration for video/source-only handlers (no inbound callbacks).
+  // Returns a stable HandlerID (positive) or 0 on failure.
+  int32 RegisterVideoSourceCpp(USceneCaptureComponent2D* SceneCapture,
+    bool DedicatedChannel = false,
+    bool AcceptsInboundMessages = false);
+
+  // Blueprint-friendly registration of a source-only video handler (no inbound callbacks).
+  UFUNCTION(BlueprintCallable, Category = "Streaming|Data")
+  int RegisterVideoSource(USceneCaptureComponent2D* SceneCapture,
+    bool DedicatedChannel = false,
+    bool AcceptsInboundMessages = false);
 
   // Unregister a previously registered handler.
   void UnregisterDataSource(int32 HandlerId);

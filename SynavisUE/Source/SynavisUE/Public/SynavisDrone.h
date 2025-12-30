@@ -417,8 +417,14 @@ protected:
 
   // C++ registration: handler id returned by USynavisStreamer::RegisterDataSourceCpp
   int32 RegisteredHandlerId = 0;
+  // Optional second handler id for source-only registrations (e.g., SceneCam)
+  int32 RegisteredHandlerIdScene = 0;
   // Cached pointer to discovered streamer component
   USynavisStreamer* SynavisStreamerRef = nullptr;
+
+  // Allow level designers to explicitly assign the SynavisStreamer in the Details panel
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Network")
+  USynavisStreamer* SynavisStreamerAsset = nullptr;
 
   FCollisionObjectQueryParams ActorFilter;
   FCollisionQueryParams CollisionFilter;

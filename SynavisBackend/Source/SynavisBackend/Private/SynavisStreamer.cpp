@@ -541,12 +541,73 @@ void USynavisStreamer::TickComponent(float DeltaTime, ELevelTick TickType, FActo
 // NOTE: The previous internal WebRTC container was removed in the refactor; cleanup
 // of signalling is handled by the USynavisStreamer destructor and the libdatachannel C API websocket id (SignallingId).
 
-// VP9 packetizer stub
-// Replace the body of VP9PacketizeAndSend with a real VP9 packetizer that fragments
-// encoded VP9 frames into RTP payloads (or create rtcMessage opaque messages +
-// media interceptor) as required by your libdatachannel runtime. For now this
-// stub simply sends the raw encoded payload via rtcSendMessage to the track id.
-static void VP9PacketizeAndSend(int trackId, const uint8_t* data, size_t size)
+// VP9 RTP packetizer: quality-preserving, frame-aligned fragmentation
+// Implements simplified VP9 RTP payload descriptor per RFC/draft semantics
+// and fragments frames to respect MTU. Sends RTP packets over the given
+// libdatachannel track id by building RTP headers + VP9 payload descriptor
+// + fragment payload and calling `rtcSendMessage(trackId, packet, len)`.
+
+struct FPacketizerState
+{
+  uint16_t Sequence = 0;
+  uint32_t SSRC = 0;
+  // MTU in bytes for this packetizer (including IP/UDP/RTP headers outside scope).
+  int MTU = 1200;
+  FPacketizerState() {}
+};
+
+// Maintain per-track packetizer state
+static std::unordered_map<int, FPacketizerState> GPacketizers;
+
+// Helper to get or create packetizer state for a track
+static FPacketizerState& GetOrCreatePacketizer(int trackId)
+{
+  auto it = GPacketizers.find(trackId);
+  if (it != GPacketizers.end()) return it->second;
+  FPacketizerState st;
+  // initialize sequence with random start
+  st.Sequence = static_cast<uint16_t>(FMath::Rand());
+  // generate random SSRC
+  st.SSRC = static_cast<uint32_t>((FMath::Rand() << 16) ^ FMath::Rand());
+  // default MTU; can be tuned later
+  st.MTU = 1200;
+  auto r = GPacketizers.emplace(trackId, st);
+  return r.first->second;
+}
+
+// Minimal RTP header builder (no extensions)
+struct FRtpHeader
+{
+  uint8_t V_P_X_CC; // version(2),P,X,CC
+  uint8_t M_PT;     // M bit + payload type
+  uint16_t Sequence;
+  uint32_t Timestamp;
+  uint32_t SSRC;
+};
+
+// Build VP9 payload descriptor (basic, no PictureID by default). Returns number of bytes written.
+static int BuildVp9PayloadDescriptor(uint8_t* OutBuf, int OutBufLen, bool startBit, bool endBit)
+{
+  if (OutBufLen < 1) return 0;
+  // Basic descriptor: |I|P|L|F|B|E|V|Z| (I=PictureID present etc.)
+  // We'll emit a 1-byte descriptor with S (start) mapped to 'B' bit per draft
+  // Layout: extended control bits not used here; set I=0 (no PictureID), P/L/F=0, B= startBit, E=endBit, V=0, Z=0
+  uint8_t desc = 0;
+  // B bit: in the draft the S (start) is represented by 'B' bit in descriptor
+  if (startBit) desc |= (1 << 3); // set B
+  if (endBit) desc |= (1 << 2);   // set E
+  OutBuf[0] = desc;
+  return 1;
+}
+
+// Send raw bytes over libdatachannel track id. Returns rtcSendMessage result.
+static int SendNative(int trackId, const uint8_t* Data, int Len)
+{
+  return rtcSendMessage(trackId, reinterpret_cast<const char*>(Data), Len);
+}
+
+// New packetizer signature: include RTP timestamp and optional MTU override
+static void VP9PacketizeAndSend(int trackId, const uint8_t* data, size_t size, uint32_t rtpTimestamp, int mtuOverride = 0)
 {
   if (trackId == 0 || data == nullptr || size == 0) return;
   if (!rtcIsOpen(trackId))
@@ -555,16 +616,77 @@ static void VP9PacketizeAndSend(int trackId, const uint8_t* data, size_t size)
     return;
   }
 
-  // TODO: Insert VP9 packetization here. Example approaches:
-  //  - Implement VP9 RTP packetization locally and call rtcSendMessage(trackId, chunk, chunkSize) for each RTP packet.
-  //  - Use libdatachannel's opaque message + media interceptor API (rtcCreateOpaqueMessage + rtcSetMediaInterceptorCallback)
-  //    to hand an encoded frame + metadata to libdatachannel and let it perform packetization.
+  FPacketizerState& st = GetOrCreatePacketizer(trackId);
+  if (mtuOverride > 0) st.MTU = mtuOverride;
 
-  // Interim behavior: forward raw encoded packet as a single binary message.
-  int sendRes = rtcSendMessage(trackId, reinterpret_cast<const char*>(data), static_cast<int>(size));
-  if (sendRes != RTC_ERR_SUCCESS)
+  // RTP header size (bytes) without extensions
+  const int RTP_HEADER_SIZE = 12;
+
+  // Build payload descriptor (one byte baseline); calculate available payload per RTP packet
+  uint8_t payloadDescBuf[4];
+  int pdLen = BuildVp9PayloadDescriptor(payloadDescBuf, sizeof(payloadDescBuf), true, true); // will be adjusted per-fragment
+
+  int maxPayloadPerPacket = st.MTU - RTP_HEADER_SIZE - pdLen;
+  if (maxPayloadPerPacket <= 0)
   {
-    UE_LOG(LogTemp, Warning, TEXT("Synavis: VP9PacketizeAndSend rtcSendMessage returned %d for track %d"), sendRes, trackId);
+    UE_LOG(LogTemp, Error, TEXT("Synavis: MTU %d too small for VP9 payload descriptor"), st.MTU);
+    return;
+  }
+
+  // Frame-aligned fragmentation: only fragment when necessary.
+  size_t offset = 0;
+  bool firstFragment = true;
+  while (offset < size)
+  {
+    size_t remaining = size - offset;
+    int chunkSize = static_cast<int>(FMath::Min<size_t>(remaining, static_cast<size_t>(maxPayloadPerPacket)));
+
+    bool isStart = firstFragment;
+    bool isEnd = (offset + chunkSize) >= size;
+
+    // Build descriptor for this fragment
+    uint8_t descBuf[4];
+    int thisPdLen = BuildVp9PayloadDescriptor(descBuf, sizeof(descBuf), isStart, isEnd);
+
+    // Compose packet into a temporary buffer
+    int packetLen = RTP_HEADER_SIZE + thisPdLen + chunkSize;
+    TArray<uint8> packet;
+    packet.SetNumUninitialized(packetLen);
+
+    // Write RTP header directly (big-endian network order)
+    uint8_t* ptr = packet.GetData();
+    ptr[0] = 0x80; // Version 2, no padding, no extensions, CC=0
+    ptr[1] = static_cast<uint8_t>((isEnd ? 0x80u : 0x00u) | 96u); // Marker on last packet, PT=96
+    ptr[2] = static_cast<uint8_t>((st.Sequence >> 8) & 0xFF);
+    ptr[3] = static_cast<uint8_t>((st.Sequence >> 0) & 0xFF);
+    // Timestamp (32-bit big-endian)
+    ptr[4] = static_cast<uint8_t>((rtpTimestamp >> 24) & 0xFF);
+    ptr[5] = static_cast<uint8_t>((rtpTimestamp >> 16) & 0xFF);
+    ptr[6] = static_cast<uint8_t>((rtpTimestamp >> 8) & 0xFF);
+    ptr[7] = static_cast<uint8_t>((rtpTimestamp >> 0) & 0xFF);
+    // SSRC (32-bit big-endian)
+    ptr[8] = static_cast<uint8_t>((st.SSRC >> 24) & 0xFF);
+    ptr[9] = static_cast<uint8_t>((st.SSRC >> 16) & 0xFF);
+    ptr[10] = static_cast<uint8_t>((st.SSRC >> 8) & 0xFF);
+    ptr[11] = static_cast<uint8_t>((st.SSRC >> 0) & 0xFF);
+
+    // Copy payload descriptor
+    memcpy(ptr + RTP_HEADER_SIZE, descBuf, thisPdLen);
+
+    // Copy payload chunk
+    memcpy(ptr + RTP_HEADER_SIZE + thisPdLen, data + offset, chunkSize);
+
+    // Send packet
+    int sendRes = SendNative(trackId, packet.GetData(), packetLen);
+    if (sendRes != RTC_ERR_SUCCESS)
+    {
+      UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcSendMessage returned %d when sending RTP packet to track %d"), sendRes, trackId);
+    }
+
+    // Advance
+    offset += chunkSize;
+    firstFragment = false;
+    st.Sequence = static_cast<uint16_t>(st.Sequence + 1);
   }
 }
 
@@ -584,6 +706,11 @@ ESynavisState USynavisStreamer::GetConnectionState() const
 
 int USynavisStreamer::SetupDataChannel(const FSynavisHandler &Handler)
 {
+  // If handler does not accept inbound messages, skip creating datachannels/reverse mappings
+  if (!Handler.AcceptsInboundMessages)
+  {
+    return -1;
+  }
   bool CreatedAny = false;
   // Create a dedicated data channel for the given handler on every active connection.
   for (auto& Pair : Connections)
@@ -855,16 +982,40 @@ void USynavisStreamer::HandleDataChannelMessageCallback(int dc, const std::varia
 int32 USynavisStreamer::RegisterDataSourceCpp(const std::function<void(int32, const TArray<uint8>&)>& OnData,
   const std::function<void(int32, const FString&)>& OnMessage,
   USceneCaptureComponent2D* SceneCapture,
-  bool DedicatedChannel)
+  bool DedicatedChannel,
+  bool AcceptsInboundMessages)
 {
   FSynavisHandler H;
   H.HandlerID = NextHandlerId++;
-  H.DataCbCpp = OnData;
-  H.MsgCbCpp = OnMessage;
+  if (AcceptsInboundMessages)
+  {
+    H.DataCbCpp = OnData;
+    H.MsgCbCpp = OnMessage;
+  }
+  H.AcceptsInboundMessages = AcceptsInboundMessages;
   H.Video = SceneCapture ? TOptional<USceneCaptureComponent2D*>(SceneCapture) : TOptional<USceneCaptureComponent2D*>();
   H.WantsDedicatedChannel = DedicatedChannel;
   RegisteredDataHandlers.Add(H);
   return static_cast<int32>(H.HandlerID);
+}
+
+int32 USynavisStreamer::RegisterVideoSourceCpp(USceneCaptureComponent2D* SceneCapture,
+  bool DedicatedChannel,
+  bool AcceptsInboundMessages)
+{
+  // Create a handler that provides video but does not accept inbound messages by default.
+  // Reuse the C++ registration implementation with empty callbacks.
+  return RegisterDataSourceCpp(std::function<void(int32, const TArray<uint8>&)>(),
+    std::function<void(int32, const FString&)>(),
+    SceneCapture, DedicatedChannel, AcceptsInboundMessages);
+}
+
+int USynavisStreamer::RegisterVideoSource(USceneCaptureComponent2D* SceneCapture,
+  bool DedicatedChannel,
+  bool AcceptsInboundMessages)
+{
+  // Blueprint wrapper: call the C++ registration helper
+  return RegisterVideoSourceCpp(SceneCapture, DedicatedChannel, AcceptsInboundMessages);
 }
 
 void USynavisStreamer::UnregisterDataSource(int32 HandlerId)
@@ -1386,7 +1537,8 @@ int USynavisStreamer::RegisterDataSource(
   FSynavisData DataHandler,
   FSynavisMessage MsgHandler,
   USceneCaptureComponent2D* SceneCapture,
-  bool DedicatedChannel)
+  bool DedicatedChannel,
+  bool AcceptsInboundMessages)
 {
   FSynavisHandler Handler;
   Handler.DataHandler = DataHandler;
@@ -1416,26 +1568,31 @@ int USynavisStreamer::RegisterDataSource(
 
   // If a dedicated channel was requested, mark it for creation per-connection; otherwise use the system channel
   Handler.WantsDedicatedChannel = DedicatedChannel;
+  Handler.AcceptsInboundMessages = AcceptsInboundMessages;
 
   // Depending on the SourcePolicy, attempt to set up per-connection datachannels now.
   switch(this->SourcePolicy)
   {
     case ESynavisSourcePolicy::RemainStatic:
-      if (!IsInGame())
+      if (Handler.AcceptsInboundMessages && !IsInGame())
       {
         this->SetupDataChannel(Handler);
       }
       break;
     case ESynavisSourcePolicy::DynamicOptional:
-      this->SetupDataChannel(Handler);
+      if (Handler.AcceptsInboundMessages)
+        this->SetupDataChannel(Handler);
       break;
     case ESynavisSourcePolicy::DynamicMandatory:
     {
-      int Res = this->SetupDataChannel(Handler);
-      if (Res < 0)
+      if (Handler.AcceptsInboundMessages)
       {
-        UE_LOG(LogTemp, Warning, TEXT("%s: Failed to setup data channel for dynamic mandatory source"), *LogPrefix);
-        return -1;
+        int Res = this->SetupDataChannel(Handler);
+        if (Res < 0)
+        {
+          UE_LOG(LogTemp, Warning, TEXT("%s: Failed to setup data channel for dynamic mandatory source"), *LogPrefix);
+          return -1;
+        }
       }
     }
     break;
@@ -1687,9 +1844,23 @@ void USynavisStreamer::EncodeNV12ReadbackAndSend(FRHIGPUTextureReadback* Readbac
       {
         if (tr != 0 && rtcIsOpen(tr))
         {
-          // Call the VP9 packetizer/sender stub. Replace implementation inside
-          // VP9PacketizeAndSend with real VP9 packetization logic when ready.
-          VP9PacketizeAndSend(tr, data, sz);
+          // Compute RTP timestamp. Prefer AVPacket PTS if available, otherwise wall clock.
+          uint32_t rtpTs = 0;
+#if defined(LIBAV_AVAILABLE)
+          if (LibAVState->Packet->pts != AV_NOPTS_VALUE)
+          {
+            AVRational outQ = {1, 90000};
+            rtpTs = static_cast<uint32_t>(av_rescale_q(LibAVState->Packet->pts, LibAVState->CodecCtx->time_base, outQ));
+          }
+          else
+          {
+            rtpTs = static_cast<uint32_t>(FPlatformTime::Seconds() * 90000.0);
+          }
+#else
+          rtpTs = static_cast<uint32_t>(FPlatformTime::Seconds() * 90000.0);
+#endif
+          // Call packetizer & sender with RTP timestamp
+          VP9PacketizeAndSend(tr, data, sz, rtpTs);
         }
       }
     }
