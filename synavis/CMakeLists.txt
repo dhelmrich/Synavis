@@ -34,7 +34,7 @@ find_package(Python 3.10 COMPONENTS Interpreter Development.Module REQUIRED)
 # Only add the binding file(s) to the Python module
 pybind11_add_module(${PYPROJECT} SHARED PySynavis.cpp)
 
-add_library(${projectname} 
+add_library(${projectname} SHARED
   ${PLAINSOURCES}
   ${RECEIVERHEADERS}
 )
@@ -161,7 +161,7 @@ if(UNIX)
   set_target_properties(${PYPROJECT} PROPERTIES INSTALL_RPATH "\$ORIGIN/lib")
 endif()
 
-if(BUILD_WITH_DECODING OR DEFINED FFMPEG_LIBRARY_DIRS OR FFMPEG_FOUND)
+if(BUILD_WITH_DECODING AND (DEFINED FFMPEG_LIBRARY_DIRS OR FFMPEG_FOUND))
   target_link_directories(${projectname} PRIVATE ${FFMPEG_LIBRARY_DIRS})
   target_link_directories(${PYPROJECT} PRIVATE ${FFMPEG_LIBRARY_DIRS})
   target_link_libraries(${projectname} PRIVATE ${FFMPEG_LIBRARIES})
@@ -174,7 +174,19 @@ if(BUILD_WITH_DECODING OR DEFINED FFMPEG_LIBRARY_DIRS OR FFMPEG_FOUND)
   # install them into the python package under ${PY_PACKAGE_NAME}/lib so the
   # extension can load them at runtime via $ORIGIN/lib.
   if(DEFINED FFMPEG_LIBRARY_DIRS)
-    set(_ffmpeg_globs "libavcodec*.so*" "libavformat*.so*" "libavutil*.so*" "libswresample*.so*" "libswscale*.so*")
+    if(UNIX)
+      set(_ffmpeg_globs
+        "libavcodec*.so*" "libavformat*.so*" "libavutil*.so*"
+        "libswresample*.so*" "libswscale*.so*"
+      )
+    elseif(WIN32)
+      set(_ffmpeg_globs
+        "libavcodec*.dll" "avcodec-*.dll" "libavformat*.dll" "avformat-*.dll"
+        "libavutil*.dll" "avutil-*.dll" "libswresample*.dll" "swresample-*.dll"
+        "libswscale*.dll" "swscale-*.dll"
+        "libavcodec*.lib" "libavformat*.lib" "libavutil*.lib" "libswresample*.lib" "libswscale*.lib"
+      )
+    endif()
     set(_ffmpeg_runtime_files)
     foreach(_dir IN LISTS FFMPEG_LIBRARY_DIRS)
       foreach(_g IN LISTS _ffmpeg_globs)

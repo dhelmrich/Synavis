@@ -71,39 +71,37 @@ FetchContent_Declare(
   GIT_TAG v0.23.2
 )
 message(STATUS " Declaring FetchContent for libdatachannel (may fetch from internet)")
-FetchContent_GetProperties(libdatachannel)
-if(NOT libdatachannel_POPULATED)
-  message(STATUS " Populating libdatachannel (fetching source)... this may take a while")
-  FetchContent_Populate(libdatachannel)
-  # Ensure both static and shared libraries are built
-  set(BUILD_SHARED_LIBS ON CACHE BOOL "Build shared libraries globally" FORCE)
-  set(BUILD_STATIC_LIBS ON CACHE BOOL "Build static libraries globally" FORCE)
-  set(LIBDATACHANNEL_BUILD_SHARED_LIBS ON CACHE BOOL "Build shared libraries for libdatachannel" FORCE)
-  set(LIBDATACHANNEL_BUILD_STATIC_LIBS ON CACHE BOOL "Build static libraries for libdatachannel" FORCE)
-  set(ENABLE_LOCALHOST_ADDRESS ON CACHE BOOL "Enable localhost address for libdatachannel" FORCE)
-  set(ENABLE_LOCAL_ADDRESS_TRANSLATION ON CACHE BOOL "Enable local address translation for libdatachannel" FORCE)
-  add_subdirectory(${libdatachannel_SOURCE_DIR} ${libdatachannel_BINARY_DIR})
-  # Ensure versioned shared library is produced
+## Ensure both static and shared libraries are built for libdatachannel
+# Set required cache variables BEFORE making the dependency available so
+# the fetched project observes the desired build options.
+set(BUILD_SHARED_LIBS ON CACHE BOOL "Build shared libraries globally" FORCE)
+set(BUILD_STATIC_LIBS ON CACHE BOOL "Build static libraries globally" FORCE)
+set(LIBDATACHANNEL_BUILD_SHARED_LIBS ON CACHE BOOL "Build shared libraries for libdatachannel" FORCE)
+set(LIBDATACHANNEL_BUILD_STATIC_LIBS ON CACHE BOOL "Build static libraries for libdatachannel" FORCE)
+set(ENABLE_LOCALHOST_ADDRESS ON CACHE BOOL "Enable localhost address for libdatachannel" FORCE)
+set(ENABLE_LOCAL_ADDRESS_TRANSLATION ON CACHE BOOL "Enable local address translation for libdatachannel" FORCE)
+
+# Make the libdatachannel content available (replaces deprecated FetchContent_Populate)
+FetchContent_MakeAvailable(libdatachannel)
+
+# Ensure versioned shared library is produced if the target was added
+if(TARGET datachannel)
   set_target_properties(datachannel PROPERTIES
       VERSION 0.23.2
       SOVERSION 0
   )
+endif()
 
-  # On Windows, copy the built libdatachannel DLL and its dependencies to SynavisBackend
-  # When BUILD_WHEEL is ON we do not want to perform repository-changing side effects
-  if(WIN32 AND NOT BUILD_WHEEL AND NOT SKIP_COPY_LIBDATACHANNEL)
-    # Define the SynavisBackend target path
-    set(SYNAVIS_BACKEND_PATH ${CMAKE_SOURCE_DIR}/SynavisBackend)
-    # Create destination directories and copy binaries, dependencies, and headers
+# On Windows, copy the built libdatachannel DLL and its dependencies to SynavisBackend
+# When BUILD_WHEEL is ON we do not want to perform repository-changing side effects
+if(WIN32 AND NOT BUILD_WHEEL AND NOT SKIP_COPY_LIBDATACHANNEL AND TARGET datachannel)
+  set(SYNAVIS_BACKEND_PATH ${CMAKE_SOURCE_DIR}/SynavisBackend)
+  set(SYNAVIS_BACKEND_LIB_PATH ${SYNAVIS_BACKEND_PATH}/Source/libdatachannel/lib)
+  set(SYNAVIS_BACKEND_INCLUDE_PATH ${SYNAVIS_BACKEND_PATH}/Source/libdatachannel/include)
 
-    # Use flat layout under SynavisBackend/Source/libdatachannel/{lib,include}
-    set(SYNAVIS_BACKEND_LIB_PATH ${SYNAVIS_BACKEND_PATH}/Source/libdatachannel/lib)
-    set(SYNAVIS_BACKEND_INCLUDE_PATH ${SYNAVIS_BACKEND_PATH}/Source/libdatachannel/include)
-
-    add_custom_target(copy_datachannel ALL
+  add_custom_target(copy_datachannel ALL
     COMMENT " Starting copy_datachannel: copying libdatachannel and headers to SynavisBackend"
 
-    # Create destination directories
     COMMAND ${CMAKE_COMMAND} -E echo " Creating lib and include directories in SynavisBackend/Source/libdatachannel..."
     COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_LIB_PATH}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_INCLUDE_PATH}
@@ -111,64 +109,69 @@ if(NOT libdatachannel_POPULATED)
     COMMAND ${CMAKE_COMMAND} -E echo " Copying libdatachannel binaries after build to ${SYNAVIS_BACKEND_LIB_PATH}/"
     COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:datachannel>" "${SYNAVIS_BACKEND_LIB_PATH}/"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_LINKER_FILE:datachannel>" "${SYNAVIS_BACKEND_LIB_PATH}/"
-    # Use a small CMake script at build-time to copy the PDB only if it
-    # actually exists. We pass the generator-expression for the target PDB
-    # file as -Dsource so it gets evaluated for the active config.
+
     COMMAND ${CMAKE_COMMAND}
       -Dsource="$<TARGET_PDB_FILE:datachannel>"
       -Ddest="${SYNAVIS_BACKEND_LIB_PATH}"
       -P "${CMAKE_SOURCE_DIR}/cmake/copy_if_exists.cmake"
 
-    # Run libdatachanneldeps.cmake with resolved path
     COMMAND ${CMAKE_COMMAND}
       -Dtarget_path="$<TARGET_FILE:datachannel>"
-    -Ddest_dir="${SYNAVIS_BACKEND_LIB_PATH}"
-    -P "${CMAKE_SOURCE_DIR}/libdatachanneldeps.cmake"
-      
-      # Verify copy succeeded
-      COMMAND ${CMAKE_COMMAND} -E echo " Verifying that libdatachannel was copied..."
-      COMMAND ${CMAKE_COMMAND}
-        -DDEST_DIR=${SYNAVIS_BACKEND_LIB_PATH}
-        -DTARGET_PATH=$<TARGET_FILE:datachannel>
-        -P ${CMAKE_SOURCE_DIR}/verify_datachannel.cmake
+      -Ddest_dir="${SYNAVIS_BACKEND_LIB_PATH}"
+      -P "${CMAKE_SOURCE_DIR}/libdatachanneldeps.cmake"
 
-      # Copy headers
-      COMMAND ${CMAKE_COMMAND} -E echo " Copying libdatachannel headers from ${libdatachannel_SOURCE_DIR}/include  ${SYNAVIS_BACKEND_INCLUDE_PATH}/"
-      COMMAND ${CMAKE_COMMAND} -E copy_directory ${libdatachannel_SOURCE_DIR}/include ${SYNAVIS_BACKEND_INCLUDE_PATH}
+    COMMAND ${CMAKE_COMMAND} -E echo " Verifying that libdatachannel was copied..."
+    COMMAND ${CMAKE_COMMAND}
+      -DDEST_DIR=${SYNAVIS_BACKEND_LIB_PATH}
+      -DTARGET_PATH=$<TARGET_FILE:datachannel>
+      -P ${CMAKE_SOURCE_DIR}/verify_datachannel.cmake
 
-      COMMENT " Finished copy_datachannel"
-    )
+    COMMAND ${CMAKE_COMMAND} -E echo " Copying libdatachannel headers from ${libdatachannel_SOURCE_DIR}/include  ${SYNAVIS_BACKEND_INCLUDE_PATH}/"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${libdatachannel_SOURCE_DIR}/include ${SYNAVIS_BACKEND_INCLUDE_PATH}
 
-    # Ensure this runs after all relevant targets are built
-    add_dependencies(copy_datachannel datachannel PySynavis Synavis)
-  endif()
+    COMMENT " Finished copy_datachannel"
+  )
+
+  add_dependencies(copy_datachannel datachannel PySynavis Synavis)
 endif()
 
 # Example for header-only library copying (e.g., nlohmann/json)
-FetchContent_Declare(
-  json
-  GIT_REPOSITORY https://github.com/nlohmann/json.git
-  GIT_TAG v3.11.2
-  GIT_SHALLOW True
-)
-message(STATUS " Declaring FetchContent for nlohmann/json (header-only)")
-FetchContent_GetProperties(json)
-if(NOT json_POPULATED)
-  message(STATUS " Populating nlohmann/json (fetching source)...")
-  FetchContent_Populate(json)
+## Prefer an externally-provided nlohmann_json (vcpkg / system) to avoid
+## target-name collisions. Only FetchContent if not available.
+find_package(nlohmann_json CONFIG QUIET)
+if(NOT nlohmann_json_FOUND AND NOT TARGET nlohmann_json::nlohmann_json AND NOT TARGET nlohmann_json)
+  FetchContent_Declare(
+    json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.2
+    GIT_SHALLOW True
+  )
+  message(STATUS " Declaring FetchContent for nlohmann/json (header-only)")
+  FetchContent_GetProperties(json)
+  if(NOT json_POPULATED)
+    message(STATUS " Making nlohmann/json available (fetching source)...")
+    FetchContent_MakeAvailable(json)
+  endif()
+else()
+  message(STATUS "Using system/vcpkg-provided nlohmann_json (no FetchContent needed)")
 endif()
 
 # The libdatachannel is seldomly a module available in HPC systems
 # as such, not only Windows but also Unix builds should copy the headers
 if(TARGET copy_datachannel)
-  add_custom_command(TARGET copy_datachannel POST_BUILD
-    # Copy json header-only library into the plugin include. Prefer the flat Source/libdatachannel/include if set.
-    COMMAND ${CMAKE_COMMAND} -E echo "Copying json headers into plugin include folder"
-    COMMAND ${CMAKE_COMMAND} -E cmake_echo_color --blue "Destination: ${SYNAVIS_BACKEND_INCLUDE_PATH} (if set) else ${SYNAVIS_BACKEND_PATH}/include/json"
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_PATH}/include/json
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-      ${json_SOURCE_DIR}/single_include $<IF:$<BOOL:${SYNAVIS_BACKEND_INCLUDE_PATH}>,${SYNAVIS_BACKEND_INCLUDE_PATH}/json,${SYNAVIS_BACKEND_PATH}/include/json>
-  )
+  if(DEFINED json_SOURCE_DIR AND EXISTS ${json_SOURCE_DIR})
+    add_custom_command(TARGET copy_datachannel POST_BUILD
+      # Copy json header-only library into the plugin include. Prefer the flat Source/libdatachannel/include if set.
+      COMMAND ${CMAKE_COMMAND} -E echo "Copying json headers into plugin include folder"
+      COMMAND ${CMAKE_COMMAND} -E cmake_echo_color --blue "Destination: ${SYNAVIS_BACKEND_INCLUDE_PATH} (if set) else ${SYNAVIS_BACKEND_PATH}/include/json"
+      COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_PATH}/include/json
+      COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${json_SOURCE_DIR}/single_include $<IF:$<BOOL:${SYNAVIS_BACKEND_INCLUDE_PATH}>,${SYNAVIS_BACKEND_INCLUDE_PATH}/json,${SYNAVIS_BACKEND_PATH}/include/json>
+    )
+  else()
+    # No json source dir available (using system/vcpkg package). Skip copying headers.
+    message(STATUS "json source not available locally; skipping header copy into SynavisBackend")
+  endif()
 endif()
 
 if(UNIX)
@@ -206,10 +209,8 @@ if (NOT CXX_FORMAT_SUPPORT)
     message(STATUS " Declaring FetchContent for fmt (format library)")
     FetchContent_GetProperties(fmt)
     if(NOT fmt_POPULATED)
-      message(STATUS " Populating fmt (fetching source)...")
-      FetchContent_Populate(fmt)
-      message(STATUS " Adding fmt subdirectory to build")
-      add_subdirectory(${fmt_SOURCE_DIR} ${fmt_BINARY_DIR})
+      message(STATUS " Making fmt available (fetching/building as needed)")
+      FetchContent_MakeAvailable(fmt)
     endif()
   endif()
 else()
@@ -228,10 +229,8 @@ if(UNIX)
   message(STATUS " Declaring FetchContent for date (time library)")
   FetchContent_GetProperties(date)
   if(NOT date_POPULATED)
-      message(STATUS " Populating date (fetching source)...")
-      FetchContent_Populate(date)
-      message(STATUS " Adding date subdirectory to build")
-      add_subdirectory(${date_SOURCE_DIR} ${date_BINARY_DIR})
+      message(STATUS " Making date available (fetching/building as needed)")
+      FetchContent_MakeAvailable(date)
   endif()
 
 endif()
@@ -320,12 +319,9 @@ if(NOT TARGET pybind11_json)
     message(STATUS " Declaring FetchContent for pybind11_json (may fetch from internet)")
     FetchContent_GetProperties(pybind11_json)
     if(NOT pybind11_json_POPULATED)
-        message(STATUS " Populating pybind11_json (fetching source)...")
-        FetchContent_Populate(pybind11_json)
-        #add_subdirectory(${pybind11_json_SOURCE_DIR} ${pybind11_json_BINARY_DIR})
-        #add_subdirectory(${pybind11_json_SOURCE_DIR})
+      message(STATUS " Making pybind11_json available (fetching/building as needed)")
+      FetchContent_MakeAvailable(pybind11_json)
     endif()
-    FetchContent_MakeAvailable(pybind11_json)
   else()
     message(STATUS "Found pybind11_json v${pybind11_json_VERSION}: ${pybind11_json_INCLUDE_DIRS}")
   endif()
