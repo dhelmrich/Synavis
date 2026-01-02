@@ -242,6 +242,10 @@ public:
   void NotifyDataChannelOpen(int dc);
   void NotifyDataChannelClosed(int dc);
 
+  // Called when libdatachannel reports a new datachannel for a PeerConnection.
+  // Implemented as a member so it can safely access protected connection maps.
+  void HandlePcDataChannelCreated(int pc, int dc);
+
   UFUNCTION(BlueprintCallable, Category = "Streaming|Connection")
   ESynavisState GetConnectionState() const;
 
@@ -371,14 +375,16 @@ protected:
   // Value 0 indicates no websocket has been created via the C API.
   int SignallingId = 0;
 
-  TMap<int32, FSynavisConnection> Connections;
+  // Store connections as heap-allocated pointers to ensure stable addresses
+  // across container rehashes and to allow safe user-pointer references
+  // from C API callbacks.
+  TMap<int32, FSynavisConnection*> Connections;
 
   // Global/system datachannel used as fallback when per-handler tracks are not available
   int SystemDataChannel = 0;
 
-  // Reverse map: DataChannel id -> (HandlerID, ConnectionPlayerID)
-  // Used for O(1) dispatch of incoming messages to registered handlers.
-  TMap<int32, TPair<uint32, int32>> DataChannelToHandler;
+  // Note: per-connection mapping of datachannel -> handler is stored in
+  // FSynavisConnection::HandlersByChannel. No global reverse map is kept.
 
   // Teardown a connection and free its resources (PeerConnection, DataChannels, Tracks)
   void TeardownConnection(int32 PlayerID);

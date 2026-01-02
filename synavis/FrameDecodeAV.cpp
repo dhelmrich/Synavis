@@ -6,6 +6,7 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/frame.h>
 #include <libavutil/imgutils.h>
+#include <libavutil/buffer.h>
 }
 
 
@@ -55,6 +56,7 @@ namespace Synavis
         // create a new frame
         frame = std::vector<std::byte>(Data.begin() + sizeof(rtc::RtpHeader), Data.end());
         timestamp = Header->timestamp();
+        MarkerSeen = (Header->marker() > 0);
       }
       else
       {
@@ -69,6 +71,8 @@ namespace Synavis
       {
         // append the packet to the frame
         frame.insert(frame.end(), Data.begin() + sizeof(rtc::RtpHeader), Data.end());
+        // remember if this packet set the marker (end of frame)
+        if (Header->marker() > 0) MarkerSeen = true;
       }
       else
       {
@@ -80,12 +84,48 @@ namespace Synavis
 
   bool VP9Depacketizer::IsFrameComplete()
   {
-    return false;
+    return (!frame.empty() && MarkerSeen);
   }
 
   AVPacket* VP9Depacketizer::GetAVFrame()
   {
-    return nullptr;
+    if (frame.empty()) return nullptr;
+    // Create an AVPacket that references the existing frame buffer without copying.
+    // Move the frame vector to the heap and create an AVBufferRef that will delete
+    // the vector when the packet is freed.
+    auto* heapVec = new std::vector<std::byte>(std::move(frame));
+    // frame is now empty; reset markers
+    MarkerSeen = false;
+    timestamp = static_cast<uint32_t>(-1);
+
+    // av_buffer_create expects a uint8_t* data pointer
+    uint8_t* dataPtr = reinterpret_cast<uint8_t*>(heapVec->data());
+    int dataSize = static_cast<int>(heapVec->size());
+
+    // Free callback will delete the heapVec pointer when buffer is unreferenced
+    auto free_cb = [](void* opaque, uint8_t* data) {
+      auto* v = static_cast<std::vector<std::byte>*>(opaque);
+      delete v;
+    };
+
+    AVBufferRef* buf = av_buffer_create(dataPtr, dataSize, free_cb, heapVec, 0);
+    if (!buf)
+    {
+      // cleanup on failure
+      delete heapVec;
+      return nullptr;
+    }
+
+    AVPacket* packet = av_packet_alloc();
+    if (!packet)
+    {
+      av_buffer_unref(&buf);
+      return nullptr;
+    }
+    packet->buf = buf;
+    packet->data = buf->data;
+    packet->size = dataSize;
+    return packet;
   }
 
   H264Depacketizer::~H264Depacketizer()
@@ -131,11 +171,29 @@ namespace Synavis
 
   AVPacket* H264Depacketizer::GetAVFrame()
   {
+    if (frame.empty()) return nullptr;
+    auto* heapVec = new std::vector<std::byte>(std::move(frame));
+    uint8_t* dataPtr = reinterpret_cast<uint8_t*>(heapVec->data());
+    int dataSize = static_cast<int>(heapVec->size());
+    auto free_cb = [](void* opaque, uint8_t* data) {
+      auto* v = static_cast<std::vector<std::byte>*>(opaque);
+      delete v;
+    };
+    AVBufferRef* buf = av_buffer_create(dataPtr, dataSize, free_cb, heapVec, 0);
+    if (!buf)
+    {
+      delete heapVec;
+      return nullptr;
+    }
     AVPacket* packet = av_packet_alloc();
-
-    packet->data = AS_UINT8(frame.data());
-    packet->size = static_cast<int>(frame.size());
-
+    if (!packet)
+    {
+      av_buffer_unref(&buf);
+      return nullptr;
+    }
+    packet->buf = buf;
+    packet->data = buf->data;
+    packet->size = dataSize;
     return packet;
   }
 
@@ -261,12 +319,11 @@ namespace Synavis
             //Callback(Data);
             return;
           }
-          // decode the frame
 #if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(58, 9, 100)
           int GotFrame = 0;
-          int Result = avcodec_decode_video2(CodecContext, Frame, &GotFrame, Packet);
+          int Result = avcodec_decode_video2(CodecContext, Frame, &GotFrame, packet);
 #else
-          int Result = avcodec_send_packet(CodecContext, Packet);
+          int Result = avcodec_send_packet(CodecContext, packet);
           lffmpeg(ELogVerbosity::Debug) << "Result: " << Result << std::endl;
           int GotFrame = avcodec_receive_frame(CodecContext, Frame);
           lffmpeg(ELogVerbosity::Debug) << "GotFrame: " << GotFrame << std::endl;
@@ -308,6 +365,8 @@ namespace Synavis
               lffmpeg(ELogVerbosity::Error) << "Error decoding frame: " << Error << std::endl;
             }
           }
+          // free the packet returned by depacketizer
+          av_packet_free(&packet);
         });
       }
     };

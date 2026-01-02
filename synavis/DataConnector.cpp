@@ -50,26 +50,21 @@ void Synavis::DataConnector::SendData(rtc::binary Data)
 {
   if (this->state_ != EConnectionState::CONNECTED)
     return;
-  if (Data.size() > this->MaxMessageSize)
-  {
-    rtc::binary Chunk(this->MaxMessageSize);
-    const auto meta_size = sizeof(int) + sizeof(int) + sizeof(uint16_t) + sizeof(std::byte);
-    unsigned int chunks{ 1 };
-    for (; (meta_size * chunks + Data.size()) / chunks < this->MaxMessageSize; ++chunks);
 
-    // iterate through the chunks
-    for (auto i = 0u; i < chunks; ++i)
-    {
-      std::size_t n = 0u;
-      n = InsertIntoBinary(Chunk, n, std::byte(50), uint16_t(0));
-      n = InsertIntoBinary(Chunk, n, i, chunks);
-      memcpy(Chunk.data() + n, Data.data() + i * chunks, this->MaxMessageSize - meta_size);
-      DataChannel->sendBuffer(Chunk);
-    }
-  }
-  else
+  // Send raw binary data. If larger than MaxMessageSize, split into raw chunks
+  // and send each chunk without any leading size/type prefix. The UE side
+  // distinguishes JSON (text frames) from binary frames, so no extra framing
+  // is necessary.
+  std::size_t offset = 0;
+  const std::size_t total = Data.size();
+  while (offset < total)
   {
-    DataChannel->sendBuffer(Data);
+    std::size_t remaining = total - offset;
+    std::size_t chunkSize = std::min(remaining, this->MaxMessageSize);
+    rtc::binary chunk(chunkSize);
+    memcpy(chunk.data(), Data.data() + offset, chunkSize);
+    DataChannel->sendBuffer(chunk);
+    offset += chunkSize;
   }
 }
 
@@ -82,42 +77,20 @@ void Synavis::DataConnector::SendString(std::string Message)
 {
   if (this->state_ != EConnectionState::CONNECTED)
     return;
-  json content = { {"origin","dataconnector"},{"data",Message} };
+  // Send as a plain text frame containing JSON. UE will parse text frames as JSON.
+  json content = { {"origin","dataconnector"}, {"data", Message} };
   std::string json_message = content.dump();
-  // prepare bytes that Unreal expects at the beginning of the message
-  // rtc::binary bytes(3 + 2 * json_message.length());
-  rtc::binary bytes(4 + json_message.length());
-  bytes[bytes.size() - 1] = std::byte(0); // null terminator
-  bytes.at(0) = DataChannelByte;
-  uint16_t* buffer = reinterpret_cast<uint16_t*>(&(bytes.at(1)));
-  *buffer = static_cast<uint16_t>(json_message.size());
-  for (int i = 0; i < json_message.size(); i++)
-  {
-    //bytes.at(3 + 2 * i) = static_cast<std::byte>(json_message.at(i));
-    //bytes.at(3 + 2 * i + 1) = 0_b;
-    bytes.at(3 + i) = static_cast<std::byte>(json_message.at(i));
-  }
-  DataChannel->sendBuffer(bytes);
+  DataChannel->send(json_message);
 }
 
 void Synavis::DataConnector::SendJSON(json Message)
 {
   if (this->state_ != EConnectionState::CONNECTED)
     return;
+  // Send plain JSON as a text frame; UE will distinguish JSON via text parsing.
   std::string json_message = Message.dump();
-  // prepare bytes that Unreal expects at the beginning of the message
-  rtc::binary bytes(4 + json_message.length());
-  bytes[bytes.size() - 1] = std::byte(0);
-  bytes.at(0) = DataChannelByte;
-  uint16_t* buffer = reinterpret_cast<uint16_t*>(&(bytes.at(1)));
-  *buffer = static_cast<uint16_t>(json_message.size());
-
-  // copy the json string into the buffer
-  memcpy(bytes.data() + 3, json_message.data(), json_message.size());
-
-  std::string temp = std::string((char*)bytes.data(), bytes.size());
-  lconnector(ELogVerbosity::Info) << "Sending JSON: " << temp << std::endl;
-  DataChannel->sendBuffer(bytes);
+  lconnector(ELogVerbosity::Info) << "Sending JSON: " << json_message << std::endl;
+  DataChannel->send(json_message);
 }
 
 bool Synavis::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, std::string Name, std::string Format)
@@ -213,25 +186,21 @@ bool Synavis::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, 
     WaitTimeout(this->FailIfNotComplete, TimeOut);
     lconnector(ELogVerbosity::Debug) << "Received start message" << std::endl;
   }
-  rtc::binary bytes(std::min(chunk_size, total_size) + 4);
-  bytes.at(bytes.size() - 1) = std::byte(0);
-  uint8_t* buffer = reinterpret_cast<uint8_t*>(&(bytes.at(3)));
-  bytes.at(0) = DataChannelByte;
+  rtc::binary bytes(std::min(chunk_size, total_size));
+  uint8_t* buffer = reinterpret_cast<uint8_t*>(bytes.data());
   // move through the chunks
   lconnector(ELogVerbosity::Verbose) << "Message state is " << MessageState << " chunk info " << total_size << "->" << chunk_size << "(" << chunks << ")" << std::endl;
   for (int i = 0; i < chunks && MessageState > 0; i++)
   {
     const auto remaining = std::min(chunk_size, total_size - i * chunk_size);
-    if (bytes.size() > remaining + 4)
+    if (bytes.size() != remaining)
     {
-      bytes.resize(remaining + 4);
-      bytes.at(bytes.size() - 1) = std::byte(0);
+      bytes.resize(remaining);
+      buffer = reinterpret_cast<uint8_t*>(bytes.data());
     }
-    // copy the chunk into the buffer, the std::min is to avoid copying too much
+    // copy the chunk into the buffer
     memcpy(buffer, Source + i * chunk_size, remaining);
-    // set the second and third bytes to the chunk size
-    *(reinterpret_cast<uint16_t*>(&(bytes.at(1)))) = static_cast<uint16_t>(remaining);
-    // send the buffer
+    // send the raw chunk as a binary frame (no prefix)
     lconnector(ELogVerbosity::Debug) << "Sending chunk " << i << " of length " << remaining << std::endl;
     DataChannel->sendBuffer(bytes);
     // wait for the message to be received
@@ -479,141 +448,19 @@ inline void Synavis::DataConnector::DataChannelMessageHandling(rtc::message_vari
   if (std::holds_alternative<rtc::binary>(messageordata))
   {
     auto data = std::get<rtc::binary>(messageordata);
-    std::byte message_byte = data[0];
-    if (message_byte == 0_b)
-    {
-      // Quality control ownership
-      lconnector(ELogVerbosity::Verbose) << "Received quality control ownership" << std::endl;
-    }
-    else if (message_byte == 1_b)
-    {
-      lconnector(ELogVerbosity::Verbose) << "Received response" << std::endl;
-    }
-    else if (message_byte == 2_b)
-    {
-      lconnector(ELogVerbosity::Verbose) << "Received command" << std::endl;
-    }
-    else if (message_byte == 3_b)
-    {
-      lconnector(ELogVerbosity::Verbose) << "Received freeze frame" << std::endl;
-    }
-    else if (message_byte == 3_b)
-    {
-      lconnector(ELogVerbosity::Verbose) << "Received freeze frame" << std::endl;
-    }
-    else if (message_byte == 4_b)
-    {
-      lconnector(ELogVerbosity::Verbose) << "Received unfreeze frame" << std::endl;
-    }
-    else if (message_byte == 5_b)
-    {
-      lconnector(ELogVerbosity::Verbose) << "Received video encoder AVgQP" << std::endl;
-    }
-    else if (message_byte == 6_b)
-    {
-      lconnector(ELogVerbosity::Verbose) << "Latency Test" << std::endl;
-    }
-    else if (message_byte == 7_b)
-    {
-      lconnector(ELogVerbosity::Verbose) << "Initial Settings" << std::endl;
-    }
-    else if (message_byte == 8_b)
-    {
-      lconnector(ELogVerbosity::Verbose) << "File Extension" << std::endl;
-    }
-    else if (message_byte == 9_b)
-    {
-      lconnector(ELogVerbosity::Verbose) << "File MIME Type" << std::endl;
-    }
-    else if (message_byte == 10_b)
-    {
-      lconnector(ELogVerbosity::Verbose) << "File Content" << std::endl;
-    }
-    else if (message_byte == 11_b)
-    {
-      lconnector(ELogVerbosity::Verbose) << "Test Echo" << std::endl;
-    }
-    else if (message_byte == 12_b)
-    {
-      lconnector(ELogVerbosity::Verbose) << "Input Control Ownership" << std::endl;
-    }
-    else if (message_byte == 13_b)
-    {
-      lconnector(ELogVerbosity::Verbose) << "Gamepad response" << std::endl;
-    }
-    else if (message_byte == 255_b)
-    {
-      lconnector(ELogVerbosity::Verbose) << "Protocoll" << std::endl;
-    }
-    if (message_byte != 1_b && message_byte != 255_b && message_byte != 7_b)
-      return;
-    if (data.size() < 5) // {a:1}
-    {
-      if (DataReceptionCallback.has_value())
-        DataReceptionCallback.value()(data);
-      return;
-    }
-    try
-    {
-      // try parse string
-      std::string_view message(reinterpret_cast<char*>(data.data() + 1), data.size());
-      // the first character pair to see if the string is wchar_t or char
-      if (message[1] == '\0' && message[3] == '\0')
-      {
-        // wchar_t
-        lconnector(ELogVerbosity::Verbose) << "We assume that the 0x00 characters mean that the string is wchar_t" << std::endl;
-        auto wstringview = std::wstring_view(reinterpret_cast<wchar_t*>(data.data() + 1), data.size() / sizeof(wchar_t));
-        char* cstr = new char[wstringview.size()];
-        std::size_t it = 0;
-        std::generate(cstr, cstr + wstringview.size(), [&wstringview, &it]() { return static_cast<char>(wstringview[it++]); });
-        message = std::string_view(cstr, wstringview.size());
-      }
-      // find readable json subset
-      auto first_lbrace = message.find_first_of('{');
-      // find the rbrace that closes this lbrace by counting the braces
-      auto last_rbrace = first_lbrace;
-      int brace_count = 1;
-      for (auto i = first_lbrace + 1; i < message.length(); i++)
-      {
-        if (message[i] == '{')
-          brace_count++;
-        else if (message[i] == '}')
-          brace_count--;
-        if (brace_count == 0)
-        {
-          last_rbrace = i;
-          break;
-        }
-      }
-
-      if (first_lbrace < message.length() && last_rbrace < message.length())
-        //&& std::ranges::all_of(message.begin() + first_lbrace, message.begin() + last_rbrace, &isprint))
-      {
-
-        lconnector(ELogVerbosity::Verbose) << "Decoded message reception of size " << last_rbrace - first_lbrace + 1 << " of " << message.length() << std::endl;
-        if (MessageReceptionCallback.has_value())
-          MessageReceptionCallback.value()(std::string(message.substr(first_lbrace, last_rbrace - first_lbrace + 1)));
-      }
-      else if (DataReceptionCallback.has_value())
-      {
-        lconnector(ELogVerbosity::Verbose) << "Received data of size " << data.size() << std::endl;
-        DataReceptionCallback.value()(data);
-      }
-    }
-    catch (const std::exception&)
-    {
-      lconnector(ELogVerbosity::Warning) << "Encountered an error while trying to parse a string from the package." << std::endl;
-      lconnector(ELogVerbosity::Verbose) << "Error was: " << std::current_exception << std::endl;
-      lconnector(ELogVerbosity::Verbose) << "From data of size " << data.size() << std::endl;
-      lconnector(ELogVerbosity::Verbose) << "And first 10 characters: " << std::string(reinterpret_cast<char*>(data.data()), std::min(data.size(), static_cast<std::size_t>(10))) << std::endl;
-    }
+    lconnector(ELogVerbosity::Verbose) << "Binary frame received of size " << data.size() << std::endl;
+    if (DataReceptionCallback.has_value())
+      DataReceptionCallback.value()(data);
+    return;
   }
-  else
+
+  // Text frame: treat as JSON or plain message
+  auto message = std::get<std::string>(messageordata);
+  lconnector(ELogVerbosity::Verbose) << "Text frame received of size " << message.size() << std::endl;
+  if (MessageReceptionCallback.has_value())
   {
-    auto message = std::get<std::string>(messageordata);
-    lconnector(ELogVerbosity::Verbose) << "Direct message reception of size " << message.size() << std::endl;
-    if (MessageReceptionCallback.has_value())
-      MessageReceptionCallback.value()(message);
+    // Forward raw text message; higher layers can parse JSON if desired
+    MessageReceptionCallback.value()(message);
   }
 }
 
@@ -827,6 +674,39 @@ void Synavis::DataConnector::Initialize()
             // (and can create an offer in races).
             PeerConnection->setRemoteDescription(remote);
 
+            // If the remote description contains inline candidates (non-trickle
+            // ICE), extract and add them explicitly so we don't rely solely on
+            // separate "iceCandidate" messages from the signalling server.
+            try
+            {
+              for (auto cand : remote.extractCandidates())
+              {
+                try
+                {
+                  PeerConnection->addRemoteCandidate(cand);
+                  lconnector(ELogVerbosity::Debug) << "Added candidate from remote SDP: " << cand << std::endl;
+                }
+                catch (const std::exception& e)
+                {
+                  lconnector(ELogVerbosity::Warning) << "Failed to add candidate from remote SDP: " << e.what() << std::endl;
+                }
+              }
+            }
+            catch (const std::exception&)
+            {
+              // If extractCandidates is not supported or fails, continue; we
+              // will still accept separate iceCandidate messages.
+            }
+
+            // Only attempt to create/set a local answer if we don't already
+            // have a local description. This avoids races where repeated
+            // offers or earlier actions already produced a local answer/offer.
+            if (PeerConnection->localDescription().has_value())
+            {
+              lconnector(ELogVerbosity::Info) << "Local description already present; skipping create local Answer" << std::endl;
+            }
+            else
+            {
               try
               {
                 // Explicitly request the library to create and set a local Answer.
@@ -853,9 +733,10 @@ void Synavis::DataConnector::Initialize()
                   lconnector(ELogVerbosity::Warning) << "Created answer but localDescription() is not available" << std::endl;
                 }
               }
-            catch (const std::exception& e)
-            {
-              lconnector(ELogVerbosity::Error) << "Failed to create/set explicit answer: " << e.what() << std::endl;
+              catch (const std::exception& e)
+              {
+                lconnector(ELogVerbosity::Error) << "Failed to create/set explicit answer: " << e.what() << std::endl;
+              }
             }
 
             SubmissionHandler.AddTask(std::bind(&DataConnector::CommunicateSDPs, this));

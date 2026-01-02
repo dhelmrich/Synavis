@@ -83,6 +83,7 @@ namespace Synavis
     virtual void AddPacket(rtc::binary Packet) override;
     virtual bool IsFrameComplete() override;
     virtual AVPacket* GetAVFrame() override;
+    bool MarkerSeen = false;
   };
 
   class SYNAVIS_EXPORT H264Depacketizer : public PacketDepacketizer

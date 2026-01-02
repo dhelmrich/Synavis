@@ -106,19 +106,27 @@ void ASynavisDrone::ParseInput(FString Descriptor)
     SendError("Empty Descriptor");
     return;
   }
-  // reinterpret the message as ASCII
-  const auto* Data = reinterpret_cast<const char*>(*Descriptor);
-  // parse into FString
-  FString Message(UTF8_TO_TCHAR(Data));
+  // Descriptor is already an FString. Use it directly and obtain UTF-8 bytes when needed.
+  FString Message = Descriptor;
   // remove line breaks
   Message.ReplaceInline(TEXT("\r"), TEXT(""));
   Message.ReplaceInline(TEXT("\n"), TEXT(""));
   Message.ReplaceInline(TEXT("\\"), TEXT(""));
   Message.ReplaceInline(TEXT("\"{"), TEXT("{"));
   Message.ReplaceInline(TEXT("}\""), TEXT("}"));
-
   //UE_LOG(LogTemp, Warning, TEXT("M: %s"), *Message);
-  if (Message[0] == '{' && Message[Message.Len() - 1] == '}')
+  // Tolerant parsing: if message doesn't start/end with JSON braces, try extracting
+  // the substring between the first '{' and the last '}' to tolerate framing bytes.
+  int32 FirstBrace = INDEX_NONE;
+  int32 LastBrace = INDEX_NONE;
+  Message.FindChar('{', FirstBrace);
+  Message.FindLastChar('}', LastBrace);
+  if (FirstBrace != INDEX_NONE && LastBrace != INDEX_NONE && LastBrace > FirstBrace)
+  {
+    Message = Message.Mid(FirstBrace, LastBrace - FirstBrace + 1);
+  }
+
+  if (Message.Len() > 1 && Message[0] == '{' && Message[Message.Len() - 1] == '}')
   {
     TSharedPtr<FJsonObject> Jason = MakeShareable(new FJsonObject());
     TSharedRef<TJsonReader<TCHAR>> Reader = TJsonReaderFactory<TCHAR>::Create(Message);
@@ -134,11 +142,12 @@ void ASynavisDrone::ParseInput(FString Descriptor)
     }
     else
     {
-      const uint64 size = FCStringAnsi::Strlen(reinterpret_cast<const ANSICHAR*>(*Descriptor));
+      // Get UTF-8 bytes for the FString descriptor
+      FTCHARToUTF8 Utf8(*Descriptor);
+      const uint64 size = static_cast<uint64>(Utf8.Length());
       UE_LOG(LogTemp, Warning, TEXT("Received data of size %llu is not JSON but we are waiting for data."), size);
-      const uint8* data = reinterpret_cast<const uint8*>(*Descriptor);
-      // length of the data in bytes
-
+      const uint8* data = reinterpret_cast<const uint8*>(Utf8.Get());
+      // copy into reception buffer
       FMemory::Memcpy(ReceptionBuffer + ReceptionBufferOffset, data, size);
       ReceptionBufferOffset += size;
       SendResponse(FString::Printf(TEXT("{\"type\":\"buffer\",\"name\":\"%s\", \"state\":\"transit\"}"), *ReceptionName), unixtime_start);
@@ -1195,7 +1204,8 @@ void ASynavisDrone::SendResponse(FString Descriptor, double StartTime, int Playe
     Descriptor.RemoveAt(Descriptor.Len() - 1);
     Descriptor.Append(FString::Printf(TEXT(", \"player_id\":%d}"), PlayerID));
   }
-  FString Response(reinterpret_cast<TCHAR*>(TCHAR_TO_UTF8(*Descriptor)));
+  // Use Descriptor directly as the response string; avoid reinterpreting UTF-8 bytes as TCHAR
+  FString Response = Descriptor;
   // logging the first 20 characters of the response
   if (LogResponses)
     UE_LOG(LogTemp, Warning, TEXT("Sending response: %s"), *Descriptor.Left(20));
@@ -1235,7 +1245,6 @@ void ASynavisDrone::ResetSynavisState()
   TransmissionTargets.Empty();
 }
 
-// Sets default values
 ASynavisDrone::ASynavisDrone()
 {
   // Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
