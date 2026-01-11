@@ -86,9 +86,8 @@ enum class EPeerState : uint8
 struct FSynavisHandler
 {
   // Video: Source -> Destination
-    // a TOptional<TPair<int32 /*track id*/, USceneCaptureComponent2D*>>
-    // Store the scene capture component so we can validate it (ensure it has a TextureTarget)
-  TOptional<USceneCaptureComponent2D*> Video;
+    // Store the scene capture component pointer so we can validate it (ensure it has a TextureTarget)
+  USceneCaptureComponent2D* Video = nullptr;
   // will set FSynavisConnection::DataChannel to not equal to System when opened.
   // Use a name without the `b` prefix to match usage in implementation files.
   bool WantsDedicatedChannel = false;
@@ -242,6 +241,7 @@ public:
   void NotifyDataChannelOpen(int dc);
   void NotifyDataChannelClosed(int dc);
 
+
   // Called when libdatachannel reports a new datachannel for a PeerConnection.
   // Implemented as a member so it can safely access protected connection maps.
   void HandlePcDataChannelCreated(int pc, int dc);
@@ -309,6 +309,11 @@ public:
   // Send raw encoded frame bytes to a target RTC track or datachannel
   void SendFrameBytes(const TArray<uint8>& Bytes, const FString& Name, const FString& Format, int32 TargetTrackId);
 
+  
+  // Find connection by ConnectionID (PlayerID). Returns nullptr if not found.
+  FSynavisConnection* FindConnectionByPlayerID(int32 PlayerID);
+  const FSynavisConnection* FindConnectionByPlayerID(int32 PlayerID) const;
+
 protected:
   // timer callback to capture frames
   void CaptureFrame();
@@ -375,10 +380,10 @@ protected:
   // Value 0 indicates no websocket has been created via the C API.
   int SignallingId = 0;
 
-  // Store connections as heap-allocated pointers to ensure stable addresses
+  // Store connections as shared pointers to ensure stable addresses
   // across container rehashes and to allow safe user-pointer references
-  // from C API callbacks.
-  TMap<int32, FSynavisConnection*> Connections;
+  // from C API callbacks while enabling shared ownership semantics.
+  TMap<int32, TSharedPtr<FSynavisConnection>> Connections;
 
   // Global/system datachannel used as fallback when per-handler tracks are not available
   int SystemDataChannel = 0;
@@ -408,7 +413,7 @@ protected:
   void HandleSignallingOpen();
   void HandleSignallingClose();
   void HandleSignallingError(const std::string& Err);
-  void HandleSignallingMessage(const std::variant<TArray<uint8_t>, std::string>& Message);
+  void HandleSignallingMessage(const std::variant<TArray<uint8>, std::string>& Message);
 
   // Callbacks invoked from C API callback wrappers (forwarded to game thread)
   // The integer parameters identify the C API object ids (peer, datachannel, track)
@@ -417,6 +422,7 @@ protected:
   void HandleDataChannelMessageCallback(int dc, const std::variant<TArray<uint8>, std::string>& message);
   void HandleDataChannelOpenCallback(int dc);
   void HandleDataChannelClosedCallback(int dc);
+  
 
   // Create a new peerconnection for a remote player identified by PlayerID
   void CreateConnectionForPlayer(int32 PlayerID);
@@ -424,9 +430,6 @@ protected:
   void CommunicateSDPForConnection(const FSynavisConnection& Conn);
   // Register remote ICE candidate for a given connection (content contains candidate obj)
   void RegisterRemoteCandidateForConnection(const FJsonObject& Content, FSynavisConnection& Conn);
-  // Find connection by ConnectionID (PlayerID). Returns nullptr if not found.
-  FSynavisConnection* FindConnectionByPlayerID(int32 PlayerID);
-  const FSynavisConnection* FindConnectionByPlayerID(int32 PlayerID) const;
 
   // Stop streaming for a specific connection (marks connection not to receive video).
   UFUNCTION(BlueprintCallable, Category = "Streaming")
