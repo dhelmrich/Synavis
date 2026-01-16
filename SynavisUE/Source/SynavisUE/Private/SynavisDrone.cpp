@@ -607,6 +607,10 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
         message += FString::Printf(TEXT("\"start\":{\"x\":%f,\"y\":%f,\"z\":%f},\"end\":{\"x\":%f,\"y\":%f,\"z\":%f}}"), startpos.X, startpos.Y, startpos.Z, endpos.X, endpos.Y, endpos.Z);
         SendResponse(message, unixtime_start, pid);
       }
+      else if (Name == "start")
+      {
+        this->SynavisStreamerRef->StartStreaming();
+      }
     }
     else if (type == "info")
     {
@@ -1975,57 +1979,6 @@ void ASynavisDrone::BeginPlay()
   CollisionFilter.AddIgnoredActors(Found);
   Found.Empty();
 
-  // Discover or use assigned SynavisStreamer component and register this Drone as a data source
-  if (SynavisStreamerAsset)
-  {
-    SynavisStreamerRef = SynavisStreamerAsset;
-  }
-  else
-  {
-    for (TActorIterator<AActor> It(GetWorld()); It; ++It)
-    {
-      AActor* Actor = *It;
-      if (!Actor) continue;
-      USynavisStreamer* Comp = Actor->FindComponentByClass<USynavisStreamer>();
-      if (Comp)
-      {
-        SynavisStreamerRef = Comp;
-        break;
-      }
-    }
-  }
-
-  if (SynavisStreamerRef)
-  {
-    // Register control handler (InfoCam) with inbound callbacks and dedicated channel requested
-    RegisteredHandlerId = SynavisStreamerRef->RegisterDataSourceCpp(
-      [this](int32 ConnId, const TArray<uint8>& Data)
-      {
-        if (Data.Num() > 0)
-        {
-          FString Msg = FString(UTF8_TO_TCHAR(reinterpret_cast<const char*>(Data.GetData())));
-          this->ParseInput(Msg);
-        }
-      },
-      [this](int32 ConnId, const FString& Msg)
-      {
-        this->ParseInput(Msg);
-      },
-      InfoCam,
-      true);
-    UE_LOG(LogTemp, Log, TEXT("SynavisDrone: Registered data handler %d with SynavisStreamer"), RegisteredHandlerId);
-
-    // Register SceneCam as source-only (no inbound callbacks) to avoid unnecessary callback allocation
-    RegisteredHandlerIdScene = SynavisStreamerRef->RegisterVideoSourceCpp(SceneCam, false /*DedicatedChannel*/, false /*AcceptsInboundMessages*/);
-    if (RegisteredHandlerIdScene > 0)
-    {
-      UE_LOG(LogTemp, Log, TEXT("SynavisDrone: Registered source-only video handler %d for SceneCam"), RegisteredHandlerIdScene);
-    }
-  }
-  else
-  {
-    UE_LOG(LogTemp, Warning, TEXT("SynavisDrone: No SynavisStreamer found in level and no SynavisStreamerAsset assigned."));
-  }
 
   auto* Sun = Cast<ADirectionalLight>(UGameplayStatics::GetActorOfClass(GetWorld(),
     ADirectionalLight::StaticClass()));
@@ -2121,6 +2074,61 @@ void ASynavisDrone::PostInitializeComponents()
   Super::PostInitializeComponents();
   auto* MatInst = UMaterialInstanceDynamic::Create(PostProcessMat, InfoCam);
   InfoCam->AddOrUpdateBlendable(MatInst);
+}
+
+void ASynavisDrone::InitializeSynavisRegistration()
+{
+  // Discover or use assigned SynavisStreamer component and register this Drone as a data source
+  if (SynavisStreamerAsset)
+  {
+    SynavisStreamerRef = SynavisStreamerAsset;
+  }
+  else
+  {
+    for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+    {
+      AActor* Actor = *It;
+      if (!Actor) continue;
+      USynavisStreamer* Comp = Actor->FindComponentByClass<USynavisStreamer>();
+      if (Comp)
+      {
+        SynavisStreamerRef = Comp;
+        break;
+      }
+    }
+  }
+
+  if (SynavisStreamerRef)
+  {
+    // Register control handler (InfoCam) with inbound callbacks and dedicated channel requested
+    RegisteredHandlerId = SynavisStreamerRef->RegisterDataSourceCpp(
+      [this](int32 ConnId, const TArray<uint8>& Data)
+      {
+        if (Data.Num() > 0)
+        {
+          FString Msg = FString(UTF8_TO_TCHAR(reinterpret_cast<const char*>(Data.GetData())));
+          this->ParseInput(Msg);
+        }
+      },
+      [this](int32 ConnId, const FString& Msg)
+      {
+        this->ParseInput(Msg);
+      },
+      InfoCam,
+      true);
+    UE_LOG(LogTemp, Log, TEXT("SynavisDrone: Registered data handler %d with SynavisStreamer"), RegisteredHandlerId);
+
+    // Register SceneCam as source-only (no inbound callbacks) to avoid unnecessary callback allocation
+    RegisteredHandlerIdScene = SynavisStreamerRef->RegisterVideoSourceCpp(SceneCam, false /*DedicatedChannel*/, false /*AcceptsInboundMessages*/);
+    if (RegisteredHandlerIdScene > 0)
+    {
+      UE_LOG(LogTemp, Log, TEXT("SynavisDrone: Registered source-only video handler %d for SceneCam"), RegisteredHandlerIdScene);
+    }
+  }
+  else
+  {
+    UE_LOG(LogTemp, Warning, TEXT("SynavisDrone: No SynavisStreamer found in level and no SynavisStreamerAsset assigned."));
+  }
 }
 
 EDataTypeIndicator ASynavisDrone::FindType(FProperty* Property)

@@ -171,6 +171,9 @@ public:
   UFUNCTION(BlueprintCallable, Category = "Network")
     void SendError(FString Message);
 
+  UFUNCTION(BlueprintCallable, Category = "Network")
+  void InitializeSynavisRegistration();
+
   // Send raw binary data via the registered Synavis handler's datachannel.
   UFUNCTION(BlueprintCallable, Category = "Network")
     bool SendBinary(const TArray<uint8>& Data, int PlayerID = -1);
