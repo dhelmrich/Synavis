@@ -24,6 +24,7 @@ class FConvertRGBACompute : public FGlobalShader
 public:
     static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
     {
+      // return Parameters.Platform == SP_VULKAN_SM6;
         return true;
     }
 };

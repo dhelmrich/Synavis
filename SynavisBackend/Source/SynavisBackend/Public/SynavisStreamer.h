@@ -12,6 +12,7 @@ THIRD_PARTY_INCLUDES_START
 #include <unordered_map>
 #include <memory>
 #include <functional>
+#include <atomic>
 
 #include "RHIGPUReadback.h"
 #if 0
@@ -41,6 +42,7 @@ THIRD_PARTY_INCLUDES_END
 
 class UTextureRenderTarget2D;
 class USceneCaptureComponent2D;
+class USynavisStreamer;
 
 DECLARE_DYNAMIC_DELEGATE_OneParam(FSynavisMessage, FString, Message);
 DECLARE_DYNAMIC_DELEGATE_OneParam(FSynavisData, const TArray<uint8>&, Data);
@@ -159,11 +161,41 @@ struct FSynavisConnection
   // frames. This replaces the previous global bStreaming flag which no longer fits
   // the multi-connection model.
   bool bStreaming = false;
+  // If true, a negotiation request is pending for this connection because tracks
+  // or channels were added while global negotiation was held.
+  bool PendingNegotiation = false;
   EPeerState State = EPeerState::NoConnection;
+  // Hold converted UTF-8 bytes for track identifiers so pointers remain valid
+  TArray<TArray<ANSICHAR>> PersistentTrackUtf8;
+  // Thread-safe SSRC generator for tracks
   FSynavisConnection() = default;
   FSynavisConnection(const FSynavisConnection&) = delete;
   FSynavisConnection(FSynavisConnection&&) = default;
   FSynavisConnection& operator=(FSynavisConnection&&) = default;
+
+  
+
+  // Helper in your Conn class header
+  TArray<ANSICHAR>* AddPersistentUtf8(const FString& Str);
+};
+
+// Per-datachannel context stored for each datachannel. Instances are owned
+// by the USynavisStreamer via `DataChannelContexts` to centralize lifetime
+// management and provide a single authoritative place for diagnostics.
+struct DataChannelCtx
+{
+  // Leading magic to detect writes before the structure
+  uint64_t CANARY_FRONT = 0xDEADBEEFCAFEBABEULL;
+
+  // Actual context fields
+  USynavisStreamer* Streamer = nullptr;
+  int32 ConnectionID = 0;
+  uint32 HandlerID = 0;
+  int PeerPC = 0;
+  FSynavisConnection* ConnRaw = nullptr;
+
+  // Trailing magic to detect writes after the structure
+  uint64_t CANARY_BACK = 0xDEADBEEFCAFEBABEULL;
 };
 
 
@@ -177,12 +209,23 @@ public:
   USynavisStreamer();
   virtual ~USynavisStreamer() override;
 
+  // Return a monotonic, thread-safe SSRC value for newly-created tracks
+  uint32_t GetNextSSRC();
+
+  // Centralized helpers to manage per-datachannel contexts from external C callbacks
+  void AddDataChannelContext(int32 DcId, TSharedPtr<struct DataChannelCtx> Ctx);
+  void RemoveDataChannelContext(int32 DcId);
+  // Thread-safe accessor for callbacks to find the authoritative ctx by datachannel id
+  TSharedPtr<struct DataChannelCtx> GetDataChannelContext(int32 DcId) const;
+
   UPROPERTY()
   FSynavisMessage MsgBroadcast;
 
   UPROPERTY()
   FSynavisData DataBroadcast;
 
+  // Resolve channel -> connection mapping on the game thread and dispatch message
+  void ResolveAndHandleDataChannelMessage(int dc, const std::variant<TArray<uint8>, std::string>& message);
 
 protected:
   // Called when the game starts
@@ -223,23 +266,14 @@ public:
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Streaming|Signalling")
   bool bTakeFirstStep = true;
 
+  // If true, hold any negotiation/offer creation until StartConnectionNegotiation()
+  // is called from the editor or Blueprint. Allows registering handlers in construction
+  // scripts before PeerConnection offers are created.
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Streaming|Signalling")
+  bool bHoldNegotiation = false;
+
   UFUNCTION(BlueprintCallable, Category = "Streaming|Signalling")
   void StartSignalling();
-
-  // Public notification wrappers used by C API callbacks to safely forward events
-  // into this class without violating C++ access control.
-  void NotifySignallingOpen();
-  void NotifySignallingClose();
-  void NotifySignallingError(const std::string& Err);
-  void NotifySignallingMessage(const std::variant<TArray<uint8>, std::string>& Message);
-
-  // Public PC/DataChannel notify wrappers so C callbacks can call into this
-  // class without touching protected member functions directly.
-  void NotifyPcLocalDescription(int pc, const char* sdp, const char* type);
-  void NotifyPcGatheringStateChange(int pc, int state);
-  void NotifyDataChannelMessage(int dc, const std::variant<TArray<uint8>, std::string>& message);
-  void NotifyDataChannelOpen(int dc);
-  void NotifyDataChannelClosed(int dc);
 
 
   // Called when libdatachannel reports a new datachannel for a PeerConnection.
@@ -250,6 +284,11 @@ public:
   ESynavisState GetConnectionState() const;
 
   int SetupDataChannel(const FSynavisHandler& Handler);
+
+  uint64 UniqueIdenfifier()
+  {
+    return NextUniqueIdentifier++;
+  }
 
   /**
    * Register data source for this streamer instance.
@@ -313,6 +352,23 @@ public:
   // Find connection by ConnectionID (PlayerID). Returns nullptr if not found.
   FSynavisConnection* FindConnectionByPlayerID(int32 PlayerID);
   const FSynavisConnection* FindConnectionByPlayerID(int32 PlayerID) const;
+
+  // Find connection by PeerConnection id (pc). Returns nullptr if not found.
+  FSynavisConnection* GetConnectionFromPC(int pc);
+  const FSynavisConnection* GetConnectionFromPC(int pc) const;
+
+  // Find registered handler by HandlerID. Returns nullptr if not found.
+  FSynavisHandler* GetHandlerById(uint32 HandlerId);
+  const FSynavisHandler* GetHandlerById(uint32 HandlerId) const;
+
+  // Return the first registered handler that has a video source but does not
+  // yet have a video track mapping for the provided connection. Returns
+  // nullptr if none found.
+  FSynavisHandler* FirstWithoutVideoTrack(struct FSynavisConnection* Conn);
+  const FSynavisHandler* FirstWithoutVideoTrack(const struct FSynavisConnection* Conn) const;
+
+  // Diagnostic: print RTC-related state (channels, tracks) for all connections
+  void RTCReport() const;
 
 protected:
   // timer callback to capture frames
@@ -388,6 +444,16 @@ protected:
   // Global/system datachannel used as fallback when per-handler tracks are not available
   int SystemDataChannel = 0;
 
+  // Central container that owns per-datachannel context objects. Keys are
+  // datachannel ids returned by the C API (rtcCreateDataChannel / OnPcDataChannel).
+  // Stored as a heap-allocated pointer to make the container address stable
+  // and to avoid accidental placement on stack-like/embedded storage.
+  TUniquePtr<TMap<int32, TSharedPtr<DataChannelCtx>>> DataChannelContexts;
+
+  // Mutex protecting DataChannelContexts for thread-safe access from arbitrary
+  // callback threads.
+  mutable FCriticalSection DataChannelContextsMutex;
+
   // Note: per-connection mapping of datachannel -> handler is stored in
   // FSynavisConnection::HandlersByChannel. No global reverse map is kept.
 
@@ -409,6 +475,9 @@ protected:
   };
   FLibAVEncoderState* LibAVState = nullptr;
 
+  std::atomic<uint32_t> NextSSRC {1001};
+public:
+
   // Signalling handlers (moved to member functions to reduce lambda use)
   void HandleSignallingOpen();
   void HandleSignallingClose();
@@ -426,6 +495,12 @@ protected:
 
   // Create a new peerconnection for a remote player identified by PlayerID
   void CreateConnectionForPlayer(int32 PlayerID);
+  // Trigger renegotiation for a specific connection (internal helper)
+  void TriggerRenegotiationForConnection(struct FSynavisConnection* Conn);
+  // Trigger any pending/required negotiation for all connections. This is intended
+  // to be called from editor/blueprint once handler registration is complete.
+  UFUNCTION(BlueprintCallable, Category = "Streaming|Signalling")
+  void StartConnectionNegotiation();
   // Send local SDP for a specific connection via the signalling websocket
   void CommunicateSDPForConnection(const FSynavisConnection& Conn);
   // Register remote ICE candidate for a given connection (content contains candidate obj)
@@ -434,4 +509,6 @@ protected:
   // Stop streaming for a specific connection (marks connection not to receive video).
   UFUNCTION(BlueprintCallable, Category = "Streaming")
   void StopStreaming(int32 ConnectionID);
+
+  uint64 NextUniqueIdentifier = 1;
 };

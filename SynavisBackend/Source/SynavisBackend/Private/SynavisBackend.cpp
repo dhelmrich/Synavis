@@ -6,6 +6,7 @@
 #include "Interfaces/IPluginManager.h"
 #include "Misc/Paths.h"
 #include "HAL/PlatformProcess.h"
+#include "ShaderCore.h"
 
 #define LOCTEXT_NAMESPACE "FSynavisBackendModule"
 
@@ -15,6 +16,14 @@ void FSynavisBackendModule::StartupModule()
 
 	// Get the base directory of this plugin
 	FString BaseDir = IPluginManager::Get().FindPlugin("SynavisBackend")->GetBaseDir();
+
+	// Ensure the engine can map virtual shader source paths for this plugin (e.g. /Plugin/SynavisBackend/...)
+	FString ShaderDir = FPaths::Combine(BaseDir, TEXT("Shaders"));
+	if (FPaths::DirectoryExists(ShaderDir))
+	{
+		AddShaderSourceDirectoryMapping(TEXT("/Plugin/SynavisBackend"), ShaderDir);
+		UE_LOG(LogTemp, Log, TEXT("Registered shader source mapping /Plugin/SynavisBackend -> %s"), *ShaderDir);
+	}
 
 	// Add on the relative location of the libdatachannel dll and load it
 	FString LibraryPath;

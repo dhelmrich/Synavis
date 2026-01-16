@@ -1,5 +1,7 @@
 #include "SynavisStreamerRendering.h"
 #include "Math/UnrealMathUtility.h"
+#include "GlobalShader.h"
+#include "ShaderParameterStruct.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Containers/Array.h"
 #include "RHICommandList.h"
@@ -39,44 +41,48 @@ bool ConvertRenderTargetToI420_GPU(UTextureRenderTarget2D* SrcRT, TArray<uint8>&
     // Run render graph on render thread
     ENQUEUE_RENDER_COMMAND(Synavis_ConvertRTToNV12)([RTTexture = RTResource->GetRenderTargetTexture(), Width, Height, ReadbackYPtr = ReadbackY.Get(), ReadbackUVPtr = ReadbackUV.Get()](FRHICommandListImmediate& RHICmdList)
     {
-            // Build RDG
-            FRDGBuilder GraphBuilder(RHICmdList);
+      // Build RDG
+      FRDGBuilder GraphBuilder(RHICmdList);
 
-            // Register external texture (source render target) with RDG
-            FRDGTextureRef RDGInput = RegisterExternalTexture(GraphBuilder, RTTexture, TEXT("Synavis_Input"));
+      // Register external texture (source render target) with RDG
+      FRDGTextureRef RDGInput = RegisterExternalTexture(GraphBuilder, RTTexture, TEXT("Synavis_Input"));
 
-        FRDGTextureDesc DescY = FRDGTextureDesc::Create2D(FIntPoint(Width, Height), PF_R8, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
-        FRDGTextureRef RDGY = GraphBuilder.CreateTexture(DescY, TEXT("Synavis_Y"));
+      FRDGTextureDesc DescY = FRDGTextureDesc::Create2D(FIntPoint(Width, Height), PF_R8, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
+      FRDGTextureRef RDGY = GraphBuilder.CreateTexture(DescY, TEXT("Synavis_Y"));
 
-        FRDGTextureDesc DescUV = FRDGTextureDesc::Create2D(FIntPoint((Width + 1) / 2, (Height + 1) / 2), PF_R8G8, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
-        FRDGTextureRef RDGUV = GraphBuilder.CreateTexture(DescUV, TEXT("Synavis_UV"));
+      FRDGTextureDesc DescUV = FRDGTextureDesc::Create2D(FIntPoint((Width + 1) / 2, (Height + 1) / 2), PF_R8G8, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
+      FRDGTextureRef RDGUV = GraphBuilder.CreateTexture(DescUV, TEXT("Synavis_UV"));
 
-        // Setup compute shader parameters and add pass
-            TShaderMapRef<FConvertRGBACompute> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
-            FConvertRGBACompute::FParameters* PassParameters = GraphBuilder.AllocParameters<FConvertRGBACompute::FParameters>();
-            PassParameters->InputTexture = RDGInput;
-            PassParameters->LinearSampler = TStaticSamplerState<SF_Bilinear>::GetRHI();
-            // Create UAVs from the RDG textures and assign
-            PassParameters->OutY = GraphBuilder.CreateUAV(RDGY);
-            PassParameters->OutUV = GraphBuilder.CreateUAV(RDGUV);
-            PassParameters->TextureSize = FIntPoint(Width, Height);
+    // Ensure a global shader map exists for the current feature level and obtain the compute shader via TShaderMapRef.
+    const auto* GlobalMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
+    checkf(GlobalMap, TEXT("GlobalShaderMap null for feature level %d"), (int32)GMaxRHIFeatureLevel);
 
-            // Add a compute pass and dispatch via helper
-            GraphBuilder.AddPass(
-                RDG_EVENT_NAME("SynavisConvertToNV12"),
-                PassParameters,
-                ERDGPassFlags::Compute,
-                [PassParameters, ComputeShader, Width, Height](FRHIComputeCommandList& RHICmdListInner)
-                {
-                    FComputeShaderUtils::Dispatch(RHICmdListInner, ComputeShader, *PassParameters, FIntVector((Width + 15) / 16, (Height + 15) / 16, 1));
-                }
-            );
+      // Setup compute shader parameters and add pass
+      TShaderMapRef<FConvertRGBACompute> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
+      FConvertRGBACompute::FParameters* PassParameters = GraphBuilder.AllocParameters<FConvertRGBACompute::FParameters>();
+      PassParameters->InputTexture = RDGInput;
+      PassParameters->LinearSampler = TStaticSamplerState<SF_Bilinear>::GetRHI();
+      // Create UAVs from the RDG textures and assign
+      PassParameters->OutY = GraphBuilder.CreateUAV(RDGY);
+      PassParameters->OutUV = GraphBuilder.CreateUAV(RDGUV);
+      PassParameters->TextureSize = FIntPoint(Width, Height);
 
-    // Enqueue readbacks
-        AddEnqueueCopyPass(GraphBuilder, ReadbackYPtr, RDGY);
-        AddEnqueueCopyPass(GraphBuilder, ReadbackUVPtr, RDGUV);
+      // Add a compute pass and dispatch via helper
+      GraphBuilder.AddPass(
+          RDG_EVENT_NAME("SynavisConvertToNV12"),
+          PassParameters,
+          ERDGPassFlags::Compute,
+          [PassParameters, ComputeShader, Width, Height](FRHIComputeCommandList& RHICmdListInner)
+          {
+              FComputeShaderUtils::Dispatch(RHICmdListInner, ComputeShader, *PassParameters, FIntVector((Width + 15) / 16, (Height + 15) / 16, 1));
+          }
+      );
 
-        GraphBuilder.Execute();
+      // Enqueue readbacks
+      AddEnqueueCopyPass(GraphBuilder, ReadbackYPtr, RDGY);
+      AddEnqueueCopyPass(GraphBuilder, ReadbackUVPtr, RDGUV);
+
+      GraphBuilder.Execute();
     });
 
     // Hint for Option B (pixel-shader fullscreen pass):
@@ -189,6 +195,9 @@ bool EnqueueNV12ReadbackFromRenderTarget(UTextureRenderTarget2D* SrcRT, FRHIGPUT
 
         FRDGTextureDesc DescUV = FRDGTextureDesc::Create2D(FIntPoint((Width + 1) / 2, (Height + 1) / 2), PF_R8G8, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
         FRDGTextureRef RDGUV = GraphBuilder.CreateTexture(DescUV, TEXT("Synavis_UV"));
+
+        const auto* GlobalMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
+        checkf(GlobalMap, TEXT("GlobalShaderMap null for feature level %d"), (int32)GMaxRHIFeatureLevel);
 
         TShaderMapRef<FConvertRGBACompute> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
         FConvertRGBACompute::FParameters* PassParameters = GraphBuilder.AllocParameters<FConvertRGBACompute::FParameters>();
