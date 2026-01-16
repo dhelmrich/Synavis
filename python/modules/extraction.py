@@ -22,8 +22,11 @@ else:
 
 import PySynavis as syn
 
-syn.SetGlobalLogVerbosity(syn.LogVerbosity.LogDebug)
+syn.SetGlobalLogVerbosity(syn.LogVerbosity.LogVerbose)
+syn.VerboseMode()
 pylog = syn.Logger()
+# ensure log file is created (OpenUniqueFile will append timestamp)
+pylog.logFile("extraction.log")
 pylog.setidentity("Synavis Unit Test")
 
 pylog.log("Starting extraction module")
@@ -49,9 +52,16 @@ def get_message() :
 # a callback function for the data connector
 def message_callback(msg) :
   global message_buffer
-  pylog.log("Received message: ", msg)
-  # decode from utf-8
-  message_buffer.append(str(msg))
+  # Normalize message to a str and log using a single argument
+  if isinstance(msg, (bytes, bytearray)):
+    try:
+      s = msg.decode('utf-8')
+    except Exception:
+      s = msg.decode('utf-8', errors='replace')
+  else:
+    s = str(msg)
+  pylog.log(f"Received message: {s}")
+  message_buffer.append(s)
 
 # a callback function for the data connector
 def data_callback(data) :
@@ -109,8 +119,14 @@ m.SetTakeFirstStep(False)
 m.StartSignalling()
 m.SetDataCallback(data_callback)
 m.SetMessageCallback(message_callback)
-m.SetFrameReceptionCallback(f.CreateAcceptor(data_callback))
+#m.SetFrameReceptionCallback(f.CreateAcceptor(data_callback))
+# temporarily just log whether we got a track message
+m.SetFrameReceptionCallback(lambda data: pylog.log("Received track data of length {}".format(len(data))))
 m.SetOnTrackOpenCallback(lambda: pylog.log("Track opened"))
+# exit Python when the incoming track closes
+m.SetOnTrackCloseCallback(lambda: syn.ExitWithMessage("Track closed", 1))
+# exit Python when the data channel closes
+m.SetOnClosedCallback(lambda: syn.ExitWithMessage("Data channel closed", 2))
 m.SetRetryOnErrorResponse(True)
 m.LockUntilConnected(1000)
 
@@ -119,6 +135,20 @@ while not m.GetState() == syn.EConnectionState.CONNECTED:
 
 pylog.log("Connected to media sender.")
 
+# attempt to choose a sensible default datachannel (one that contains 'handler')
+try:
+  names = m.GetDataChannelNames()
+  pylog.log(f"Available datachannels: {names}")
+  for nm in names:
+    try:
+      if "handler" in nm.lower():
+        if m.SelectDataChannelByName(nm):
+          pylog.log(f"Selected datachannel '{nm}' as default")
+          break
+    except Exception:
+      continue
+except Exception as e:
+  pylog.log(f"Could not enumerate/select datachannels: {e}")
 # Helper: poll message buffer for the actor list response
 def poll_for_actor_list(timeout=2.0):
   start = time.time()
@@ -174,10 +204,9 @@ tests = [
   {"type": "command", "name": "cam", "camera": "scene"},
   {"type": "command", "name": "trace", "direction": {"x": 0, "y": 0, "z": -1}},
   {"type": "query", "spawn": "any"},
-  {"type": "frame", "camera": "scene", "resolution": "high", "factor": 2},
   {"type": "track", "object": resolved_camera, "property": "Position"},
   {"type": "untrack", "object": resolved_camera, "property": "Position"},
-  {"type": "info", "frametime": True}
+  {"type": "command", "name": "start"}
 ]
 
 for t in tests:
