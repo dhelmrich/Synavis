@@ -4,6 +4,7 @@
 	"VersionName": "1.0",
 	"FriendlyName": "SynavisBackend",
 	"Description": "",
+	"ShaderDirectory": "Shaders",
 	"Category": "Other",
 	"CreatedBy": "Dirk Baker",
 	"CreatedByURL": "",
@@ -18,7 +19,7 @@
 		{
 			"Name": "SynavisBackend",
 			"Type": "Runtime",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "PostConfigInit"
 		}
 	]
 }
