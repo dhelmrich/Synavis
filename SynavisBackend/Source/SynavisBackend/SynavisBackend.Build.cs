@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using UnrealBuildTool;
+using System.IO;
+using System.Diagnostics;
 
 public class SynavisBackend : ModuleRules
 {
@@ -47,7 +49,8 @@ public class SynavisBackend : ModuleRules
 				"RenderCore",
 				"RHI",
 				"Renderer",
-				"Engine"
+				"Engine",
+				"VulkanRHI"
 			}
 			);
 		
@@ -108,6 +111,7 @@ public class SynavisBackend : ModuleRules
 				RuntimeDependencies.Add(SoPath);
 			}
 		}
+
 
 		// ---- libav/ffmpeg support (flat layout under Source/libav)
 		string LibAvInclude = System.IO.Path.Combine(ModuleDirectory, "..", "libav", "include");
