@@ -35,6 +35,11 @@ public:
     OnTrackOpenCallback = Callback;
   }
 
+  void SetOnTrackCloseCallback(std::function<void(void)> Callback)
+  {
+    OnTrackCloseCallback = Callback;
+  }
+
   void ConfigureRelay(std::string IP, int Port);
 
   virtual void PrintCommunicationData() override;
@@ -47,7 +52,7 @@ public:
 
 
 protected:
-  std::shared_ptr<rtc::Track> theirTrack;
+  std::vector<std::shared_ptr<rtc::Track>> theirTracks;
   rtc::Description::Video MediaDescription{"video", rtc::Description::Direction::RecvOnly};
   std::shared_ptr<BridgeSocket> FrameRelay;
   std::shared_ptr<rtc::RtcpReceivingSession> RtcpReceivingSession;
@@ -55,6 +60,7 @@ protected:
 
   std::optional<std::function<void(rtc::binary)>> FrameReceptionCallback;
   std::optional<std::function<void(void)>> OnTrackOpenCallback;
+  std::optional<std::function<void(void)>> OnTrackCloseCallback;
 
   ECodec Codec;
 

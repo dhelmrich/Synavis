@@ -199,6 +199,7 @@ namespace Synavis
 
   FrameDecode::FrameDecode(rtc::Track* VideoInfo, ECodec StreamCodec)
   {
+    ldecoder(ELogVerbosity::Info) << "Constructing FrameDecode (codec init)" << std::endl;
     switch (StreamCodec)
     {
     case ECodec::VP8:
@@ -275,11 +276,15 @@ namespace Synavis
   {
     return [this, Callback = std::move(Callback)](rtc::binary Data)
     {
+      ldecoder(ELogVerbosity::Info) << "FrameDecode::Acceptor invoked, data size=" << Data.size() << std::endl;
+      // ensure we log small packets as INFO so they are visible during diagnostics
       uint8_t* DataPtr = reinterpret_cast<uint8_t*>(Data.data());
-      //precheck because a vpx frame has a minimum size
+      // precheck because a vpx frame has a minimum size
       if (Data.size() < 10)
       {
+        ldecoder(ELogVerbosity::Debug) << "Packet too small (" << Data.size() << "), forwarding raw to callback" << std::endl;
         Callback(Data);
+        return;
       }
 
       rtc::RtpHeader* Header = reinterpret_cast<rtc::RtpHeader*>(DataPtr);
@@ -301,7 +306,12 @@ namespace Synavis
         return;
       }
       // add the packet to the buffer
-      AddPacket(Data);
+      try {
+        AddPacket(Data);
+      } catch (const std::exception &e) {
+        ldecoder(ELogVerbosity::Error) << "AddPacket threw: " << e.what() << std::endl;
+        return;
+      }
 
       // check if the marker is set
       if (Header->marker() > 0)
@@ -315,8 +325,8 @@ namespace Synavis
           AVPacket* packet = InitializePacketFromData(ts);
           if (!packet)
           {
+            ldecoder(ELogVerbosity::Warning) << "InitializePacketFromData returned null for timestamp " << ts << " (incomplete frame or sequence error)" << std::endl;
             // packet is not complete
-            //Callback(Data);
             return;
           }
 #if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(58, 9, 100)
@@ -324,22 +334,24 @@ namespace Synavis
           int Result = avcodec_decode_video2(CodecContext, Frame, &GotFrame, packet);
 #else
           int Result = avcodec_send_packet(CodecContext, packet);
-          lffmpeg(ELogVerbosity::Debug) << "Result: " << Result << std::endl;
+          lffmpeg(ELogVerbosity::Debug) << "avcodec_send_packet result: " << Result << std::endl;
+          if (Result < 0)
+          {
+            char Error[AV_ERROR_MAX_STRING_SIZE];
+            av_strerror(Result, Error, AV_ERROR_MAX_STRING_SIZE);
+            lffmpeg(ELogVerbosity::Error) << "avcodec_send_packet failed: " << Error << std::endl;
+          }
           int GotFrame = avcodec_receive_frame(CodecContext, Frame);
-          lffmpeg(ELogVerbosity::Debug) << "GotFrame: " << GotFrame << std::endl;
+          lffmpeg(ELogVerbosity::Debug) << "avcodec_receive_frame return: " << GotFrame << std::endl;
 #endif
           // check if the frame is decoded
           if (Result < 0)
           {
-            //Callback(Data);
-            // get the error from the decoder
-            char Error[AV_ERROR_MAX_STRING_SIZE];
-            av_strerror(Result, Error, AV_ERROR_MAX_STRING_SIZE);
-            lffmpeg(ELogVerbosity::Error) << "Error transmitting frame: " << Error << std::endl;
+            // already logged send failure above
           }
           else
           {
-            // frame decoded
+            // frame decoded?
             if (GotFrame >= 0)
             {
               // create a frame content
@@ -359,10 +371,10 @@ namespace Synavis
             }
             else
             {
-              // get the error from the decoder
+              // get the error from the decoder (use GotFrame as code)
               char Error[AV_ERROR_MAX_STRING_SIZE];
-              av_strerror(Result, Error, AV_ERROR_MAX_STRING_SIZE);
-              lffmpeg(ELogVerbosity::Error) << "Error decoding frame: " << Error << std::endl;
+              av_strerror(GotFrame, Error, AV_ERROR_MAX_STRING_SIZE);
+              lffmpeg(ELogVerbosity::Error) << "Error decoding frame (receive_frame returned " << GotFrame << "): " << Error << std::endl;
             }
           }
           // free the packet returned by depacketizer
@@ -389,6 +401,7 @@ namespace Synavis
     // return nullptr if the frameBuffer does not contain the index
     if (frameBuffer.find(index) == frameBuffer.end())
     {
+      ldecoder(ELogVerbosity::Debug) << "InitializePacketFromData: no frame for index " << index << std::endl;
       return nullptr;
     }
     auto& frame = frameBuffer[index];
@@ -414,6 +427,8 @@ namespace Synavis
         if (sq + 1 != header->seqNumber())
         {
           // sequence number is not correct
+          ldecoder(ELogVerbosity::Warning) << "InitializePacketFromData: sequence gap for index " << index << 
+            " expected " << (sq + 1) << " got " << header->seqNumber() << std::endl;
           return nullptr;
         }
         else
@@ -422,9 +437,19 @@ namespace Synavis
     }
     for(auto& packet : frame)
     {
-       Depacketizer->AddPacket(packet);
+       try {
+         Depacketizer->AddPacket(packet);
+       } catch (const std::exception &e) {
+         ldecoder(ELogVerbosity::Error) << "Depacketizer AddPacket threw: " << e.what() << std::endl;
+         return nullptr;
+       }
     }
-    return Depacketizer->GetAVFrame(); // implicit copy
+    AVPacket* out = Depacketizer->GetAVFrame(); // implicit copy
+    if (!out)
+    {
+      ldecoder(ELogVerbosity::Warning) << "Depacketizer returned null AVPacket for index " << index << " size=" << size << std::endl;
+    }
+    return out;
   }
 
   void FrameDecode::AddPacket(rtc::binary Data)

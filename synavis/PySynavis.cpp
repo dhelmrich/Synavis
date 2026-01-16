@@ -262,6 +262,7 @@ namespace Synavis
       .def("SendJSON", &DataConnector::SendJSON, py::arg("Message"))
       .def("SetOnRemoteDescriptionCallback", &DataConnector::SetOnRemoteDescriptionCallback, py::arg("Callback"))
       .def("SetOnSignallingServerOnlineCallback", &DataConnector::SetOnSignallingServerOnlineCallback, py::arg("Callback"))
+      .def("SetOnClosedCallback", &DataConnector::SetOnClosedCallback, py::arg("Callback"))
       .def("SetDataCallback", &DataConnector::SetDataCallback,py::arg("Callback"))
       .def("SetMessageCallback", &DataConnector::SetMessageCallback,py::arg("Callback"))
       .def("SetOnDataChannelAvailableCallback", &DataConnector::SetOnDataChannelAvailableCallback,py::arg("Callback"))
@@ -289,6 +290,9 @@ namespace Synavis
       .def_readwrite("PortRange", &DataConnector::IP)
       .def("LockUntilConnected", &DataConnector::LockUntilConnected, py::arg("additional_wait") = 0)
       .def("SendToSignallingServer", &DataConnector::SendToSignallingServer, py::arg("Message"))
+      .def("GetDataChannelNames", &DataConnector::GetDataChannelNames)
+      .def("SelectDataChannelByName", &DataConnector::SelectDataChannelByName, py::arg("Name"))
+      .def("SelectDataChannelByIndex", &DataConnector::SelectDataChannelByIndex, py::arg("Index"))
     ;
 
     py::class_<MediaReceiver, PyMediaReceiver<>, std::shared_ptr<MediaReceiver>>(m, "MediaReceiver")
@@ -298,6 +302,7 @@ namespace Synavis
       .def("SetOnTrackOpenCallback", &MediaReceiver::SetOnTrackOpenCallback,py::arg("Callback"))
       .def("SetOnRemoteDescriptionCallback", &MediaReceiver::SetOnRemoteDescriptionCallback, py::arg("Callback"))
       .def("SetOnDataChannelAvailableCallback", &MediaReceiver::SetOnDataChannelAvailableCallback,py::arg("Callback"))
+      .def("SetOnClosedCallback", &DataConnector::SetOnClosedCallback, py::arg("Callback"))
       .def("SendData", &MediaReceiver::SendData, py::arg("Data"))
       .def("SendString", &MediaReceiver::SendString, py::arg("Message"))
       .def("SendJSON", &MediaReceiver::SendJSON, py::arg("Message"))
@@ -328,6 +333,10 @@ namespace Synavis
       .def_readwrite("IP", &MediaReceiver::IP)
       .def_readwrite("PortRange", &MediaReceiver::IP)
       .def("LockUntilConnected", &MediaReceiver::LockUntilConnected, py::arg("additional_wait") = 0)
+      .def("SetOnTrackCloseCallback", &MediaReceiver::SetOnTrackCloseCallback, py::arg("Callback"))
+      .def("GetDataChannelNames", &MediaReceiver::GetDataChannelNames)
+      .def("SelectDataChannelByName", &MediaReceiver::SelectDataChannelByName, py::arg("Name"))
+      .def("SelectDataChannelByIndex", &MediaReceiver::SelectDataChannelByIndex, py::arg("Index"))
     ;
 
     py::enum_<rtc::PeerConnection::GatheringState>(m, "GatheringState")
