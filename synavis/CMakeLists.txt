@@ -55,6 +55,16 @@ target_include_directories(${PYPROJECT}
   # Python include dirs are provided by Python::Development target (linked below)
 )
 
+# If the buildtool (vcpkg/toolchain) already provides pybind11_json as a target,
+# avoid adding the vendored include path to prevent duplicate-import errors
+# (Windows + vcpkg often provides pybind11_json). Only add the vendored
+# include dir when the target is not present.
+if(TARGET pybind11_json)
+  message(STATUS "pybind11_json target found in toolchain; skipping vendored include")
+else()
+  target_include_directories(${PYPROJECT} PUBLIC ${CMAKE_BINARY_DIR}/_deps/pybind11_json-src/include/pybind11_json/)
+endif()
+
 target_link_libraries(${projectname} PRIVATE datachannel-static nlohmann_json::nlohmann_json )
 target_link_libraries(${PYPROJECT} PRIVATE ${projectname} datachannel-static nlohmann_json::nlohmann_json)
 if(TARGET Python::Development)
