@@ -21,6 +21,95 @@ inline constexpr std::byte operator "" _b(unsigned long long i) noexcept
   return static_cast<std::byte>(i);
 }
 
+std::shared_ptr<rtc::DataChannel> Synavis::DataConnector::GetDataChannel()
+{
+  if (this->SelectedDataChannel)
+    return this->SelectedDataChannel;
+  if (this->DataChannels.empty())
+    return nullptr;
+  return this->DataChannels.front();
+}
+
+std::vector<std::string> Synavis::DataConnector::GetDataChannelNames() const
+{
+  std::vector<std::string> names;
+  for (auto &dc : this->DataChannels)
+  {
+    if (!dc) continue;
+    names.push_back(dc->label());
+  }
+  return names;
+}
+
+bool Synavis::DataConnector::SelectDataChannelByName(const std::string& Name)
+{
+  for (auto &dc : this->DataChannels)
+  {
+    if (!dc) continue;
+    if (dc->label() == Name)
+    {
+      this->SelectedDataChannel = dc;
+      return true;
+    }
+  }
+  return false;
+}
+
+bool Synavis::DataConnector::SelectDataChannelByIndex(std::size_t Index)
+{
+  if (Index >= this->DataChannels.size()) return false;
+  this->SelectedDataChannel = this->DataChannels[Index];
+  return true;
+}
+
+void Synavis::DataConnector::SetupDataChannelHandlers(std::shared_ptr<rtc::DataChannel> channel)
+{
+  lconnector(ELogVerbosity::Info) << "Setting up DataChannel handlers for label " << channel->label() << std::endl;
+
+  channel->onOpen([this, channel]()
+    {
+      lconnector(ELogVerbosity::Info) << "DataChannel (" << channel->label() << ") is OPEN!" << std::endl;
+      if (channel->maxMessageSize() > std::numeric_limits<uint16_t>::max() - 3)
+      {
+        lconnector(ELogVerbosity::Warning) << "****************************************************************************" << std::endl;
+        lconnector(ELogVerbosity::Warning) << "*                                                                          *" << std::endl;
+        lconnector(ELogVerbosity::Warning) << "* WARNING: DataChannel message size is larger than the UE size byte uint16 *" << std::endl;
+        lconnector(ELogVerbosity::Warning) << "*                                                                          *" << std::endl;
+        lconnector(ELogVerbosity::Warning) << "****************************************************************************" << std::endl;
+      }
+      this->MaxMessageSize = std::min(channel->maxMessageSize(), static_cast<std::size_t>(std::numeric_limits<uint16_t>::max() - 3));
+      state_ = EConnectionState::CONNECTED;
+    });
+
+  channel->onMessage(std::bind(&DataConnector::DataChannelMessageHandling, this, std::placeholders::_1));
+
+  channel->onError([this](std::string error)
+    {
+      lconnector(ELogVerbosity::Error) << "DataChannel error: " << error << std::endl;
+    });
+
+  channel->onAvailable([this]()
+    {
+      if (OnDataChannelAvailableCallback.has_value())
+        OnDataChannelAvailableCallback.value()();
+    });
+
+  channel->onBufferedAmountLow([this]()
+    {
+      lconnector(ELogVerbosity::Info) << "DataChannel buffered amount low" << std::endl;
+    });
+
+  channel->onClosed([this, channel]()
+    {
+      lconnector(ELogVerbosity::Info) << "DataChannel Label=" << channel->label() << " is closed!" << std::endl;
+      this->state_ = EConnectionState::CLOSED;
+      if (OnClosedCallback.has_value())
+      {
+        OnClosedCallback.value()();
+      }
+    });
+}
+
 Synavis::DataConnector::DataConnector()
 {
 }
@@ -30,7 +119,11 @@ Synavis::DataConnector::~DataConnector()
   SignallingServer->close();
   PeerConnection->close();
   SubmissionHandler.Stop();
-  DataChannel->close();
+  for (auto &dc : DataChannels)
+  {
+    if (dc)
+      dc->close();
+  }
 }
 
 void Synavis::DataConnector::StartSignalling()
@@ -63,7 +156,10 @@ void Synavis::DataConnector::SendData(rtc::binary Data)
     std::size_t chunkSize = std::min(remaining, this->MaxMessageSize);
     rtc::binary chunk(chunkSize);
     memcpy(chunk.data(), Data.data() + offset, chunkSize);
-    DataChannel->sendBuffer(chunk);
+    auto ch = GetDataChannel();
+    if (!ch)
+      return;
+    ch->sendBuffer(chunk);
     offset += chunkSize;
   }
 }
@@ -80,7 +176,9 @@ void Synavis::DataConnector::SendString(std::string Message)
   // Send as a plain text frame containing JSON. UE will parse text frames as JSON.
   json content = { {"origin","dataconnector"}, {"data", Message} };
   std::string json_message = content.dump();
-  DataChannel->send(json_message);
+  auto ch = GetDataChannel();
+  if (!ch) return;
+  ch->send(json_message);
 }
 
 void Synavis::DataConnector::SendJSON(json Message)
@@ -90,7 +188,9 @@ void Synavis::DataConnector::SendJSON(json Message)
   // Send plain JSON as a text frame; UE will distinguish JSON via text parsing.
   std::string json_message = Message.dump();
   lconnector(ELogVerbosity::Info) << "Sending JSON: " << json_message << std::endl;
-  DataChannel->send(json_message);
+  auto ch = GetDataChannel();
+  if (!ch) return;
+  ch->send(json_message);
 }
 
 bool Synavis::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, std::string Name, std::string Format)
@@ -202,7 +302,9 @@ bool Synavis::DataConnector::SendBuffer(const std::span<const uint8_t>& Buffer, 
     memcpy(buffer, Source + i * chunk_size, remaining);
     // send the raw chunk as a binary frame (no prefix)
     lconnector(ELogVerbosity::Debug) << "Sending chunk " << i << " of length " << remaining << std::endl;
-    DataChannel->sendBuffer(bytes);
+    auto ch = GetDataChannel();
+    if (!ch) break;
+    ch->sendBuffer(bytes);
     // wait for the message to be received
     if (!DontWaitForAnswer)
     {
@@ -391,9 +493,18 @@ bool Synavis::DataConnector::IsRunning()
 void Synavis::DataConnector::PrintCommunicationData()
 {
   auto max_message = this->MaxMessageSize;
-  auto protocol = DataChannel->protocol();
-  auto label = DataChannel->label();
-  lconnector(ELogVerbosity::Info) << "Data Channel " << label << " has protocol " << protocol << " and max message size " << max_message << std::endl;
+  if (this->DataChannels.empty())
+  {
+    lconnector(ELogVerbosity::Info) << "No DataChannels present" << std::endl;
+    return;
+  }
+  for (auto &dc : this->DataChannels)
+  {
+    if (!dc) continue;
+    auto protocol = dc->protocol();
+    auto label = dc->label();
+    lconnector(ELogVerbosity::Info) << "Data Channel " << label << " has protocol " << protocol << " and max message size " << max_message << std::endl;
+  }
 }
 
 void Synavis::DataConnector::LockUntilConnected(unsigned additional_wait)
@@ -507,6 +618,8 @@ void Synavis::DataConnector::Initialize()
     rtcconfig_.portRangeEnd = PortRange.value().second;
   }
   rtcconfig_.enableIceTcp = false;
+  rtcconfig_.portRangeBegin = 5000;
+  rtcconfig_.portRangeEnd = 6000;
   PeerConnection = std::make_shared<rtc::PeerConnection>(rtcconfig_);
   PeerConnection->onGatheringStateChange([this](auto state)
     {
@@ -533,15 +646,11 @@ void Synavis::DataConnector::Initialize()
     });
   PeerConnection->onDataChannel([this](auto datachannel)
     {
-      lconnector(ELogVerbosity::Warning) << "I received a channel I did not ask for" << std::endl;
-      datachannel->onOpen([this]()
-        {
-          lconnector(ELogVerbosity::Warning) << "THEIR DataChannel connection is setup!" << std::endl;
-        });
-      datachannel->onMessage([this](auto messageordata)
-        {
-          DataChannelMessageHandling(messageordata);
-        });
+      lconnector(ELogVerbosity::Warning) << "I received a channel called " << datachannel->label() << std::endl;
+      lconnector(ELogVerbosity::Info) << "Remote DataChannel label: " << datachannel->label() << std::endl;
+      // assign the received channel and setup handlers
+      this->DataChannels.push_back(datachannel);
+      this->SetupDataChannelHandlers(datachannel);
     });
   PeerConnection->onTrack([this](auto track)
     {
@@ -566,48 +675,18 @@ void Synavis::DataConnector::Initialize()
       }
     });
   SignallingServer = std::make_shared<rtc::WebSocket>();
-  DataChannel = PeerConnection->createDataChannel("DataConnectionChannel");
-  DataChannel->onOpen([this]()
-    {
-      lconnector(ELogVerbosity::Info) << "OUR DataChannel connection is setup!" << std::endl;
-      // display a warning if the data channel message size is larger than the UE size byte uint16
-      if (DataChannel->maxMessageSize() > std::numeric_limits<uint16_t>::max() - 3)
-      {
-        // make a framed warning
-        lconnector(ELogVerbosity::Warning) << "****************************************************************************" << std::endl;
-        lconnector(ELogVerbosity::Warning) << "*                                                                          *" << std::endl;
-        lconnector(ELogVerbosity::Warning) << "* WARNING: DataChannel message size is larger than the UE size byte uint16 *" << std::endl;
-        lconnector(ELogVerbosity::Warning) << "*                                                                          *" << std::endl;
-        lconnector(ELogVerbosity::Warning) << "****************************************************************************" << std::endl;
-      }
-      this->MaxMessageSize = std::min(DataChannel->maxMessageSize(), static_cast<std::size_t>(std::numeric_limits<uint16_t>::max() - 3));
 
-      state_ = EConnectionState::CONNECTED;
-    });
-  DataChannel->onMessage(std::bind(&DataConnector::DataChannelMessageHandling, this, std::placeholders::_1));
-  DataChannel->onError([this](std::string error)
+  // Only create an outgoing data channel if we're configured to take the first step
+  if (TakeFirstStep)
+  {
+    auto ch = PeerConnection->createDataChannel("DataConnectionChannel");
+    if (ch)
     {
-      lconnector(ELogVerbosity::Error) << "DataChannel error: " << error << std::endl;
-    });
-  DataChannel->onAvailable([this]()
-    {
-
-      if (OnDataChannelAvailableCallback.has_value())
-        OnDataChannelAvailableCallback.value()();
-    });
-  DataChannel->onBufferedAmountLow([this]()
-    {
-      lconnector(ELogVerbosity::Info) << "DataChannel buffered amount low" << std::endl;
-    });
-  DataChannel->onClosed([this]()
-    {
-      lconnector(ELogVerbosity::Info) << "DataChannel is CLOSED again" << std::endl;
-      this->state_ = EConnectionState::CLOSED;
-      if (OnClosedCallback.has_value())
-      {
-        OnClosedCallback.value()();
-      }
-    });
+      this->DataChannels.push_back(ch);
+      lconnector(ELogVerbosity::Info) << "Created local DataChannel with label " << ch->label() << std::endl;
+      this->SetupDataChannelHandlers(ch);
+    }
+  }
   SignallingServer->onOpen([this]()
     {
       state_ = EConnectionState::SIGNUP;

@@ -46,7 +46,15 @@ public:
   void SetMessageCallback(std::function<void(std::string)> Callback);
   auto GetMessageCallback() { return MessageReceptionCallback; }
   auto GetDataCallback() { return DataReceptionCallback; }
-  std::shared_ptr<rtc::DataChannel> DataChannel;
+  std::vector<std::shared_ptr<rtc::DataChannel>> DataChannels;
+  std::shared_ptr<rtc::DataChannel> GetDataChannel();
+  // selected channel for outgoing writes (optional)
+  std::shared_ptr<rtc::DataChannel> SelectedDataChannel;
+
+  // Convenience helpers to inspect and select datachannels
+  std::vector<std::string> GetDataChannelNames() const;
+  bool SelectDataChannelByName(const std::string& Name);
+  bool SelectDataChannelByIndex(std::size_t Index);
   void SetConfigFile(std::string ConfigFile);
   void SetConfig(json Config);
   void SendToSignallingServer(json Message);
@@ -126,6 +134,8 @@ protected:
   std::deque<std::function<void(std::string)>> exp__OnMessagecallbacks;
 
   inline void DataChannelMessageHandling(rtc::message_variant Data);
+  // Setup handlers for a data channel (both locally created and remote)
+  void SetupDataChannelHandlers(std::shared_ptr<rtc::DataChannel> channel);
 
   inline void RegisterRemoteCandidate(const json& content);
 
