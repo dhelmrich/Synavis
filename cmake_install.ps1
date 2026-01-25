@@ -17,7 +17,7 @@ param(
     [string]$VcpkgToolchain = "",
     [string]$MSVCVersion = "",
     [ValidateSet('static','dynamic')][string]$Triplet = 'dynamic',
-    [switch]$ExportFFmpeg = $false,
+    [switch]$ExportLibraries = $false,
     [switch]$NoBuild = $false,
     [switch]$PythonOnly = $false,
     [switch]$Help
@@ -43,7 +43,7 @@ function Show-Help {
     Write-Host "  -Verbose          Enable verbose logging"
     Write-Host "  -CPlantBoxDir     Specify location of CPlantBox (default: not set)"
     Write-Host "  -VcpkgToolchain   Specify path to vcpkg toolchain file (default: not set)"
-    Write-Host "  -ExportFFmpeg    Export ffmpeg/libav via vcpkg (default: false)"
+    Write-Host "  -ExportLibraries Export libraries (ffmpeg and libdatachannel) via vcpkg/build tree (default: false)"
     Write-Host "  -NoBuild         Configure only, do not build (default: false)"
     Write-Host "  -Help             Show this help message"
     exit 0
@@ -198,7 +198,7 @@ if (-not $NoBuild) {
     Write-Host "Build completed successfully."
 
     # Export ffmpeg/libav via vcpkg if requested
-    if ($ExportFFmpeg) {
+    if ($ExportLibraries) {
         if ($VcpkgToolchain -eq "") {
             Write-Error "Vcpkg toolchain file must be specified with -VcpkgToolchain to export ffmpeg/libav."
             exit 1
@@ -314,6 +314,47 @@ if (-not $NoBuild) {
             }
         }
         Write-Host "ffmpeg/libav export completed."
+    }
+
+    # Also copy libdatachannel (headers and built binaries) into SynavisBackend when requested
+    if ($ExportLibraries) {
+        Write-Host "Copying libdatachannel headers and built libraries into SynavisBackend..."
+        $SynavisBackendRoot = Join-Path $BaseDir "SynavisBackend"
+        $DestLibDir = Join-Path $SynavisBackendRoot "Source\libdatachannel\lib"
+        $DestIncludeDir = Join-Path $SynavisBackendRoot "Source\libdatachannel\include"
+        if (!(Test-Path $DestLibDir)) { New-Item -ItemType Directory -Path $DestLibDir -Force | Out-Null }
+        if (!(Test-Path $DestIncludeDir)) { New-Item -ItemType Directory -Path $DestIncludeDir -Force | Out-Null }
+
+        # Headers come from the libdatachannel source fetched by CMake
+        $LibDataSrcInclude = Join-Path $BuildPath "_deps\libdatachannel-src\include"
+        if (Test-Path $LibDataSrcInclude) {
+            Write-Host "Copying libdatachannel headers from $LibDataSrcInclude to $DestIncludeDir"
+            Copy-Item -Path (Join-Path $LibDataSrcInclude "*") -Destination $DestIncludeDir -Recurse -Force -ErrorAction SilentlyContinue
+        } else {
+            Write-Warning "libdatachannel source include not found at $LibDataSrcInclude; skipping header copy."
+        }
+
+        # Binaries are produced under the libdatachannel build directory; copy any relevant dll/lib/pdb
+        $LibDataBuildRoot = Join-Path $BuildPath "_deps\libdatachannel-build"
+        if (Test-Path $LibDataBuildRoot) {
+            Write-Host "Searching for libdatachannel binaries under $LibDataBuildRoot"
+            Get-ChildItem -Path $LibDataBuildRoot -Recurse -Include "*.dll","*.lib","*.pdb" -File -ErrorAction SilentlyContinue | ForEach-Object {
+                $src = $_.FullName
+                $destFile = Join-Path $DestLibDir $_.Name
+                # If the source path includes an examples folder and the destination already has the file, skip copying
+                if ($src -like "*\examples\*" -or $src -like "*/examples/*") {
+                    if (Test-Path $destFile) {
+                        Write-Host "Skipping example-derived file (destination exists): $($_.Name)"
+                        return
+                    }
+                }
+                Write-Host "Copying $src -> $DestLibDir"
+                Copy-Item -Path $src -Destination $DestLibDir -Force -ErrorAction SilentlyContinue
+            }
+        } else {
+            Write-Warning "libdatachannel build directory not found at $LibDataBuildRoot; skipping binary copy."
+        }
+        Write-Host "libdatachannel export (copy) completed."
     }
 
 

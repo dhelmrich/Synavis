@@ -26,7 +26,6 @@ set(BUILD_SHARED_LIBS ON)
 option(BUILD_WITH_DECODING "Build with decoding support" OFF)
 option(BUILD_WITH_APPS "Build with applications" OFF)
 option(BUILD_WHEEL "Build python wheel only" OFF)
-option(SKIP_COPY_LIBDATACHANNEL "Skip copying built libdatachannel into SynavisBackend" OFF)
 
 # option check: WIN32 + BUILD_WHEEL demands CMAKE_TOOLCHAIN_FILE
 if(WIN32 AND BUILD_WHEEL)
@@ -92,48 +91,8 @@ if(TARGET datachannel)
   )
 endif()
 
-# On Windows, copy the built libdatachannel DLL and its dependencies to SynavisBackend
-# When BUILD_WHEEL is ON we do not want to perform repository-changing side effects
-if(WIN32 AND NOT BUILD_WHEEL AND NOT SKIP_COPY_LIBDATACHANNEL AND TARGET datachannel)
-  set(SYNAVIS_BACKEND_PATH ${CMAKE_SOURCE_DIR}/SynavisBackend)
-  set(SYNAVIS_BACKEND_LIB_PATH ${SYNAVIS_BACKEND_PATH}/Source/libdatachannel/lib)
-  set(SYNAVIS_BACKEND_INCLUDE_PATH ${SYNAVIS_BACKEND_PATH}/Source/libdatachannel/include)
 
-  add_custom_target(copy_datachannel ALL
-    COMMENT " Starting copy_datachannel: copying libdatachannel and headers to SynavisBackend"
 
-    COMMAND ${CMAKE_COMMAND} -E echo " Creating lib and include directories in SynavisBackend/Source/libdatachannel..."
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_LIB_PATH}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_INCLUDE_PATH}
-
-    COMMAND ${CMAKE_COMMAND} -E echo " Copying libdatachannel binaries after build to ${SYNAVIS_BACKEND_LIB_PATH}/"
-    COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:datachannel>" "${SYNAVIS_BACKEND_LIB_PATH}/"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_LINKER_FILE:datachannel>" "${SYNAVIS_BACKEND_LIB_PATH}/"
-
-    COMMAND ${CMAKE_COMMAND}
-      -Dsource="$<TARGET_PDB_FILE:datachannel>"
-      -Ddest="${SYNAVIS_BACKEND_LIB_PATH}"
-      -P "${CMAKE_SOURCE_DIR}/cmake/copy_if_exists.cmake"
-
-    COMMAND ${CMAKE_COMMAND}
-      -Dtarget_path="$<TARGET_FILE:datachannel>"
-      -Ddest_dir="${SYNAVIS_BACKEND_LIB_PATH}"
-      -P "${CMAKE_SOURCE_DIR}/libdatachanneldeps.cmake"
-
-    COMMAND ${CMAKE_COMMAND} -E echo " Verifying that libdatachannel was copied..."
-    COMMAND ${CMAKE_COMMAND}
-      -DDEST_DIR=${SYNAVIS_BACKEND_LIB_PATH}
-      -DTARGET_PATH=$<TARGET_FILE:datachannel>
-      -P ${CMAKE_SOURCE_DIR}/verify_datachannel.cmake
-
-    COMMAND ${CMAKE_COMMAND} -E echo " Copying libdatachannel headers from ${libdatachannel_SOURCE_DIR}/include  ${SYNAVIS_BACKEND_INCLUDE_PATH}/"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${libdatachannel_SOURCE_DIR}/include ${SYNAVIS_BACKEND_INCLUDE_PATH}
-
-    COMMENT " Finished copy_datachannel"
-  )
-
-  add_dependencies(copy_datachannel datachannel PySynavis Synavis)
-endif()
 
 # Example for header-only library copying (e.g., nlohmann/json)
 ## Prefer an externally-provided nlohmann_json (vcpkg / system) to avoid
@@ -156,23 +115,6 @@ else()
   message(STATUS "Using system/vcpkg-provided nlohmann_json (no FetchContent needed)")
 endif()
 
-# The libdatachannel is seldomly a module available in HPC systems
-# as such, not only Windows but also Unix builds should copy the headers
-if(TARGET copy_datachannel)
-  if(DEFINED json_SOURCE_DIR AND EXISTS ${json_SOURCE_DIR})
-    add_custom_command(TARGET copy_datachannel POST_BUILD
-      # Copy json header-only library into the plugin include. Prefer the flat Source/libdatachannel/include if set.
-      COMMAND ${CMAKE_COMMAND} -E echo "Copying json headers into plugin include folder"
-      COMMAND ${CMAKE_COMMAND} -E cmake_echo_color --blue "Destination: ${SYNAVIS_BACKEND_INCLUDE_PATH} (if set) else ${SYNAVIS_BACKEND_PATH}/include/json"
-      COMMAND ${CMAKE_COMMAND} -E make_directory ${SYNAVIS_BACKEND_PATH}/include/json
-      COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${json_SOURCE_DIR}/single_include $<IF:$<BOOL:${SYNAVIS_BACKEND_INCLUDE_PATH}>,${SYNAVIS_BACKEND_INCLUDE_PATH}/json,${SYNAVIS_BACKEND_PATH}/include/json>
-    )
-  else()
-    # No json source dir available (using system/vcpkg package). Skip copying headers.
-    message(STATUS "json source not available locally; skipping header copy into SynavisBackend")
-  endif()
-endif()
 
 if(UNIX)
   # try to find pcap
@@ -306,9 +248,11 @@ if(NOT pybind11_FOUND)
 endif()
 
 if(NOT TARGET pybind11_json)
+  message(STATUS " Searching for pybind11_json (local or via FetchContent)")
   find_package(pybind11_json CONFIG)
-  #if not found
-  if(NOT pybind11_json)
+  message (STATUS " pybind11_json_FOUND: ${pybind11_json_FOUND}")
+  # if not found (check the target rather than a variable to avoid duplicate targets)
+  if(NOT TARGET pybind11_json)
     message(STATUS "pybind11_json not found")
     FetchContent_Declare(
         pybind11_json
