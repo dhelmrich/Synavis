@@ -191,16 +191,18 @@ static void Synavis_Rtc_Logger(rtcLogLevel level, const char* message)
   switch (level)
   {
   case RTC_LOG_ERROR:
-    UE_LOG(LogActor, Error, TEXT("Synavis LibDataChannel: %s"), ANSI_TO_TCHAR(message));
+    UE_LOG(LogTemp, Error, TEXT("Synavis LibDataChannel: %s"), ANSI_TO_TCHAR(message));
     break;
   case RTC_LOG_WARNING:
-    UE_LOG(LogActor, Warning, TEXT("Synavis LibDataChannel: %s"), ANSI_TO_TCHAR(message));
+    UE_LOG(LogTemp, Warning, TEXT("Synavis LibDataChannel: %s"), ANSI_TO_TCHAR(message));
     break;
   case RTC_LOG_INFO:
+    UE_LOG(LogTemp, Log, TEXT("Synavis LibDataChannel: %s"), ANSI_TO_TCHAR(message));
+    break;
   case RTC_LOG_DEBUG:
   case RTC_LOG_VERBOSE:
   default:
-    UE_LOG(LogActor, Verbose, TEXT("DEBUG Synavis LibDataChannel: %s"), ANSI_TO_TCHAR(message));
+    UE_LOG(LogTemp, Verbose, TEXT("Synavis LibDataChannel: %s"), ANSI_TO_TCHAR(message));
     break;
   }
 }
@@ -911,7 +913,7 @@ void USynavisStreamer::BeginPlay()
   }
 
   // sanity check: fire function
-  Synavis_Rtc_Logger(RTC_LOG_INFO, "SynavisStreamer initialized");
+  Synavis_Rtc_Logger(RTC_LOG_INFO, "SynavisStreamer Synavis_Rtc_Logger initialized");
 
 }
 
@@ -1677,7 +1679,7 @@ void USynavisStreamer::HandleDataChannelMessageCallback(int dc, const std::varia
         {
           const std::string& s = std::get<std::string>(message);
           FString Prefix = FString::Printf(TEXT("DataChannelTextRawHex dc=%d"), dc);
-          LogHexVerbose(s.c_str(), s.size(), *Prefix);
+          //LogHexVerbose(s.c_str(), s.size(), *Prefix);
           FString Msg = FString(UTF8_TO_TCHAR(s.c_str()));
           UE_LOG(LogTemp, Verbose, TEXT("Synavis: Received text message on dc %d, handler %u: %s"), dc, HandlerId, *Msg.Left(512));
           if (H->MsgHandler.IsBound()) H->MsgHandler.Execute(Msg);
@@ -1688,7 +1690,7 @@ void USynavisStreamer::HandleDataChannelMessageCallback(int dc, const std::varia
         {
           const TArray<uint8>& b = std::get<TArray<uint8>>(message);
           FString Prefix = FString::Printf(TEXT("DataChannelBinaryRawHex dc=%d size=%d"), dc, b.Num());
-          LogHexVerbose(reinterpret_cast<const char*>(b.GetData()), b.Num(), *Prefix);
+          //LogHexVerbose(reinterpret_cast<const char*>(b.GetData()), b.Num(), *Prefix);
           UE_LOG(LogTemp, Verbose, TEXT("Synavis: Received binary message on dc %d, handler %u, size=%d"), dc, HandlerId, b.Num());
           if (H->DataHandler.IsBound()) H->DataHandler.Execute(b);
           if (H->DataCbCpp) H->DataCbCpp(ConnectionPlayerID, b);
@@ -1874,7 +1876,7 @@ bool USynavisStreamer::SendTextToConnection(int32 HandlerId, int32 ConnectionPla
     UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcSendMessage returned %d when sending text (handler=%d conn=%d) -> dc=%d TextPreview=%s"), sendRes, HandlerId, ConnectionPlayerID, chosenDc, *Text.Left(200));
     // Verbose: dump outgoing payload bytes and channel state
     FTCHARToUTF8 OutUtf8(*Text);
-    LogHexVerbose(OutUtf8.Get(), static_cast<size_t>(OutUtf8.Length()), TEXT("OutgoingTextRawHex"));
+    //LogHexVerbose(OutUtf8.Get(), static_cast<size_t>(OutUtf8.Length()), TEXT("OutgoingTextRawHex"));
     UE_LOG(LogTemp, Verbose, TEXT("  rtcIsOpen(chosenDc)=%d rtcMaxMessageSize=%d"), rtcIsOpen(chosenDc), rtcMaxMessageSize(chosenDc));
     return false;
   }
@@ -2040,9 +2042,9 @@ void USynavisStreamer::CommunicateSDPForConnection(const FSynavisConnection& Con
   if (FJsonSerializer::Serialize(Obj.ToSharedRef(), Writer))
   {
     auto OutAnsi = StringCast<ANSICHAR>(*Out);
-    LogHex(OutAnsi.Get(), static_cast<size_t>(OutAnsi.Length()), TEXT("StringCast(Out) bytes"));
+    ////LogHex(OutAnsi.Get(), static_cast<size_t>(OutAnsi.Length()), TEXT("StringCast(Out) bytes"));
     std::string outcpp(OutAnsi.Get(), OutAnsi.Length());
-    LogHex(outcpp.c_str(), outcpp.size(), TEXT("std::string(outcpp) bytes"));
+    ////LogHex(outcpp.c_str(), outcpp.size(), TEXT("std::string(outcpp) bytes"));
 
     // Use the C API to send a text message. For text we pass a negative size according to the C API
     // convention (-(length+1)).
@@ -2221,41 +2223,8 @@ void USynavisStreamer::CreateConnectionForPlayer(int32 PlayerID)
         {
           UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcGetTrackDescription returned %d for track %d immediately after creation"), trDescLen, trid);
         }
-        // Attempt an explicit renegotiation immediately so the new track appears in local SDP
-        int setResAfterAdd = rtcSetLocalDescription(Conn->PeerConnection, "offer");
-          if (setResAfterAdd != RTC_ERR_SUCCESS)
-          {
-            UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcSetLocalDescription returned %d after adding track %d on pc %d"), setResAfterAdd, trid, Conn->PeerConnection);
-          }
-          else
-          {
-            UE_LOG(LogTemp, Log, TEXT("Synavis: rtcSetLocalDescription succeeded after adding track %d on pc %d"), trid, Conn->PeerConnection);
-            char localBufAfter[8192] = {0};
-            int gotLocalAfter = rtcGetLocalDescription(Conn->PeerConnection, localBufAfter, static_cast<int>(sizeof(localBufAfter)));
-            if (gotLocalAfter > 0)
-            {
-              UE_LOG(LogTemp, Verbose, TEXT("Synavis: New local SDP for pc %d (len=%d):\n%s"), Conn->PeerConnection, gotLocalAfter, ANSI_TO_TCHAR(localBufAfter));
-            }
-            else
-            {
-              UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcGetLocalDescription returned %d after renegotiation for pc %d"), gotLocalAfter, Conn->PeerConnection);
-            }
-            // Dump per-track descriptions after local description update
-            for (const auto& kv : Conn->TracksByHandler)
-            {
-              int tr = kv.second;
-              char trbuf[2048] = {0};
-              int trlen = rtcGetTrackDescription(tr, trbuf, static_cast<int>(sizeof(trbuf)));
-              if (trlen > 0)
-              {
-                UE_LOG(LogTemp, Verbose, TEXT("Synavis: Post-setLocalDescription track %d description (len=%d):\n%s"), tr, trlen, ANSI_TO_TCHAR(trbuf));
-              }
-              else
-              {
-                UE_LOG(LogTemp, Warning, TEXT("Synavis: Post-setLocalDescription rtcGetTrackDescription returned %d for track %d"), trlen, tr);
-              }
-            }
-          }
+        // Request centralized renegotiation so the new track appears in local SDP
+        TriggerRenegotiationForConnection(Conn.Get());
       }
       else
       {
@@ -2280,38 +2249,16 @@ void USynavisStreamer::CreateConnectionForPlayer(int32 PlayerID)
       // If negotiation is held globally, mark this connection as pending instead
       // of creating the offer immediately. StartConnectionNegotiation() will
       // trigger pending negotiations later.
-      if (bHoldNegotiation)
-      {
-        StoredConn->PendingNegotiation = true;
-        UE_LOG(LogTemp, Log, TEXT("Synavis: Holding negotiation for player %d until StartConnectionNegotiation()"), PlayerID);
-      }
-      else
-      {
-        int localRes = rtcSetLocalDescription(StoredConn->PeerConnection, "offer");
-        if (localRes != RTC_ERR_SUCCESS)
+        if (bHoldNegotiation)
         {
-          UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcSetLocalDescription returned %d for player %d"), localRes, PlayerID);
+          StoredConn->PendingNegotiation = true;
+          UE_LOG(LogTemp, Log, TEXT("Synavis: Holding negotiation for player %d until StartConnectionNegotiation()"), PlayerID);
         }
         else
         {
-          UE_LOG(LogTemp, Log, TEXT("Synavis: rtcSetLocalDescription succeeded for player %d (pc=%d)"), PlayerID, StoredConn->PeerConnection);
-          // Dump per-track descriptions after creating local offer
-          for (const auto& kv : StoredConn->TracksByHandler)
-          {
-            int tr = kv.second;
-            char trbuf[2048] = {0};
-            int trlen = rtcGetTrackDescription(tr, trbuf, static_cast<int>(sizeof(trbuf)));
-            if (trlen > 0)
-            {
-              UE_LOG(LogTemp, Verbose, TEXT("Synavis: After initial setLocal track %d description (len=%d):\n%s"), tr, trlen, ANSI_TO_TCHAR(trbuf));
-            }
-            else
-            {
-              UE_LOG(LogTemp, Warning, TEXT("Synavis: After initial setLocal rtcGetTrackDescription returned %d for track %d"), trlen, tr);
-            }
-          }
+          // Centralized renegotiation will create the offer when appropriate
+          TriggerRenegotiationForConnection(StoredConn.Get());
         }
-      }
     }
   }
 
@@ -2361,13 +2308,13 @@ void USynavisStreamer::RegisterRemoteCandidateForConnection(const FJsonObject& C
   }
 
   auto CandAnsi = StringCast<ANSICHAR>(*candStr);
-  LogHex(CandAnsi.Get(), static_cast<size_t>(CandAnsi.Length()), TEXT("StringCast(candStr) bytes"));
+  //LogHex(CandAnsi.Get(), static_cast<size_t>(CandAnsi.Length()), TEXT("StringCast(candStr) bytes"));
   std::string scand(CandAnsi.Get(), CandAnsi.Length());
-  LogHex(scand.c_str(), scand.size(), TEXT("std::string(scand) bytes"));
+  //LogHex(scand.c_str(), scand.size(), TEXT("std::string(scand) bytes"));
   auto SmidAnsi = StringCast<ANSICHAR>(*sdpMid);
-  LogHex(SmidAnsi.Get(), static_cast<size_t>(SmidAnsi.Length()), TEXT("StringCast(sdpMid) bytes"));
+  //LogHex(SmidAnsi.Get(), static_cast<size_t>(SmidAnsi.Length()), TEXT("StringCast(sdpMid) bytes"));
   std::string smid(SmidAnsi.Get(), SmidAnsi.Length());
-  LogHex(smid.c_str(), smid.size(), TEXT("std::string(smid) bytes"));
+  //LogHex(smid.c_str(), smid.size(), TEXT("std::string(smid) bytes"));
   // Use C API to add remote candidate
   int addRes = rtcAddRemoteCandidate(Conn.PeerConnection, scand.c_str(), smid.c_str());
   if (addRes != RTC_ERR_SUCCESS)
@@ -2473,6 +2420,27 @@ void USynavisStreamer::HandleSignallingMessage(const std::variant<TArray<uint8>,
       if (setRes != RTC_ERR_SUCCESS)
       {
         UE_LOG(LogTemp, Error, TEXT("Synavis: rtcSetRemoteDescription failed (rc=%d) for player %d. SDP type=%s length=%d"), setRes, TargetPlayer, *Type, sdpf.Len());
+        // If we unexpectedly received an "answer" while in the stable state, attempt
+        // a best-effort recovery: create a local offer and retry applying the answer once.
+        // This allows the common flow of adding datachannels first and video later
+        // to complete a late renegotiation when libdatachannel rejected the answer
+        // due to signaling state mismatch.
+        if (Type.Equals(TEXT("answer"), ESearchCase::IgnoreCase))
+        {
+          UE_LOG(LogTemp, Warning, TEXT("Synavis: Attempting recovery for remote 'answer' by triggering centralized renegotiation and retrying (player %d)"), TargetPlayer);
+          // Ask the centralized renegotiation path to create an offer when appropriate
+          TriggerRenegotiationForConnection(Conn);
+          // Retry applying the remote description once
+          int retryRes = rtcSetRemoteDescription(Conn->PeerConnection, sdp.c_str(), TCHAR_TO_UTF8(*Type));
+          if (retryRes == RTC_ERR_SUCCESS)
+          {
+            UE_LOG(LogTemp, Log, TEXT("Synavis: Retry set remote description succeeded for player %d"), TargetPlayer);
+          }
+          else
+          {
+            UE_LOG(LogTemp, Error, TEXT("Synavis: Retry rtcSetRemoteDescription failed (rc=%d) for player %d"), retryRes, TargetPlayer);
+          }
+        }
         UE_LOG(LogTemp, Error, TEXT("Synavis: Failed remote SDP: %s"), *sdpf);
         // Attempt to dump local description for additional context
         char localBuf[8192] = {0};
@@ -2762,41 +2730,8 @@ int USynavisStreamer::RegisterDataSource(
         }
         // Trigger renegotiation for this connection if policy allows
         TriggerRenegotiationForConnection(Conn.Get());
-        // Also attempt an explicit local-offer here for diagnosis and to force m-line inclusion
-        int setResPost = rtcSetLocalDescription(Conn->PeerConnection, "offer");
-        if (setResPost != RTC_ERR_SUCCESS)
-        {
-          UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcSetLocalDescription returned %d after post-register add track %d on pc %d"), setResPost, trid, Conn->PeerConnection);
-        }
-        else
-        {
-          UE_LOG(LogTemp, Log, TEXT("Synavis: rtcSetLocalDescription succeeded after post-register add track %d on pc %d"), trid, Conn->PeerConnection);
-          char localBufPost[8192] = {0};
-          int gotLocalPost = rtcGetLocalDescription(Conn->PeerConnection, localBufPost, static_cast<int>(sizeof(localBufPost)));
-          if (gotLocalPost > 0)
-          {
-            UE_LOG(LogTemp, Verbose, TEXT("Synavis: New local SDP for pc %d (len=%d):\n%s"), Conn->PeerConnection, gotLocalPost, ANSI_TO_TCHAR(localBufPost));
-          }
-          else
-          {
-            UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcGetLocalDescription returned %d after post-register renegotiation for pc %d"), gotLocalPost, Conn->PeerConnection);
-          }
-          // Dump per-track descriptions after post-register local description
-          for (const auto& kv2 : Conn->TracksByHandler)
-          {
-            int tr2 = kv2.second;
-            char trbuf2[2048] = {0};
-            int trlen2 = rtcGetTrackDescription(tr2, trbuf2, static_cast<int>(sizeof(trbuf2)));
-            if (trlen2 > 0)
-            {
-              UE_LOG(LogTemp, Verbose, TEXT("Synavis: Post-register setLocal track %d description (len=%d):\n%s"), tr2, trlen2, ANSI_TO_TCHAR(trbuf2));
-            }
-            else
-            {
-              UE_LOG(LogTemp, Warning, TEXT("Synavis: Post-register rtcGetTrackDescription returned %d for track %d"), trlen2, tr2);
-            }
-          }
-        }
+        // Centralized renegotiation already requested above; no immediate direct local-set here.
+        UE_LOG(LogTemp, Verbose, TEXT("Synavis: Triggered renegotiation (post-register) for conn %d"), Conn->ConnectionID);
       }
       else
       {
