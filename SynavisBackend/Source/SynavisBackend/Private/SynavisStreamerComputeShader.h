@@ -14,9 +14,10 @@ class FConvertRGBACompute : public FGlobalShader
         // Use RDG-aware parameter types so we can directly assign FRDGTextureRef
         SHADER_PARAMETER_RDG_TEXTURE(Texture2D<float4>, InputTexture)
         SHADER_PARAMETER_SAMPLER(SamplerState, LinearSampler)
-        // UAV outputs for Y (R8) and UV (R8G8)
+        // UAV outputs for Y (R8) and U/V (R8 each)
         SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<uint>, OutY)
-        SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<uint>, OutUV)
+        SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<uint>, OutU)
+        SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<uint>, OutV)
         // Texture size (width, height)
         SHADER_PARAMETER(FIntPoint, TextureSize)
     END_SHADER_PARAMETER_STRUCT()

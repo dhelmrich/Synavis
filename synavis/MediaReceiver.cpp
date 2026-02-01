@@ -16,9 +16,23 @@ constexpr std::byte operator"" _b(unsigned long long int Value)
   return static_cast<std::byte>(Value);
 }
 
+void Synavis::MediaReceiver::SetVp9FrameCallback(std::function<void(rtc::binary)> cb)
+{
+  Vp9Depacketizer = Vp9RtpDepacketizer(std::move(cb));
+}
+
 Synavis::MediaReceiver::MediaReceiver()
 {
-  // empty on purpose (for libdatachannel config changes)
+  // initialize VP9 depacketizer to forward completed frames to FrameReceptionCallback
+  Vp9Depacketizer = Vp9RtpDepacketizer([this](rtc::binary frame)
+  {
+    if (FrameReceptionCallback.has_value())
+    {
+      try { FrameReceptionCallback.value()(std::move(frame)); }
+      catch (const std::exception &e) { lmedia(ELogVerbosity::Error) << "VP9 callback threw: " << e.what() << std::endl; }
+      catch (...) { lmedia(ELogVerbosity::Error) << "VP9 callback threw unknown exception" << std::endl; }
+    }
+  });
 }
 
 Synavis::MediaReceiver::~MediaReceiver()
@@ -225,25 +239,41 @@ void Synavis::MediaReceiver::MediaHandler(rtc::message_variant DataOrMessage)
 #endif // SYNAVIS_UPDATE_TIMECODE
 
     //Track->requestKeyframe();
-    if (FrameReceptionCallback.has_value())
+    try
     {
-      try
+      auto &binRef = std::get<rtc::binary>(DataOrMessage);
+      lmedia(ELogVerbosity::Debug) << "MediaHandler: binary message received size=" << binRef.size() << std::endl;
+
+      // Detect raw VP9 RTP from UE: payload type 98 and 12-byte RTP header + 1-byte VP9 descriptor
+      if (binRef.size() >= 13)
       {
-        auto &bin = std::get<rtc::binary>(DataOrMessage);
-        lmedia(ELogVerbosity::Debug) << "MediaHandler: binary message received size=" << bin.size() << std::endl;
-        FrameReceptionCallback.value()(bin);
+        const uint8_t* data = reinterpret_cast<const uint8_t*>(binRef.data());
+        uint8_t pt = data[1] & 0x7F;
+        if (pt == 98)
+        {
+          // hand off to depacketizer (make a movable copy)
+          rtc::binary copy = binRef;
+          Vp9Depacketizer.OnRtpPacket(std::move(copy));
+          return; // bypass direct FrameReceptionCallback/FrameRelay for raw RTP
+        }
       }
-      catch (const std::bad_variant_access&)
+
+      // non-VP9 path: forward raw binary directly
+      if (FrameReceptionCallback.has_value())
       {
-        lmedia(ELogVerbosity::Warning) << "MediaHandler: expected binary but variant access failed" << std::endl;
+        FrameReceptionCallback.value()(binRef);
       }
-      catch (const std::exception &e)
-      {
-        lmedia(ELogVerbosity::Error) << "MediaHandler: FrameReceptionCallback threw: " << e.what() << std::endl;
-      }
+      if (FrameRelay)
+        FrameRelay->Send(binRef);
     }
-    if(FrameRelay)
-      FrameRelay->Send(std::get<rtc::binary>(DataOrMessage));
+    catch (const std::bad_variant_access&)
+    {
+      lmedia(ELogVerbosity::Warning) << "MediaHandler: expected binary but variant access failed" << std::endl;
+    }
+    catch (const std::exception &e)
+    {
+      lmedia(ELogVerbosity::Error) << "MediaHandler: FrameReceptionCallback threw: " << e.what() << std::endl;
+    }
 }
   else if (std::holds_alternative<std::string>(DataOrMessage))
   {

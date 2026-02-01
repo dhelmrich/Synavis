@@ -18,4 +18,4 @@ bool ConvertRenderTargetToI420_GPU(class UTextureRenderTarget2D* SrcRT, TArray<u
 // become ready asynchronously; callers must poll Readback->IsReady() and then Lock().
 // Forward declare FRHIGPUTextureReadback here.
 class FRHIGPUTextureReadback;
-bool EnqueueNV12ReadbackFromRenderTarget(class UTextureRenderTarget2D* SrcRT, FRHIGPUTextureReadback*& OutReadbackY, FRHIGPUTextureReadback*& OutReadbackUV);
+bool EnqueueNV12ReadbackFromRenderTarget(class UTextureRenderTarget2D* SrcRT, FRHIGPUTextureReadback*& OutReadbackY, FRHIGPUTextureReadback*& OutReadbackU, FRHIGPUTextureReadback*& OutReadbackV);

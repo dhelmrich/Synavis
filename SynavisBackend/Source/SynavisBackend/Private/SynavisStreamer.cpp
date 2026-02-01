@@ -1,4 +1,5 @@
 #include "SynavisStreamer.h"
+#include "SynavisVp9Packetizer.h"
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
@@ -363,6 +364,10 @@ void Synavis_Rtc_DataChannel_OnMessage(int id, const char* data, int size, void*
 void Synavis_Rtc_DataChannel_OnOpen(int id, void* user_ptr);
 void Synavis_Rtc_DataChannel_OnClosed(int id, void* user_ptr);
 void Synavis_Rtc_DataChannel_OnError(int id, const char* error, void* user_ptr);
+  // Forward-declare Track callbacks (tracks use same open/closed/error signatures)
+  void Synavis_Rtc_Track_OnOpen(int id, void* user_ptr);
+  void Synavis_Rtc_Track_OnClosed(int id, void* user_ptr);
+  void Synavis_Rtc_Track_OnError(int id, const char* error, void* user_ptr);
 
 static FORCEINLINE bool __isValidContext(DataChannelCtx* ctx, int id)
 {
@@ -449,6 +454,20 @@ void Synavis_Rtc_OnPcGatheringStateChange(int pc, rtcGatheringState state, void*
   int istate = static_cast<int>(state);
   AsyncTask(ENamedThreads::GameThread, [self, pc, istate]() {
     self->HandlePcGatheringStateChangeCallback(pc, istate);
+  });
+}
+
+void Synavis_Rtc_OnPcSignalingStateChange(int pc, rtcSignalingState state, void* user_ptr)
+{
+  USynavisStreamer* self = nullptr;
+  {
+    FScopeLock lock(&GGlobalStreamerMutex);
+    self = GGlobalStreamer;
+  }
+  if (!self) return;
+  int istate = static_cast<int>(state);
+  AsyncTask(ENamedThreads::GameThread, [self, pc, istate]() {
+    self->HandlePcSignalingStateChangeCallback(pc, istate);
   });
 }
 
@@ -578,6 +597,63 @@ void Synavis_Rtc_DataChannel_OnError(int id, const char* error, void* user_ptr)
     (void)CapturedConn; (void)SavedConnId; (void)SavedHandlerId;
     UE_LOG(LogTemp, Warning, TEXT("[%0.6f] Synavis: DataChannel %d error (game): %s ctx=%p conn=%d handler=%u userPtr=%p"), FPlatformTime::Seconds(), id, ANSI_TO_TCHAR(s.c_str()), (void*)CapturedConn, SavedConnId, SavedHandlerId, rtcGetUserPointer(id));
     UE_LOG(LogTemp, Error, TEXT("Synavis: DataChannel %d error: %s"), id, ANSI_TO_TCHAR(s.c_str()));
+  });
+}
+
+// Track-level callbacks ----------------------------------------------------
+void Synavis_Rtc_Track_OnOpen(int id, void* user_ptr)
+{
+  // user_ptr expected to be FSynavisConnection* when set from Synavis_Rtc_OnPcTrack
+  FSynavisConnection* Conn = reinterpret_cast<FSynavisConnection*>(user_ptr);
+  // Forward to game thread for safe UE logging/state access
+  AsyncTask(ENamedThreads::GameThread, [id, Conn]() {
+    int maxMsg = rtcMaxMessageSize(id);
+    int buffered = rtcGetBufferedAmount(id);
+    bool open = rtcIsOpen(id);
+    char descBuf[1024] = {0};
+    int got = rtcGetTrackDescription(id, descBuf, static_cast<int>(sizeof(descBuf)));
+    if (Conn)
+    {
+      Conn->MaxMessageSize = static_cast<uint32>(maxMsg);
+      UE_LOG(LogTemp, Verbose, TEXT("Synavis: Track_OnOpen id=%d conn=%d open=%d maxMsg=%d buffered=%d desc_len=%d"), id, Conn->ConnectionID, open ? 1 : 0, maxMsg, buffered, got);
+      if (got > 0) UE_LOG(LogTemp, Verbose, TEXT("Synavis: Track_OnOpen description: %s"), ANSI_TO_TCHAR(descBuf));
+    }
+    else
+    {
+      UE_LOG(LogTemp, Verbose, TEXT("Synavis: Track_OnOpen id=%d open=%d maxMsg=%d buffered=%d desc_len=%d (no conn pointer)"), id, open ? 1 : 0, maxMsg, buffered, got);
+      if (got > 0) UE_LOG(LogTemp, Verbose, TEXT("Synavis: Track_OnOpen description: %s"), ANSI_TO_TCHAR(descBuf));
+    }
+  });
+}
+
+void Synavis_Rtc_Track_OnClosed(int id, void* user_ptr)
+{
+  FSynavisConnection* Conn = reinterpret_cast<FSynavisConnection*>(user_ptr);
+  AsyncTask(ENamedThreads::GameThread, [id, Conn]() {
+    if (Conn)
+    {
+      UE_LOG(LogTemp, Log, TEXT("Synavis: Track_OnClosed id=%d conn=%d"), id, Conn->ConnectionID);
+    }
+    else
+    {
+      UE_LOG(LogTemp, Log, TEXT("Synavis: Track_OnClosed id=%d (no conn pointer)"), id);
+    }
+  });
+}
+
+void Synavis_Rtc_Track_OnError(int id, const char* error, void* user_ptr)
+{
+  FSynavisConnection* Conn = reinterpret_cast<FSynavisConnection*>(user_ptr);
+  std::string s = error ? std::string(error) : std::string();
+  AsyncTask(ENamedThreads::GameThread, [id, s, Conn]() {
+    if (Conn)
+    {
+      UE_LOG(LogTemp, Error, TEXT("Synavis: Track_OnError id=%d conn=%d err=%s"), id, Conn->ConnectionID, ANSI_TO_TCHAR(s.c_str()));
+    }
+    else
+    {
+      UE_LOG(LogTemp, Error, TEXT("Synavis: Track_OnError id=%d err=%s (no conn pointer)"), id, ANSI_TO_TCHAR(s.c_str()));
+    }
   });
 }
 
@@ -754,6 +830,16 @@ void Synavis_Rtc_OnPcTrack(int pc, int tr, void* user_ptr)
       return;
     }
 
+    // Ensure we always register per-track callbacks early so we receive open/closed/error
+    // notifications even if the track is not yet associated with a handler.
+    // Store the connection pointer as the user pointer for the track callbacks.
+    rtcSetUserPointer(tr, Conn);
+    rtcSetOpenCallback(tr, Synavis_Rtc_Track_OnOpen);
+    rtcSetClosedCallback(tr, Synavis_Rtc_Track_OnClosed);
+    rtcSetErrorCallback(tr, Synavis_Rtc_Track_OnError);
+
+    
+
     // If this track id is already mapped to a handler, nothing to do.
     for (const auto& kv : Conn->TracksByHandler)
     {
@@ -915,6 +1001,13 @@ void USynavisStreamer::BeginPlay()
   // sanity check: fire function
   Synavis_Rtc_Logger(RTC_LOG_INFO, "SynavisStreamer Synavis_Rtc_Logger initialized");
 
+  // VP9 packetizer init
+  if (!Vp9Packetizer)
+  {
+    Vp9Packetizer = NewObject<USynavisVp9Packetizer>(this);
+    Vp9Packetizer->Initialize(98, GetNextSSRC(), 1200);
+  }
+
 }
 
 
@@ -954,7 +1047,7 @@ void USynavisStreamer::TickComponent(float DeltaTime, ELevelTick TickType, FActo
         FPendingNV12Readback& rec = PendingReadbacks[i];
 
         // Validate readbacks
-        if (!rec.ReadbackY || !rec.ReadbackUV)
+        if (!rec.ReadbackY || !rec.ReadbackU || !rec.ReadbackV)
         {
           PendingReadbacks.RemoveAtSwap(i);
           DidWorkThisIteration = true;
@@ -962,10 +1055,10 @@ void USynavisStreamer::TickComponent(float DeltaTime, ELevelTick TickType, FActo
         }
 
         // If readbacks ready, perform zero-copy encode and send to all target tracks
-        if (rec.ReadbackY->IsReady() && rec.ReadbackUV->IsReady())
+        if (rec.ReadbackY->IsReady() && rec.ReadbackU->IsReady() && rec.ReadbackV->IsReady())
         {
           UE_LOG(LogTemp, Verbose, TEXT("Synavis: Pending readback ready, starting zero-copy encode (Width=%d Height=%d)"), rec.Width, rec.Height);
-          EncodeNV12ReadbackAndSend(rec.ReadbackY, rec.ReadbackUV, rec.Width, rec.Height, rec.TargetTracks);
+          EncodeNV12ReadbackAndSend(rec.ReadbackY, rec.ReadbackU, rec.ReadbackV, rec.Width, rec.Height, rec.TargetTracks);
           // EncodeNV12ReadbackAndSend takes ownership of the readbacks via AVBuffer free callbacks,
           // so do not unlock/delete them here - remove entry from queue.
           PendingReadbacks.RemoveAtSwap(i);
@@ -978,11 +1071,13 @@ void USynavisStreamer::TickComponent(float DeltaTime, ELevelTick TickType, FActo
         {
           UE_LOG(LogTemp, Warning, TEXT("Synavis: Pending readback timed out after %.3fs, cleaning up"), FPlatformTime::Seconds() - rec.EnqueuedAt);
           FRHIGPUTextureReadback* Yrb = rec.ReadbackY;
-          FRHIGPUTextureReadback* UVrb = rec.ReadbackUV;
-          ENQUEUE_RENDER_COMMAND(Synavis_CleanupReadback)([Yrb, UVrb](FRHICommandListImmediate& RHICmdList)
+          FRHIGPUTextureReadback* Urb = rec.ReadbackU;
+          FRHIGPUTextureReadback* Vrb = rec.ReadbackV;
+          ENQUEUE_RENDER_COMMAND(Synavis_CleanupReadback)([Yrb, Urb, Vrb](FRHICommandListImmediate& RHICmdList)
             {
               if (Yrb) { Yrb->Unlock(); delete Yrb; }
-              if (UVrb) { UVrb->Unlock(); delete UVrb; }
+              if (Urb) { Urb->Unlock(); delete Urb; }
+              if (Vrb) { Vrb->Unlock(); delete Vrb; }
             });
           PendingReadbacks.RemoveAtSwap(i);
           DidWorkThisIteration = true;
@@ -1079,93 +1174,58 @@ static int SendNative(int trackId, const uint8_t* Data, int Len)
   return rtcSendMessage(trackId, reinterpret_cast<const char*>(Data), Len);
 }
 
-// New packetizer signature: include RTP timestamp and optional MTU override
-static void VP9PacketizeAndSend(int trackId, const uint8_t* data, size_t size, uint32_t rtpTimestamp, int mtuOverride = 0)
+// New packetizer signature: use libdatachannel opaque message + media interceptor
+static void* Synavis_Rtc_MediaInterceptor(int pc, const char* message, int size, void* user_ptr)
+{
+  // Incoming 'message' may be an opaque rtcMessage pointer encoded as a char* with a special marker size.
+  // We expect the sender to pass the opaque rtcMessage pointer as the data pointer and a size of -1.
+  if (size == -1 && message != nullptr)
+  {
+    return const_cast<char*>(message);
+  }
+  return nullptr;
+}
+
+static void VP9PacketizeAndSend(int trackId, const uint8_t* data, size_t size, uint32_t /*rtpTimestamp*/, int mtuOverride = 0)
 {
   if (trackId == 0 || data == nullptr || size == 0) return;
-  UE_LOG(LogTemp, Verbose, TEXT("Synavis: VP9PacketizeAndSend entry track=%d size=%d ts=%u mtuOverride=%d"), trackId, static_cast<int>(size), rtpTimestamp, mtuOverride);
+  UE_LOG(LogTemp, Verbose, TEXT("Synavis: VP9PacketizeAndSend (opaque) track=%d size=%d"), trackId, static_cast<int>(size));
   if (!rtcIsOpen(trackId))
   {
     UE_LOG(LogTemp, Warning, TEXT("Synavis: VP9PacketizeAndSend - track %d not open, dropping packet"), trackId);
     return;
   }
 
-  FPacketizerState& st = GetOrCreatePacketizer(trackId);
-  if (mtuOverride > 0) st.MTU = mtuOverride;
+  // Copy encoded frame into heap buffer; libdatachannel will take ownership of the opaque message
+  void* payload = malloc(size);
+  if (!payload) { UE_LOG(LogTemp, Error, TEXT("Synavis: malloc failed in VP9PacketizeAndSend")); return; }
+  memcpy(payload, data, size);
 
-  // RTP header size (bytes) without extensions
-  const int RTP_HEADER_SIZE = 12;
-
-  // Build payload descriptor (one byte baseline); calculate available payload per RTP packet
-  uint8_t payloadDescBuf[4];
-  int pdLen = BuildVp9PayloadDescriptor(payloadDescBuf, sizeof(payloadDescBuf), true, true); // will be adjusted per-fragment
-
-  int maxPayloadPerPacket = st.MTU - RTP_HEADER_SIZE - pdLen;
-  if (maxPayloadPerPacket <= 0)
+  // Create an opaque message that wraps the payload. The returned rtcMessage* must not be freed here
+  // if we hand it to the media interceptor (the library will assume ownership).
+  rtcMessage* om = rtcCreateOpaqueMessage(payload, static_cast<int>(size));
+  if (!om)
   {
-    UE_LOG(LogTemp, Error, TEXT("Synavis: MTU %d too small for VP9 payload descriptor"), st.MTU);
+    UE_LOG(LogTemp, Error, TEXT("Synavis: rtcCreateOpaqueMessage failed"));
+    free(payload);
     return;
   }
 
-  // Frame-aligned fragmentation: only fragment when necessary.
-  size_t offset = 0;
-  bool firstFragment = true;
-  while (offset < size)
+  // Send the opaque message pointer via rtcSendMessage using a special negative-size marker (-1).
+  // The media interceptor (registered on the PeerConnection) will receive the pointer and return it
+  // into libdatachannel's media pipeline so the library handles RTP packetization.
+  int sendRes = rtcSendMessage(trackId, reinterpret_cast<const char*>(om), -1);
+  if (sendRes != RTC_ERR_SUCCESS)
   {
-    size_t remaining = size - offset;
-    int chunkSize = static_cast<int>(FMath::Min<size_t>(remaining, static_cast<size_t>(maxPayloadPerPacket)));
-
-    bool isStart = firstFragment;
-    bool isEnd = (offset + chunkSize) >= size;
-
-    // Build descriptor for this fragment
-    uint8_t descBuf[4];
-    int thisPdLen = BuildVp9PayloadDescriptor(descBuf, sizeof(descBuf), isStart, isEnd);
-
-    // Compose packet into a temporary buffer
-    int packetLen = RTP_HEADER_SIZE + thisPdLen + chunkSize;
-    TArray<uint8> packet;
-    packet.SetNumUninitialized(packetLen);
-
-    // Write RTP header directly (big-endian network order)
-    uint8_t* ptr = packet.GetData();
-    ptr[0] = 0x80; // Version 2, no padding, no extensions, CC=0
-    ptr[1] = static_cast<uint8_t>((isEnd ? 0x80u : 0x00u) | 96u); // Marker on last packet, PT=96
-    ptr[2] = static_cast<uint8_t>((st.Sequence >> 8) & 0xFF);
-    ptr[3] = static_cast<uint8_t>((st.Sequence >> 0) & 0xFF);
-    // Timestamp (32-bit big-endian)
-    ptr[4] = static_cast<uint8_t>((rtpTimestamp >> 24) & 0xFF);
-    ptr[5] = static_cast<uint8_t>((rtpTimestamp >> 16) & 0xFF);
-    ptr[6] = static_cast<uint8_t>((rtpTimestamp >> 8) & 0xFF);
-    ptr[7] = static_cast<uint8_t>((rtpTimestamp >> 0) & 0xFF);
-    // SSRC (32-bit big-endian)
-    ptr[8] = static_cast<uint8_t>((st.SSRC >> 24) & 0xFF);
-    ptr[9] = static_cast<uint8_t>((st.SSRC >> 16) & 0xFF);
-    ptr[10] = static_cast<uint8_t>((st.SSRC >> 8) & 0xFF);
-    ptr[11] = static_cast<uint8_t>((st.SSRC >> 0) & 0xFF);
-
-    // Copy payload descriptor
-    memcpy(ptr + RTP_HEADER_SIZE, descBuf, thisPdLen);
-
-    // Copy payload chunk
-    memcpy(ptr + RTP_HEADER_SIZE + thisPdLen, data + offset, chunkSize);
-
-    // Send packet
-    int seqBefore = st.Sequence;
-    int sendRes = SendNative(trackId, packet.GetData(), packetLen);
-    if (sendRes != RTC_ERR_SUCCESS)
-    {
-      UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcSendMessage returned %d when sending RTP packet to track %d (seq=%d len=%d offset=%d chunk=%d)"), sendRes, trackId, seqBefore, packetLen, static_cast<int>(offset), chunkSize);
-    }
-    else
-    {
-      UE_LOG(LogTemp, Verbose, TEXT("Synavis: Sent RTP packet to track %d seq=%d len=%d offset=%d chunk=%d ts=%u ssrc=%u"), trackId, seqBefore, packetLen, static_cast<int>(offset), chunkSize, rtpTimestamp, st.SSRC);
-    }
-
-    // Advance
-    offset += chunkSize;
-    firstFragment = false;
-    st.Sequence = static_cast<uint16_t>(st.Sequence + 1);
+    UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcSendMessage returned %d when sending opaque packet to track %d"), sendRes, trackId);
+    // If send failed, free the opaque message to avoid leaking
+    rtcDeleteOpaqueMessage(om);
+    // temporarily for debugging: hard exit now
+    FPlatformMisc::RequestExit(false);
+  }
+  else
+  {
+    UE_LOG(LogTemp, Verbose, TEXT("Synavis: Sent opaque encoded packet to track %d size=%d"), trackId, static_cast<int>(size));
   }
 }
 
@@ -1552,8 +1612,31 @@ void USynavisStreamer::HandlePcLocalDescriptionCallback(int pc, const char* sdp,
   FString t = type ? FString(ANSI_TO_TCHAR(type)) : FString(TEXT("<null>"));
   FString sdff = sdp ? FString(ANSI_TO_TCHAR(sdp)) : FString(TEXT("<null>"));
   UE_LOG(LogTemp, Verbose, TEXT("Synavis: LocalDescription for conn %d type=%s:\n%s"), Conn->ConnectionID, *t, *sdff);
+  // sanity check: are we attempting to send out a DC with only data channel
+  // even though we have video handlers registered?
+  if (FString(t).Equals(TEXT("offer"), ESearchCase::IgnoreCase))
+  {
+    bool HasVideoHandlers = false;
+    for (const FSynavisHandler& H : RegisteredDataHandlers)
+    {
+      if (H.Video)
+      {
+        HasVideoHandlers = true;
+        break;
+      }
+    }
+    if (HasVideoHandlers)
+    {
+      // Check if the SDP contains any m=video lines
+      if (!sdff.Contains(TEXT("m=video")))
+      {
+        UE_LOG(LogTemp, Warning, TEXT("Synavis: LocalDescription offer for conn %d has no video m= lines despite having video handlers registered"), Conn->ConnectionID);
+      }
+    }
+  }
   // When local description becomes available, send via signalling
-  CommunicateSDPForConnection(*Conn);
+  if (!this->bHoldNegotiation)
+    CommunicateSDPForConnection(*Conn);
 }
 
 void USynavisStreamer::HandlePcGatheringStateChangeCallback(int pc, int state)
@@ -1569,6 +1652,53 @@ void USynavisStreamer::HandlePcGatheringStateChangeCallback(int pc, int state)
     }
     if (Conn) CommunicateSDPForConnection(*Conn);
   }
+}
+
+void USynavisStreamer::HandlePcSignalingStateChangeCallback(int pc, int state)
+{
+  // rtcSignalingState: 0=Stable, 1=HaveLocalOffer, 2=HaveRemoteOffer, 3=HaveLocalPranswer, 4=HaveRemotePranswer
+  // When we have a local offer or local pranswer, attempt to apply any queued remote answers.
+  if (state == 1 || state == 3)
+  {
+    DrainPendingAnswersForPC(pc);
+  }
+}
+
+void USynavisStreamer::DrainPendingAnswersForPC(int pc)
+{
+  TArray<FString> Copy;
+  {
+    FScopeLock lock(&PendingAnswersMutex);
+    if (!PendingRemoteAnswers.Contains(pc)) return;
+    Copy = PendingRemoteAnswers[pc];
+  }
+
+  for (int i = 0; i < Copy.Num(); ++i)
+  {
+    const FString& Ans = Copy[i];
+    std::string sdp = TCHAR_TO_UTF8(*Ans);
+    int res = rtcSetRemoteDescription(pc, sdp.c_str(), "answer");
+    if (res == RTC_ERR_SUCCESS)
+    {
+      UE_LOG(LogTemp, Log, TEXT("Synavis: Applied queued remote answer for pc %d"), pc);
+      // remove this entry from the queue
+      FScopeLock lock(&PendingAnswersMutex);
+      if (PendingRemoteAnswers.Contains(pc) && PendingRemoteAnswers[pc].Num() > 0)
+      {
+        PendingRemoteAnswers[pc].RemoveAt(0);
+      }
+    }
+    else
+    {
+      UE_LOG(LogTemp, Warning, TEXT("Synavis: Applying queued answer for pc %d failed (rc=%d); will retry later"), pc, res);
+      break;
+    }
+  }
+
+  // cleanup empty queue
+  FScopeLock lock(&PendingAnswersMutex);
+  if (PendingRemoteAnswers.Contains(pc) && PendingRemoteAnswers[pc].Num() == 0)
+    PendingRemoteAnswers.Remove(pc);
 }
 
 void USynavisStreamer::HandleDataChannelMessageCallback(int dc, const std::variant<TArray<uint8>, std::string>& message)
@@ -2014,8 +2144,27 @@ void USynavisStreamer::CommunicateSDPs()
 
 void USynavisStreamer::CommunicateSDPForConnection(const FSynavisConnection& Conn)
 {
-  if (SignallingId == 0 || !rtcIsOpen(SignallingId))
+  // If negotiation is held, do not send SDP now. Mark the connection pending
+  // so `StartConnectionNegotiation()` will handle the SDP transmission later.
+  if (bHoldNegotiation)
+  {
+    FSynavisConnection* Mutable = FindConnectionByPlayerID(Conn.ConnectionID);
+    if (Mutable)
+    {
+      Mutable->PendingNegotiation = true;
+      UE_LOG(LogTemp, Log, TEXT("Synavis: Held negotiation - queued SDP send for conn %d"), Conn.ConnectionID);
+    }
+    else
+    {
+      UE_LOG(LogTemp, Verbose, TEXT("Synavis: Held negotiation - could not find mutable conn %d to mark pending"), Conn.ConnectionID);
+    }
     return;
+  }
+  if (SignallingId == 0 || !rtcIsOpen(SignallingId))
+  {
+    UE_LOG(LogTemp, Warning, TEXT("Synavis: CommunicateSDPForConnection: signalling websocket not open (SignallingId=%d) - cannot send SDP for conn %d"), SignallingId, Conn.ConnectionID);
+    return;
+  }
 
   int pc = Conn.PeerConnection;
   if (pc == 0)
@@ -2026,7 +2175,10 @@ void USynavisStreamer::CommunicateSDPForConnection(const FSynavisConnection& Con
   std::vector<char> sdpBuf(BufSize);
   int got = rtcGetLocalDescription(pc, sdpBuf.data(), BufSize);
   if (got <= 0)
+  {
+    UE_LOG(LogTemp, Warning, TEXT("Synavis: CommunicateSDPForConnection: rtcGetLocalDescription returned %d for pc %d"), got, pc);
     return;
+  }
   std::string sdpStr(sdpBuf.data(), static_cast<size_t>(got));
   char typeBuf[64] = { 0 };
   rtcGetLocalDescriptionType(pc, typeBuf, static_cast<int>(sizeof(typeBuf)));
@@ -2049,14 +2201,17 @@ void USynavisStreamer::CommunicateSDPForConnection(const FSynavisConnection& Con
     // Use the C API to send a text message. For text we pass a negative size according to the C API
     // convention (-(length+1)).
     int sendSize = -static_cast<int>(outcpp.size() + 1);
+    // Diagnostic: log SignallingId and whether the websocket is open before send
+    bool wsOpen = (SignallingId != 0) && rtcIsOpen(SignallingId);
+    UE_LOG(LogTemp, Log, TEXT("Synavis: Sending SDP for conn %d via SignallingId=%d rtcIsOpen=%d sendSize=%d preview='%s'"), Conn.ConnectionID, SignallingId, wsOpen ? 1 : 0, sendSize, *FString(UTF8_TO_TCHAR(outcpp.c_str())).Left(200));
     int sendRes = rtcSendMessage(SignallingId, outcpp.c_str(), sendSize);
     if (sendRes != RTC_ERR_SUCCESS)
     {
-      UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcSendMessage returned %d when sending SDP for conn %d"), sendRes, Conn.ConnectionID);
+      UE_LOG(LogTemp, Error, TEXT("Synavis: rtcSendMessage returned %d when sending SDP for conn %d (SignallingId=%d)"), sendRes, Conn.ConnectionID, SignallingId);
     }
     else
     {
-      UE_LOG(LogTemp, VeryVerbose, TEXT("Synavis: Sent SDP for conn %d size=%d"), Conn.ConnectionID, static_cast<int>(outcpp.size()));
+      UE_LOG(LogTemp, Log, TEXT("Synavis: Sent SDP for conn %d size=%d via SignallingId=%d"), Conn.ConnectionID, static_cast<int>(outcpp.size()), SignallingId);
     }
 
   }
@@ -2106,6 +2261,10 @@ void USynavisStreamer::CreateConnectionForPlayer(int32 PlayerID)
 
   // Create a PeerConnection via C API and register C callbacks
   rtcConfiguration cfg{}; // default-initialized configuration
+  // Apply configurable max message size and MTU if provided in UPROPERTYs
+  if (this->MaxMessageSize > 0) cfg.maxMessageSize = this->MaxMessageSize;
+  if (this->Mtu > 0) cfg.mtu = this->Mtu;
+  UE_LOG(LogTemp, Verbose, TEXT("Synavis: Creating PeerConnection with cfg.maxMessageSize=%d cfg.mtu=%d"), cfg.maxMessageSize, cfg.mtu);
   int pcid = rtcCreatePeerConnection(&cfg);
   if (pcid <= 0)
   {
@@ -2123,6 +2282,10 @@ void USynavisStreamer::CreateConnectionForPlayer(int32 PlayerID)
   rtcSetTrackCallback(Conn->PeerConnection, Synavis_Rtc_OnPcTrack);
   rtcSetStateChangeCallback(Conn->PeerConnection, Synavis_Rtc_OnPcStateChange);
   rtcSetIceStateChangeCallback(Conn->PeerConnection, Synavis_Rtc_OnPcIceStateChange);
+  // Notify on signaling state changes so we can apply queued remote answers
+  rtcSetSignalingStateChangeCallback(Conn->PeerConnection, Synavis_Rtc_OnPcSignalingStateChange);
+  // Media interceptor: allow passing opaque messages into libdatachannel's media pipeline
+  rtcSetMediaInterceptorCallback(Conn->PeerConnection, Synavis_Rtc_MediaInterceptor);
 
   // Create a per-connection data channel for control/messages using the C API
   std::string channelName = std::string("synavis-data-") + std::to_string(PlayerID);
@@ -2408,40 +2571,39 @@ void USynavisStreamer::HandleSignallingMessage(const std::variant<TArray<uint8>,
         return;
       }
       FString sdpf = Parsed.GetStringField(TEXT("sdp"));
-      if (Type.Equals(TEXT("answer"), ESearchCase::IgnoreCase))
-      {
-        FString munged = MungSDPForLibdatachannel(sdpf);
-        UE_LOG(LogTemp, Verbose, TEXT("Synavis: Munge incoming answer SDP for player %d orig_len=%d munged_len=%d"), TargetPlayer, sdpf.Len(), munged.Len());
-        sdpf = munged;
-      }
+      //if (Type.Equals(TEXT("answer"), ESearchCase::IgnoreCase))
+      //{
+      //  FString munged = MungSDPForLibdatachannel(sdpf);
+      //  UE_LOG(LogTemp, Verbose, TEXT("Synavis: Munge incoming answer SDP for player %d orig_len=%d munged_len=%d"), TargetPlayer, sdpf.Len(), munged.Len());
+      //  sdpf = munged;
+      //}
       std::string sdp = TCHAR_TO_UTF8(*sdpf);
       // Use C API to set remote description
       int setRes = rtcSetRemoteDescription(Conn->PeerConnection, sdp.c_str(), TCHAR_TO_UTF8(*Type));
       if (setRes != RTC_ERR_SUCCESS)
       {
         UE_LOG(LogTemp, Error, TEXT("Synavis: rtcSetRemoteDescription failed (rc=%d) for player %d. SDP type=%s length=%d"), setRes, TargetPlayer, *Type, sdpf.Len());
-        // If we unexpectedly received an "answer" while in the stable state, attempt
-        // a best-effort recovery: create a local offer and retry applying the answer once.
-        // This allows the common flow of adding datachannels first and video later
-        // to complete a late renegotiation when libdatachannel rejected the answer
-        // due to signaling state mismatch.
         if (Type.Equals(TEXT("answer"), ESearchCase::IgnoreCase))
         {
-          UE_LOG(LogTemp, Warning, TEXT("Synavis: Attempting recovery for remote 'answer' by triggering centralized renegotiation and retrying (player %d)"), TargetPlayer);
-          // Ask the centralized renegotiation path to create an offer when appropriate
+          // Queue the incoming answer for later application when the PC is in
+          // an appropriate signaling state (e.g. HAVE_LOCAL_OFFER). This avoids
+          // race conditions where the remote sends an answer while we are
+          // still in the stable state.
+          {
+            FScopeLock lock(&this->PendingAnswersMutex);
+            TArray<FString>& Q = PendingRemoteAnswers.FindOrAdd(Conn->PeerConnection);
+            Q.Add(sdpf);
+          }
+          UE_LOG(LogTemp, Warning, TEXT("Synavis: Queued remote answer for player %d (pc=%d) due to rtcSetRemoteDescription rc=%d"), TargetPlayer, Conn->PeerConnection, setRes);
+          // Trigger centralized renegotiation so a local offer will be created
+          // and the signaling state transitions to allow applying the queued answer.
           TriggerRenegotiationForConnection(Conn);
-          // Retry applying the remote description once
-          int retryRes = rtcSetRemoteDescription(Conn->PeerConnection, sdp.c_str(), TCHAR_TO_UTF8(*Type));
-          if (retryRes == RTC_ERR_SUCCESS)
-          {
-            UE_LOG(LogTemp, Log, TEXT("Synavis: Retry set remote description succeeded for player %d"), TargetPlayer);
-          }
-          else
-          {
-            UE_LOG(LogTemp, Error, TEXT("Synavis: Retry rtcSetRemoteDescription failed (rc=%d) for player %d"), retryRes, TargetPlayer);
-          }
         }
-        UE_LOG(LogTemp, Error, TEXT("Synavis: Failed remote SDP: %s"), *sdpf);
+        else
+        {
+          UE_LOG(LogTemp, Error, TEXT("Synavis: Failed remote SDP: %s"), *sdpf);
+        }
+
         // Attempt to dump local description for additional context
         char localBuf[8192] = {0};
         int gotLocal = rtcGetLocalDescription(Conn->PeerConnection, localBuf, static_cast<int>(sizeof(localBuf)));
@@ -2811,19 +2973,23 @@ void USynavisStreamer::CaptureFrame()
     }
     else
     {
+      // TEMP: log info on first track in TracksToSend for diagnostics
+      UE_LOG(LogTemp, Verbose, TEXT("Synavis: First Track: %d, isOpen: %d, maxMessageSize: %d"), TracksToSend[0], rtcIsOpen(TracksToSend[0]) ? 1 : 0, rtcMaxMessageSize(TracksToSend[0]));
       FRHIGPUTextureReadback* ReadbackY = nullptr;
-      FRHIGPUTextureReadback* ReadbackUV = nullptr;
-      if (EnqueueNV12ReadbackFromRenderTarget(HandlerRT, ReadbackY, ReadbackUV))
+      FRHIGPUTextureReadback* ReadbackU = nullptr;
+      FRHIGPUTextureReadback* ReadbackV = nullptr;
+      if (EnqueueNV12ReadbackFromRenderTarget(HandlerRT, ReadbackY, ReadbackU, ReadbackV))
       {
         FPendingNV12Readback rec;
         rec.ReadbackY = ReadbackY;
-        rec.ReadbackUV = ReadbackUV;
+        rec.ReadbackU = ReadbackU;
+        rec.ReadbackV = ReadbackV;
         rec.EnqueuedAt = FPlatformTime::Seconds();
         rec.TargetTracks = TracksToSend;
         rec.Width = Width;
         rec.Height = Height;
         PendingReadbacks.Add(rec);
-        UE_LOG(LogTemp, Verbose, TEXT("Synavis: Enqueued NV12 readback for handler %d (W=%d H=%d) to %d tracks"), Handler.HandlerID, Width, Height, TracksToSend.Num());
+        UE_LOG(LogTemp, Verbose, TEXT("Synavis: Enqueued I420 readback for handler %d (W=%d H=%d) to %d tracks"), Handler.HandlerID, Width, Height, TracksToSend.Num());
       }
       else
       {
@@ -3002,23 +3168,32 @@ void USynavisStreamer::HandlePcDataChannelCreated(int pc, int dc)
 void USynavisStreamer::TriggerRenegotiationForConnection(FSynavisConnection* Conn)
 {
   if (!Conn || Conn->PeerConnection == 0) return;
-
-  // If negotiation is held, mark pending and return
+  // Centralized renegotiation should not immediately perform SDP I/O.
+  // Instead mark the connection as having a pending negotiation so that
+  // `StartConnectionNegotiation()` performs the actual `rtcSetLocalDescription`
+  // and SDP send. This avoids creating intermediate datachannel-only offers.
   if (bHoldNegotiation)
   {
     Conn->PendingNegotiation = true;
-    UE_LOG(LogTemp, Log, TEXT("Synavis: Marked connection %d for pending negotiation"), Conn->ConnectionID);
+    UE_LOG(LogTemp, Log, TEXT("Synavis: Hold active - marked connection %d pending negotiation"), Conn->ConnectionID);
     return;
   }
 
   // Only attempt renegotiation when the source policy allows dynamic updates
   if (SourcePolicy == ESynavisSourcePolicy::RemainStatic)
+  {
+    UE_LOG(LogTemp, Verbose, TEXT("Synavis: SourcePolicy=RemainStatic - skipping renegotiation for conn %d"), Conn->ConnectionID);
     return;
+  }
 
   // Ask the C API whether negotiation is required
   if (!rtcIsNegotiationNeeded(Conn->PeerConnection))
+  {
+    UE_LOG(LogTemp, Verbose, TEXT("Synavis: rtcIsNegotiationNeeded returned false for conn %d - no renegotiation required"), Conn->ConnectionID);
     return;
+  }
 
+  // Perform immediate SDP offer now that negotiation has started
   int localRes = rtcSetLocalDescription(Conn->PeerConnection, "offer");
   if (localRes != RTC_ERR_SUCCESS)
   {
@@ -3030,8 +3205,10 @@ void USynavisStreamer::TriggerRenegotiationForConnection(FSynavisConnection* Con
     {
       UE_LOG(LogTemp, Warning, TEXT("Synavis: Renegotiation attempt failed for conn %d (rc=%d)"), Conn->ConnectionID, localRes);
     }
+    Conn->PendingNegotiation = true;
+    return;
   }
-    else
+  else
   {
     UE_LOG(LogTemp, Log, TEXT("Synavis: Triggered renegotiation (offer) for conn %d"), Conn->ConnectionID);
     // Dump per-track descriptions after triggering local offer
@@ -3063,17 +3240,27 @@ void USynavisStreamer::StartConnectionNegotiation()
     TSharedPtr<FSynavisConnection> C = Pair.Value;
     if (!C || C->PeerConnection == 0) continue;
 
-    if (C->PendingNegotiation || rtcIsNegotiationNeeded(C->PeerConnection))
+    bool need = rtcIsNegotiationNeeded(C->PeerConnection);
+    UE_LOG(LogTemp, Verbose, TEXT("Synavis: StartConnectionNegotiation evaluating conn %d: PendingNegotiation=%d rtcIsNegotiationNeeded=%d"), C->ConnectionID, C->PendingNegotiation ? 1 : 0, need ? 1 : 0);
+
+    if (C->PendingNegotiation || need)
     {
       int localRes = rtcSetLocalDescription(C->PeerConnection, "offer");
       if (localRes != RTC_ERR_SUCCESS)
       {
         UE_LOG(LogTemp, Warning, TEXT("Synavis: StartConnectionNegotiation: rtcSetLocalDescription failed for conn %d (rc=%d)"), C->ConnectionID, localRes);
+        C->PendingNegotiation = true;
       }
       else
       {
-        UE_LOG(LogTemp, Log, TEXT("Synavis: StartConnectionNegotiation: Sent offer for conn %d"), C->ConnectionID);
+        UE_LOG(LogTemp, Log, TEXT("Synavis: StartConnectionNegotiation: Sending offer for conn %d"), C->ConnectionID);
         C->PendingNegotiation = false;
+        // Immediately attempt to communicate the SDP via signalling here instead
+        // of solely relying on the async local-description callback. This avoids
+        // races where the callback may be delayed or signalling state changes
+        // in between.
+        CommunicateSDPForConnection(*C);
+
         // Dump per-track descriptions after sending offer
         for (const auto& kv : C->TracksByHandler)
         {
@@ -3091,149 +3278,181 @@ void USynavisStreamer::StartConnectionNegotiation()
         }
       }
     }
+    else
+    {
+      UE_LOG(LogTemp, Verbose, TEXT("Synavis: StartConnectionNegotiation: skipping conn %d (no pending and rtcIsNegotiationNeeded=false)"), C->ConnectionID);
+    }
   }
 }
 
-// Zero-copy: accept two FRHIGPUTextureReadback objects, wrap their locked pointers into
+// Zero-copy: accept three FRHIGPUTextureReadback objects (Y, U, V planes in I420 layout), wrap their locked pointers into
 // AVBufferRefs so FFmpeg manages lifetime and calls our free-callback to unlock/delete readbacks.
-void USynavisStreamer::EncodeNV12ReadbackAndSend(FRHIGPUTextureReadback* ReadbackY, FRHIGPUTextureReadback* ReadbackUV, int Width, int Height, const TArray<int32>& TargetTracks)
+void USynavisStreamer::EncodeNV12ReadbackAndSend(FRHIGPUTextureReadback* ReadbackY, FRHIGPUTextureReadback* ReadbackU, FRHIGPUTextureReadback* ReadbackV, int Width, int Height, const TArray<int32>& TargetTracks)
 {
-  if (!ReadbackY || !ReadbackUV) return;
+  if (!ReadbackY || !ReadbackU || !ReadbackV) return;
 
   // Poll briefly
   const double TimeoutSeconds = 0.5;
   double StartTime = FPlatformTime::Seconds();
   while (FPlatformTime::Seconds() - StartTime < TimeoutSeconds)
   {
-    if (ReadbackY->IsReady() && ReadbackUV->IsReady()) break;
+    if (ReadbackY->IsReady() && ReadbackU->IsReady() && ReadbackV->IsReady()) break;
     FPlatformProcess::Sleep(0.001f);
   }
-  if (!ReadbackY->IsReady() || !ReadbackUV->IsReady())
+  if (!ReadbackY->IsReady() || !ReadbackU->IsReady() || !ReadbackV->IsReady())
   {
     return;
   }
 
-  int YRowPitchPixels = 0; void* YPtr = ReadbackY->Lock(YRowPitchPixels);
-  if (!YPtr) { ReadbackY->Unlock(); ReadbackUV->Unlock(); return; }
-  int UVRowPitchPixels = 0; void* UVPtr = ReadbackUV->Lock(UVRowPitchPixels);
-  if (!UVPtr) { ReadbackY->Unlock(); ReadbackUV->Unlock(); return; }
+  int YRowPitch = 0; void* YPtr = ReadbackY->Lock(YRowPitch);
+  if (!YPtr) { ReadbackY->Unlock(); ReadbackU->Unlock(); ReadbackV->Unlock(); return; }
+  int URowPitch = 0; void* UPtr = ReadbackU->Lock(URowPitch);
+  if (!UPtr) { ReadbackY->Unlock(); ReadbackU->Unlock(); ReadbackV->Unlock(); return; }
+  int VRowPitch = 0; void* VPtr = ReadbackV->Lock(VRowPitch);
+  if (!VPtr) { ReadbackY->Unlock(); ReadbackU->Unlock(); ReadbackV->Unlock(); return; }
 
-  int YStride = YRowPitchPixels;
-  int UVStride = UVRowPitchPixels * 2;
+  // Compute sizes in bytes. U and V are half height.
+  int YSize = YRowPitch * Height;
+  int HalfHeight = (Height + 1) / 2;
+  int USize = URowPitch * HalfHeight;
+  int VSize = VRowPitch * HalfHeight;
 
-  UE_LOG(LogTemp, Verbose, TEXT("Synavis: EncodeNV12ReadbackAndSend lock OK W=%d H=%d Ystride=%d UVstride=%d targets=%d"), Width, Height, YStride, UVStride, TargetTracks.Num());
+  UE_LOG(LogTemp, Verbose, TEXT("Synavis: EncodeNV12ReadbackAndSend lock OK W=%d H=%d Ystride=%d Ustride=%d Vstride=%d targets=%d"), Width, Height, YRowPitch, URowPitch, VRowPitch, TargetTracks.Num());
 
   struct ReadbackFreeCtx { FRHIGPUTextureReadback* RB; };
 
-  auto freeCb = [](void* opaque)
-    {
-      ReadbackFreeCtx* ctx = reinterpret_cast<ReadbackFreeCtx*>(opaque);
-      if (!ctx) return;
-      FRHIGPUTextureReadback* RB = ctx->RB;
-      // Unlock and delete must run on render thread; enqueue a render command to do it.
-      ENQUEUE_RENDER_COMMAND(Synavis_FreeReadback)([RB](FRHICommandListImmediate& RHICmdList)
-        {
-          if (RB)
-          {
-            RB->Unlock();
-            delete RB;
-          }
-        });
-      delete ctx;
-    };
-
   ReadbackFreeCtx* ctxY = new ReadbackFreeCtx{ ReadbackY };
-  ReadbackFreeCtx* ctxUV = new ReadbackFreeCtx{ ReadbackUV };
+  ReadbackFreeCtx* ctxU = new ReadbackFreeCtx{ ReadbackU };
+  ReadbackFreeCtx* ctxV = new ReadbackFreeCtx{ ReadbackV };
 
-  AVBufferRef* bufY = av_buffer_create(static_cast<uint8_t*>(YPtr), Width * Height, AvFreeReadback, ctxY, 0);
-  AVBufferRef* bufUV = av_buffer_create(static_cast<uint8_t*>(UVPtr), (Width * Height) / 2, AvFreeReadback, ctxUV, 0);
+  AVBufferRef* bufY = av_buffer_create(static_cast<uint8_t*>(YPtr), static_cast<int>(YSize), AvFreeReadback, ctxY, 0);
+  AVBufferRef* bufU = av_buffer_create(static_cast<uint8_t*>(UPtr), static_cast<int>(USize), AvFreeReadback, ctxU, 0);
+  AVBufferRef* bufV = av_buffer_create(static_cast<uint8_t*>(VPtr), static_cast<int>(VSize), AvFreeReadback, ctxV, 0);
 
-  if (!bufY || !bufUV)
+  if (!bufY || !bufU || !bufV)
   {
     if (bufY) av_buffer_unref(&bufY);
-    if (bufUV) av_buffer_unref(&bufUV);
+    if (bufU) av_buffer_unref(&bufU);
+    if (bufV) av_buffer_unref(&bufV);
     return;
   }
 
   FScopeLock guard(&LibAVState->Mutex);
-  AVFrame* frame = av_frame_alloc();
-  frame->format = AV_PIX_FMT_NV12;
-  frame->width = Width; frame->height = Height;
-  frame->buf[0] = bufY; frame->buf[1] = bufUV;
-  frame->data[0] = bufY->data; frame->linesize[0] = YStride;
-  frame->data[1] = bufUV->data; frame->linesize[1] = UVStride;
+  // Ensure libav encoder context and packet are available (lazy init)
+  if (!LibAVState->CodecCtx)
+  {
+    if (!LibAVState->Codec)
+    {
+      UE_LOG(LogTemp, Error, TEXT("Synavis: No libav codec available for initialization"));
+      // free AVBufferRefs now to trigger their free callbacks
+      av_buffer_unref(&bufY);
+      av_buffer_unref(&bufU);
+      av_buffer_unref(&bufV);
+      return;
+    }
+    LibAVState->CodecCtx = avcodec_alloc_context3(LibAVState->Codec);
+    if (!LibAVState->CodecCtx)
+    {
+      UE_LOG(LogTemp, Error, TEXT("Synavis: avcodec_alloc_context3 failed"));
+      av_buffer_unref(&bufY);
+      av_buffer_unref(&bufU);
+      av_buffer_unref(&bufV);
+      return;
+    }
+    LibAVState->CodecCtx->width = Width;
+    LibAVState->CodecCtx->height = Height;
+    // Target encoder expects YUV420P (libvpx)
+    LibAVState->CodecCtx->pix_fmt = AV_PIX_FMT_YUV420P;
+    LibAVState->CodecCtx->time_base = AVRational{1, 30};
+    // Allocate packet container used for receive
+    if (!LibAVState->Packet) LibAVState->Packet = av_packet_alloc();
+    int openRc = avcodec_open2(LibAVState->CodecCtx, LibAVState->Codec, nullptr);
+    if (openRc < 0)
+    {
+      char errbuf[128]; av_strerror(openRc, errbuf, sizeof(errbuf));
+      UE_LOG(LogTemp, Error, TEXT("Synavis: avcodec_open2 failed: %s"), ANSI_TO_TCHAR(errbuf));
+      avcodec_free_context(&LibAVState->CodecCtx);
+      av_buffer_unref(&bufY);
+      av_buffer_unref(&bufU);
+      av_buffer_unref(&bufV);
+      return;
+    }
+    LibAVState->Width = Width;
+    LibAVState->Height = Height;
+    UE_LOG(LogTemp, Log, TEXT("Synavis: Initialized libav CodecCtx %p (w=%d h=%d pix=%d)"), LibAVState->CodecCtx, Width, Height, AV_PIX_FMT_YUV420P);
+  }
 
+  // Build an AVFrame that references the three plane buffers (Y, U, V)
+  AVFrame* frame = av_frame_alloc();
+  frame->format = AV_PIX_FMT_YUV420P;
+  frame->width = Width; frame->height = Height;
+
+  // Create refs owned by the frame: av_buffer_ref increments refcount, then we drop our temporary refs
+  AVBufferRef* refY = av_buffer_ref(bufY);
+  AVBufferRef* refU = av_buffer_ref(bufU);
+  AVBufferRef* refV = av_buffer_ref(bufV);
+  // Drop our initial refs; frame now holds references
+  av_buffer_unref(&bufY);
+  av_buffer_unref(&bufU);
+  av_buffer_unref(&bufV);
+
+  if (!refY || !refU || !refV)
+  {
+    if (refY) av_buffer_unref(&refY);
+    if (refU) av_buffer_unref(&refU);
+    if (refV) av_buffer_unref(&refV);
+    av_frame_free(&frame);
+    return;
+  }
+
+  frame->buf[0] = refY;
+  frame->buf[1] = refU;
+  frame->buf[2] = refV;
+  frame->data[0] = refY->data; frame->linesize[0] = YRowPitch;
+  frame->data[1] = refU->data; frame->linesize[1] = URowPitch;
+  frame->data[2] = refV->data; frame->linesize[2] = VRowPitch;
+
+  // Send frame directly to encoder
   int ret = avcodec_send_frame(LibAVState->CodecCtx, frame);
   if (ret < 0)
   {
     char errbuf[128]; av_strerror(ret, errbuf, sizeof(errbuf));
-    UE_LOG(LogTemp, Error, TEXT("Synavis: avcodec_send_frame (NV12 zero-copy) failed: %s"), ANSI_TO_TCHAR(errbuf));
+    UE_LOG(LogTemp, Error, TEXT("Synavis: avcodec_send_frame (I420 zero-copy) failed: %s"), ANSI_TO_TCHAR(errbuf));
   }
+
+  // Free the frame; this will unref the frame->buf refs when appropriate and eventually trigger our free callbacks
+  av_frame_free(&frame);
 
   while ((ret = avcodec_receive_packet(LibAVState->CodecCtx, LibAVState->Packet)) >= 0)
   {
-    // Prepare packet data
     size_t sz = static_cast<size_t>(LibAVState->Packet->size);
-    const uint8_t* data = LibAVState->Packet->data;
-
     if (sz == 0)
     {
       av_packet_unref(LibAVState->Packet);
       continue;
     }
-
-    // Determine dispatch targets. Prefer explicit TargetTracks (populated at capture time),
-    // otherwise fall back to all currently-open tracks across connections so we don't silently drop images.
-    TArray<int32> DispatchTargets = TargetTracks;
-    
-    if (DispatchTargets.Num() > 0)
-    {
-      UE_LOG(LogTemp, Verbose, TEXT("Synavis: Sending encoded packet size=%d to %d handler track(s)"), (int)sz, DispatchTargets.Num());
-      for (int tr : DispatchTargets)
-      {
-        if (tr != 0 && rtcIsOpen(tr))
-        {
-          // Compute RTP timestamp. Prefer AVPacket PTS if available, otherwise wall clock.
-          uint32_t rtpTs = 0;
+    TArray<uint8> Vp9Buffer;
+    Vp9Buffer.Append(reinterpret_cast<uint8*>(LibAVState->Packet->data), LibAVState->Packet->size);
+    uint32_t rtpTs = 0;
 #if defined(LIBAV_AVAILABLE)
-          if (LibAVState->Packet->pts != AV_NOPTS_VALUE)
-          {
-            AVRational outQ = {1, 90000};
-            rtpTs = static_cast<uint32_t>(av_rescale_q(LibAVState->Packet->pts, LibAVState->CodecCtx->time_base, outQ));
-          }
-          else
-          {
-            rtpTs = static_cast<uint32_t>(FPlatformTime::Seconds() * 90000.0);
-          }
-#else
-          rtpTs = static_cast<uint32_t>(FPlatformTime::Seconds() * 90000.0);
-#endif
-          // Call packetizer & sender with RTP timestamp
-          UE_LOG(LogTemp, Verbose, TEXT("Synavis: Calling VP9PacketizeAndSend for track %d packetSize=%d rtpTs=%u"), tr, static_cast<int>(sz), rtpTs);
-          VP9PacketizeAndSend(tr, data, sz, rtpTs);
-        }
-      }
-    }
-    // No open tracks: try the global/system datachannel using the C API
-    else if (SystemDataChannel != 0 && rtcIsOpen(SystemDataChannel))
+    if (LibAVState->Packet->pts != AV_NOPTS_VALUE)
     {
-      int sendRes = rtcSendMessage(SystemDataChannel, reinterpret_cast<const char*>(data), static_cast<int>(sz));
-      if (sendRes != RTC_ERR_SUCCESS)
-      {
-        UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcSendMessage returned %d when sending packet to system datachannel"), sendRes);
-      }
-      else
-      {
-        UE_LOG(LogTemp, VeryVerbose, TEXT("Synavis: Sent encoded packet to system datachannel=%d size=%d"), SystemDataChannel, static_cast<int>(sz));
-      }
+      AVRational outQ = {1, 90000};
+      rtpTs = static_cast<uint32_t>(av_rescale_q(LibAVState->Packet->pts, LibAVState->CodecCtx->time_base, outQ));
     }
     else
     {
-      UE_LOG(LogTemp, Warning, TEXT("Synavis: Encoded packet dropped - no open tracks or datachannel"));
+      rtpTs = static_cast<uint32_t>(FPlatformTime::Seconds() * 90000.0);
+    }
+#else
+    rtpTs = static_cast<uint32_t>(FPlatformTime::Seconds() * 90000.0);
+#endif
+    if (Vp9Packetizer)
+    {
+      Vp9Packetizer->SendFrame(MoveTemp(Vp9Buffer), rtpTs, 90000/30, TargetTracks);
     }
     av_packet_unref(LibAVState->Packet);
   }
 
-  av_frame_free(&frame);
 }
 

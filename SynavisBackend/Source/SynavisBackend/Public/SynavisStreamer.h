@@ -43,6 +43,7 @@ THIRD_PARTY_INCLUDES_END
 class UTextureRenderTarget2D;
 class USceneCaptureComponent2D;
 class USynavisStreamer;
+class USynavisVp9Packetizer;
 
 DECLARE_DYNAMIC_DELEGATE_OneParam(FSynavisMessage, FString, Message);
 DECLARE_DYNAMIC_DELEGATE_OneParam(FSynavisData, const TArray<uint8>&, Data);
@@ -224,6 +225,10 @@ public:
   UPROPERTY()
   FSynavisData DataBroadcast;
 
+    // VP9 RTP packetizer (zero-alloc, async)
+    UPROPERTY()
+    USynavisVp9Packetizer* Vp9Packetizer = nullptr;
+
   // Resolve channel -> connection mapping on the game thread and dispatch message
   void ResolveAndHandleDataChannelMessage(int dc, const std::variant<TArray<uint8>, std::string>& message);
 
@@ -261,6 +266,14 @@ public:
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Streaming|Signalling")
   int32 SignallingPort = 9000;
 
+  // Maximum message size to request from libdatachannel (bytes). Set to 0 for library default.
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Streaming|Signalling")
+  int32 MaxMessageSize = 262144;
+
+  // Optional MTU hint (bytes). Set to 0 to use automatic/default.
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Streaming|Signalling")
+  int32 Mtu = 0;
+
   // If true the streamer will create local SDPs (take the first step / be offerer).
   // Set to false to let remote endpoints offer first and make this component passive.
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Streaming|Signalling")
@@ -270,7 +283,7 @@ public:
   // is called from the editor or Blueprint. Allows registering handlers in construction
   // scripts before PeerConnection offers are created.
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Streaming|Signalling")
-  bool bHoldNegotiation = false;
+  bool bHoldNegotiation = true;
 
   UFUNCTION(BlueprintCallable, Category = "Streaming|Signalling")
   void StartSignalling();
@@ -389,7 +402,9 @@ protected:
   struct FPendingNV12Readback
   {
     FRHIGPUTextureReadback* ReadbackY = nullptr;
-    FRHIGPUTextureReadback* ReadbackUV = nullptr;
+    // Separate U and V half-resolution readbacks (I420 layout)
+    FRHIGPUTextureReadback* ReadbackU = nullptr;
+    FRHIGPUTextureReadback* ReadbackV = nullptr;
     double EnqueuedAt = 0.0;
     // optional track to send encoded data to
     TArray<int32> TargetTracks;
@@ -411,7 +426,9 @@ protected:
   // Zero-copy variant: accept FRHIGPUTextureReadback readbacks for Y and UV (NV12). The helper will wrap
   // the readback pointers into AVBufferRefs that free/unlock the readbacks when FFmpeg is done.
   // TargetTracks contains one or more tracks that should receive the encoded packets.
-  void EncodeNV12ReadbackAndSend(class FRHIGPUTextureReadback* ReadbackY, class FRHIGPUTextureReadback* ReadbackUV, int Width, int Height, const TArray<int32>& TargetTracks);
+  // Accept separate Y, U and V readbacks (I420). The helper will wrap
+  // the readback pointers into AVBufferRefs that free/unlock the readbacks when FFmpeg is done.
+  void EncodeNV12ReadbackAndSend(class FRHIGPUTextureReadback* ReadbackY, class FRHIGPUTextureReadback* ReadbackU, class FRHIGPUTextureReadback* ReadbackV, int Width, int Height, const TArray<int32>& TargetTracks);
 
   void OnDataChannelMessage(const std::variant<TArray<uint8>, std::string>& message);
 
@@ -454,6 +471,11 @@ protected:
   // callback threads.
   mutable FCriticalSection DataChannelContextsMutex;
 
+  // Pending remote answers queued per-peer-connection id. Protected by mutex
+  // because C API callbacks may arrive on arbitrary threads.
+  mutable FCriticalSection PendingAnswersMutex;
+  TMap<int32, TArray<FString>> PendingRemoteAnswers;
+
   // Note: per-connection mapping of datachannel -> handler is stored in
   // FSynavisConnection::HandlersByChannel. No global reverse map is kept.
 
@@ -488,6 +510,7 @@ public:
   // The integer parameters identify the C API object ids (peer, datachannel, track)
   void HandlePcLocalDescriptionCallback(int pc, const char* sdp, const char* type);
   void HandlePcGatheringStateChangeCallback(int pc, int state);
+  void HandlePcSignalingStateChangeCallback(int pc, int state);
   void HandleDataChannelMessageCallback(int dc, const std::variant<TArray<uint8>, std::string>& message);
   void HandleDataChannelOpenCallback(int dc);
   void HandleDataChannelClosedCallback(int dc);
@@ -501,6 +524,8 @@ public:
   // to be called from editor/blueprint once handler registration is complete.
   UFUNCTION(BlueprintCallable, Category = "Streaming|Signalling")
   void StartConnectionNegotiation();
+  // Drain any pending remote answers for a given peer connection id
+  void DrainPendingAnswersForPC(int pc);
   // Send local SDP for a specific connection via the signalling websocket
   void CommunicateSDPForConnection(const FSynavisConnection& Conn);
   // Register remote ICE candidate for a given connection (content contains candidate obj)

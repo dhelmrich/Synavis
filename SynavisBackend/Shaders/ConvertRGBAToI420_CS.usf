@@ -18,7 +18,8 @@ Texture2D<float4> InputTexture : register(t0);
 SamplerState InputSampler : register(s0);
 
 RWTexture2D<uint> OutY : register(u0);
-RWTexture2D<uint> OutUV : register(u1);
+RWTexture2D<uint> OutU : register(u1);
+RWTexture2D<uint> OutV : register(u2);
 
 [numthreads(16,16,1)]
 void CSMainY(uint3 DTid : SV_DispatchThreadID)
@@ -60,8 +61,8 @@ void CSMainY(uint3 DTid : SV_DispatchThreadID)
         uint U = (uint)round(clamp(Uf, 0.0, 255.0));
         uint V = (uint)round(clamp(Vf, 0.0, 255.0));
 
-        uint packed = (U & 0xFF) | ((V & 0xFF) << 8);
-        // write to half-res coordinate
-        OutUV[int2(x/2, y/2)] = packed;
+        // write separate U and V bytes to half-res coordinates
+        OutU[int2(x/2, y/2)] = U & 0xFF;
+        OutV[int2(x/2, y/2)] = V & 0xFF;
     }
 }
