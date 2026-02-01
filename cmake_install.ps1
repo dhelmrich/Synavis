@@ -210,9 +210,11 @@ if (-not $NoBuild) {
         }
 
         Write-Host "Installing ffmpeg via vcpkg..."
-        & vcpkg install ffmpeg[avcodec,avdevice,avfilter,avformat,core]
+        # Ensure swscale and swresample features are requested so their
+        # libraries (libswscale / libswresample) are available for export.
+        & vcpkg install ffmpeg[avcodec,avdevice,avfilter,avformat,core,swresample,swscale]
 
-        # Determine vcpkg root and triplet similarly to libvpx handling
+        # Determine vcpkg root and triplet
         $VcpkgExePath = $vcpkgCmd.Source
         $VcpkgRoot = Split-Path $VcpkgExePath -Parent
         Write-Host "Detected vcpkg root: $VcpkgRoot"
@@ -240,6 +242,7 @@ if (-not $NoBuild) {
         $IncludeDir = Join-Path $InstallDir "include"
 
         # Destination layout: SynavisBackend/Source/libav/{lib,include}
+        # Export ffmpeg to SynavisBackend.
         $SynavisBackendRoot = Join-Path $BaseDir "SynavisBackend"
         $DestLibDir = Join-Path $SynavisBackendRoot "Source\libav\lib"
         $DestIncludeDir = Join-Path $SynavisBackendRoot "Source\libav\include"
@@ -290,7 +293,14 @@ if (-not $NoBuild) {
         # Copy ffmpeg/libav-related include directories: avcodec, avformat, avutil, swresample, swscale
         Write-Host "Collecting ffmpeg/libav-specific include directories from $IncludeDir"
         $topLevel = Get-ChildItem -Path $IncludeDir -Force -ErrorAction SilentlyContinue
-        $includeMatches = $topLevel | Where-Object { $_.Name -like 'libav*' -or $_.Name -like 'avcodec*' -or $_.Name -like 'avformat*' -or $_.Name -like 'avutil*' -or $_.Name -like 'swresample*' -or $_.Name -like 'swscale*' -or $_.Name -like 'postproc*' -or $_.Name -like 'avfilter*' }
+        # Match common FFmpeg include directories. Match both 'swscale' and
+        # 'libswscale' (vcpkg sometimes prefixes includes with 'lib'). Use
+        # wildcard at both ends to be robust to naming variations.
+        $includeMatches = $topLevel | Where-Object {
+            $_.Name -like '*libav*' -or $_.Name -like '*avcodec*' -or $_.Name -like '*avformat*' -or $_.Name -like '*avutil*' -or
+            $_.Name -like '*swresample*' -or $_.Name -like '*libswresample*' -or $_.Name -like '*swscale*' -or $_.Name -like '*libswscale*' -or
+            $_.Name -like '*postproc*' -or $_.Name -like '*avfilter*'
+        }
         if ($includeMatches -and $includeMatches.Count -gt 0) {
             foreach ($item in $includeMatches) {
                 $dest = Join-Path $DestIncludeDir $item.Name
@@ -299,7 +309,10 @@ if (-not $NoBuild) {
             }
         } else {
             # Fallback: copy headers containing 'av' or 'libav' in their name preserving folder structure
-        $headerMatches = Get-ChildItem -Path $IncludeDir -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'av*' -or $_.Name -like 'libav*' -or $_.Name -like 'avcodec*' -or $_.Name -like 'avformat*' -or $_.Name -like 'avutil*' }
+        $headerMatches = Get-ChildItem -Path $IncludeDir -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
+            $_.Name -like 'av*' -or $_.Name -like 'libav*' -or $_.Name -like 'avcodec*' -or $_.Name -like 'avformat*' -or $_.Name -like 'avutil*' -or
+            $_.Name -like 'swscale*' -or $_.Name -like 'libswscale*' -or $_.Name -like 'swresample*' -or $_.Name -like 'libswresample*'
+        }
             if ($headerMatches -and $headerMatches.Count -gt 0) {
                 foreach ($h in $headerMatches) {
                     $rel = $h.FullName.Substring($IncludeDir.Length).TrimStart('\','/')
