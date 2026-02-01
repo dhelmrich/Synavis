@@ -308,21 +308,38 @@ async def handle(connection, message) :
       content["time"] = int(time.time())
       await connection.send(json.dumps(content))
     #endif
+    elif content["type"] == "needMedia" :
+      # mark this connection as wanting only SDPs that contain media
+      connection.expects_media = True
+      glog.info("Connection requests media-bearing SDPs only: " + str(connection))
+      await connection.send(json.dumps({"type":"ack","message":"needMedia set"}))
+    #endif
     elif "sdp" in content :
       sdp = content["sdp"]
       connection.ParseSDP(sdp)
       # clean up the json object so that unreal doesn't complain
       data = {"type": content["type"], "sdp": sdp}
+      # determine whether this SDP contains any media m= lines
+      has_media = ("m=video" in sdp) or ("m=audio" in sdp)
       if connection.role == "server" :
         for player_id in connection.connected_ids :
-          await connections[player_id].send(json.dumps(data))
+          # only send to players that either don't require media-only SDPs or when this SDP has media
+          recipient = connections[player_id]
+          #if recipient.expects_media and not has_media :
+          #  glog.info("Skipping non-media SDP for " + str(recipient))
+          #  continue
+          await recipient.send(json.dumps(data))
       elif connection.role == "client" :
         if len(connection.connected_ids) == 0 :
           glog.log_many("warning", "No server connected for ", str(connection), " we will try again when a server connects")
           await connection.send(json.dumps({"type": "control", "message": "No server connected"}))
         for server_id in connection.connected_ids :
+          recipient = connections[server_id]
+          if recipient.expects_media and not has_media :
+            glog.info("Skipping non-media SDP for " + str(recipient))
+            continue
           data["playerId"] = connection.id
-          await connections[server_id].send(json.dumps(data))
+          await recipient.send(json.dumps(data))
         #endfor
       #endif
     elif "candidate" in content or "iceCandidate" in content :
