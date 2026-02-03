@@ -1005,7 +1005,17 @@ void USynavisStreamer::BeginPlay()
   if (!Vp9Packetizer)
   {
     Vp9Packetizer = NewObject<USynavisVp9Packetizer>(this);
-    Vp9Packetizer->Initialize(98, GetNextSSRC(), 1200);
+    // Configure packetizer payload according to configured MTU/MaxMessageSize (implicit)
+    {
+      int EffectiveMtu = (this->Mtu > 0) ? this->Mtu : 1280;
+      int Overhead = 12 + 8 + 40; // RTP + UDP + IP/SRTP estimate
+      int MaxPayload = EffectiveMtu - Overhead;
+      if (MaxPayload < 200) MaxPayload = 200;
+      if (MaxPayload > 1400) MaxPayload = 1400;
+      uint16_t PayloadSize = static_cast<uint16_t>(MaxPayload);
+      UE_LOG(LogTemp, Log, TEXT("Synavis: Initializing packetizer implicitly: Mtu=%d MaxMessageSize=%d => payload=%d"), EffectiveMtu, MaxMessageSize, PayloadSize);
+      Vp9Packetizer->Initialize(98, GetNextSSRC(), PayloadSize);
+    }
   }
 
 }
@@ -1101,131 +1111,6 @@ void USynavisStreamer::TickComponent(float DeltaTime, ELevelTick TickType, FActo
       }
     }
     // Any remaining PendingReadbacks (if deadline hit) will be processed in subsequent ticks or cleaned up via age/timeouts above.
-  }
-}
-
-// (Struct declarations live in the header to satisfy UHT; destructor definitions follow)
-
-// NOTE: The previous internal WebRTC container was removed in the refactor; cleanup
-// of signalling is handled by the USynavisStreamer destructor and the libdatachannel C API websocket id (SignallingId).
-
-// VP9 RTP packetizer: quality-preserving, frame-aligned fragmentation
-// Implements simplified VP9 RTP payload descriptor per RFC/draft semantics
-// and fragments frames to respect MTU. Sends RTP packets over the given
-// libdatachannel track id by building RTP headers + VP9 payload descriptor
-// + fragment payload and calling `rtcSendMessage(trackId, packet, len)`.
-
-struct FPacketizerState
-{
-  uint16_t Sequence = 0;
-  uint32_t SSRC = 0;
-  // MTU in bytes for this packetizer (including IP/UDP/RTP headers outside scope).
-  int MTU = 1200;
-  FPacketizerState() {}
-};
-
-// Maintain per-track packetizer state
-static std::unordered_map<int, FPacketizerState> GPacketizers;
-
-// Helper to get or create packetizer state for a track
-static FPacketizerState& GetOrCreatePacketizer(int trackId)
-{
-  auto it = GPacketizers.find(trackId);
-  if (it != GPacketizers.end()) return it->second;
-  FPacketizerState st;
-  // initialize sequence with random start
-  st.Sequence = static_cast<uint16_t>(FMath::Rand());
-  // generate random SSRC
-  st.SSRC = static_cast<uint32_t>((FMath::Rand() << 16) ^ FMath::Rand());
-  // default MTU; can be tuned later
-  st.MTU = 1200;
-  auto r = GPacketizers.emplace(trackId, st);
-  return r.first->second;
-}
-
-// Minimal RTP header builder (no extensions)
-struct FRtpHeader
-{
-  uint8_t V_P_X_CC; // version(2),P,X,CC
-  uint8_t M_PT;     // M bit + payload type
-  uint16_t Sequence;
-  uint32_t Timestamp;
-  uint32_t SSRC;
-};
-
-// Build VP9 payload descriptor (basic, no PictureID by default). Returns number of bytes written.
-static int BuildVp9PayloadDescriptor(uint8_t* OutBuf, int OutBufLen, bool startBit, bool endBit)
-{
-  if (OutBufLen < 1) return 0;
-  // Basic descriptor: |I|P|L|F|B|E|V|Z| (I=PictureID present etc.)
-  // We'll emit a 1-byte descriptor with S (start) mapped to 'B' bit per draft
-  // Layout: extended control bits not used here; set I=0 (no PictureID), P/L/F=0, B= startBit, E=endBit, V=0, Z=0
-  uint8_t desc = 0;
-  // B bit: in the draft the S (start) is represented by 'B' bit in descriptor
-  if (startBit) desc |= (1 << 3); // set B
-  if (endBit) desc |= (1 << 2);   // set E
-  OutBuf[0] = desc;
-  return 1;
-}
-
-// Send raw bytes over libdatachannel track id. Returns rtcSendMessage result.
-static int SendNative(int trackId, const uint8_t* Data, int Len)
-{
-  return rtcSendMessage(trackId, reinterpret_cast<const char*>(Data), Len);
-}
-
-// New packetizer signature: use libdatachannel opaque message + media interceptor
-static void* Synavis_Rtc_MediaInterceptor(int pc, const char* message, int size, void* user_ptr)
-{
-  // Incoming 'message' may be an opaque rtcMessage pointer encoded as a char* with a special marker size.
-  // We expect the sender to pass the opaque rtcMessage pointer as the data pointer and a size of -1.
-  if (size == -1 && message != nullptr)
-  {
-    return const_cast<char*>(message);
-  }
-  return nullptr;
-}
-
-static void VP9PacketizeAndSend(int trackId, const uint8_t* data, size_t size, uint32_t /*rtpTimestamp*/, int mtuOverride = 0)
-{
-  if (trackId == 0 || data == nullptr || size == 0) return;
-  UE_LOG(LogTemp, Verbose, TEXT("Synavis: VP9PacketizeAndSend (opaque) track=%d size=%d"), trackId, static_cast<int>(size));
-  if (!rtcIsOpen(trackId))
-  {
-    UE_LOG(LogTemp, Warning, TEXT("Synavis: VP9PacketizeAndSend - track %d not open, dropping packet"), trackId);
-    return;
-  }
-
-  // Copy encoded frame into heap buffer; libdatachannel will take ownership of the opaque message
-  void* payload = malloc(size);
-  if (!payload) { UE_LOG(LogTemp, Error, TEXT("Synavis: malloc failed in VP9PacketizeAndSend")); return; }
-  memcpy(payload, data, size);
-
-  // Create an opaque message that wraps the payload. The returned rtcMessage* must not be freed here
-  // if we hand it to the media interceptor (the library will assume ownership).
-  rtcMessage* om = rtcCreateOpaqueMessage(payload, static_cast<int>(size));
-  if (!om)
-  {
-    UE_LOG(LogTemp, Error, TEXT("Synavis: rtcCreateOpaqueMessage failed"));
-    free(payload);
-    return;
-  }
-
-  // Send the opaque message pointer via rtcSendMessage using a special negative-size marker (-1).
-  // The media interceptor (registered on the PeerConnection) will receive the pointer and return it
-  // into libdatachannel's media pipeline so the library handles RTP packetization.
-  int sendRes = rtcSendMessage(trackId, reinterpret_cast<const char*>(om), -1);
-  if (sendRes != RTC_ERR_SUCCESS)
-  {
-    UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcSendMessage returned %d when sending opaque packet to track %d"), sendRes, trackId);
-    // If send failed, free the opaque message to avoid leaking
-    rtcDeleteOpaqueMessage(om);
-    // temporarily for debugging: hard exit now
-    FPlatformMisc::RequestExit(false);
-  }
-  else
-  {
-    UE_LOG(LogTemp, Verbose, TEXT("Synavis: Sent opaque encoded packet to track %d size=%d"), trackId, static_cast<int>(size));
   }
 }
 
@@ -2285,7 +2170,6 @@ void USynavisStreamer::CreateConnectionForPlayer(int32 PlayerID)
   // Notify on signaling state changes so we can apply queued remote answers
   rtcSetSignalingStateChangeCallback(Conn->PeerConnection, Synavis_Rtc_OnPcSignalingStateChange);
   // Media interceptor: allow passing opaque messages into libdatachannel's media pipeline
-  rtcSetMediaInterceptorCallback(Conn->PeerConnection, Synavis_Rtc_MediaInterceptor);
 
   // Create a per-connection data channel for control/messages using the C API
   std::string channelName = std::string("synavis-data-") + std::to_string(PlayerID);
