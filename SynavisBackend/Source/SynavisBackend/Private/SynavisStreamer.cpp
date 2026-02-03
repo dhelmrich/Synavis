@@ -1,5 +1,6 @@
 #include "SynavisStreamer.h"
-#include "SynavisVp9Packetizer.h"
+
+#include "SynavisVp9SendoffHandler.h"
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
@@ -37,6 +38,9 @@ THIRD_PARTY_INCLUDES_START
 #endif
 #if defined(LIBAV_AVAILABLE)
 extern "C" {
+
+
+
 #include <libavcodec/avcodec.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/opt.h>
@@ -149,28 +153,7 @@ void USynavisStreamer::TeardownConnection(int32 PlayerID)
   Connections.Remove(PlayerID);
   UE_LOG(LogTemp, Log, TEXT("Synavis: Teardown complete for connection %d"), PlayerID);
 }
-// C-style free callback for av_buffer_create when we allocated the memory via av_malloc
-static void AvFreeOpaque(void* opaque, uint8_t* data)
-{
-  if (opaque) av_free(opaque);
-}
 
-// C-style free callback for av_buffer_create when the buffer wraps an FRHIGPUTextureReadback.
-// The opaque is expected to be a pointer to ReadbackFreeCtx (defined locally where used),
-// but we forward-declare a minimal struct here to avoid include cycles.
-struct __ReadbackFreeCtx { FRHIGPUTextureReadback* RB; };
-static void AvFreeReadback(void* opaque, uint8_t* data)
-{
-  __ReadbackFreeCtx* ctx = reinterpret_cast<__ReadbackFreeCtx*>(opaque);
-  if (!ctx) return;
-  FRHIGPUTextureReadback* RB = ctx->RB;
-  // Unlock/delete must run on render thread
-  ENQUEUE_RENDER_COMMAND(Synavis_FreeReadbackFromAVBuf)([RB](FRHICommandListImmediate& RHICmdList)
-    {
-      if (RB) { RB->Unlock(); delete RB; }
-    });
-  delete ctx;
-}
 
 
 // Use TArray<uint8> for binary payloads instead of rtc::binary to avoid C++ ABI crossing
@@ -287,7 +270,14 @@ extern "C" {
       self = GGlobalStreamer;
     }
     if (!self) return;
-    AsyncTask(ENamedThreads::GameThread, [self]() { self->HandleSignallingOpen(); });
+    AsyncTask(ENamedThreads::GameThread, []() {
+      USynavisStreamer* selfLocal = nullptr;
+      {
+        FScopeLock lock(&GGlobalStreamerMutex);
+        selfLocal = GGlobalStreamer;
+      }
+      if (selfLocal) selfLocal->HandleSignallingOpen();
+    });
   }
 
   void Synavis_Rtc_OnClosed(int id, void* user_ptr)
@@ -298,7 +288,14 @@ extern "C" {
       self = GGlobalStreamer;
     }
     if (!self) return;
-    AsyncTask(ENamedThreads::GameThread, [self]() { self->HandleSignallingClose(); });
+    AsyncTask(ENamedThreads::GameThread, []() {
+      USynavisStreamer* selfLocal = nullptr;
+      {
+        FScopeLock lock(&GGlobalStreamerMutex);
+        selfLocal = GGlobalStreamer;
+      }
+      if (selfLocal) selfLocal->HandleSignallingClose();
+    });
   }
 
   void Synavis_Rtc_OnError(int id, const char* err, void* user_ptr)
@@ -310,7 +307,14 @@ extern "C" {
     }
     if (!self) return;
     std::string s = err ? std::string(err) : std::string();
-    AsyncTask(ENamedThreads::GameThread, [self, s]() { self->HandleSignallingError(s); });
+    AsyncTask(ENamedThreads::GameThread, [s]() {
+      USynavisStreamer* selfLocal = nullptr;
+      {
+        FScopeLock lock(&GGlobalStreamerMutex);
+        selfLocal = GGlobalStreamer;
+      }
+      if (selfLocal) selfLocal->HandleSignallingError(s);
+    });
   }
 
   void Synavis_Rtc_OnMessage(int id, const char* data, int size, void* user_ptr)
@@ -957,22 +961,7 @@ USynavisStreamer::~USynavisStreamer()
     rtcDeleteWebSocket(SignallingId);
     SignallingId = 0;
   }
-  if (LibAVState)
-  {
-    if (LibAVState->Packet)
-    {
-      av_packet_free(&LibAVState->Packet); LibAVState->Packet = nullptr;
-    }
-    if (LibAVState->Frame)
-    {
-      av_frame_free(&LibAVState->Frame); LibAVState->Frame = nullptr;
-    }
-    if (LibAVState->CodecCtx)
-    {
-      avcodec_free_context(&LibAVState->CodecCtx); LibAVState->CodecCtx = nullptr;
-    }
-    delete LibAVState; LibAVState = nullptr;
-  }
+
 
   // Clean up any remaining connections (ensure libdatachannel objects are closed and heap objects freed)
   if (Connections.Num() > 0)
@@ -1001,11 +990,11 @@ void USynavisStreamer::BeginPlay()
   // sanity check: fire function
   Synavis_Rtc_Logger(RTC_LOG_INFO, "SynavisStreamer Synavis_Rtc_Logger initialized");
 
-  // VP9 packetizer init
-  if (!Vp9Packetizer)
+
+  // Non-blocking sendoff handler: offloads readback locking, encoding and packetization
+  if (!SendoffHandler)
   {
-    Vp9Packetizer = NewObject<USynavisVp9Packetizer>(this);
-    // Configure packetizer payload according to configured MTU/MaxMessageSize (implicit)
+    SendoffHandler = NewObject<USynavisVp9SendoffHandler>(this);
     {
       int EffectiveMtu = (this->Mtu > 0) ? this->Mtu : 1280;
       int Overhead = 12 + 8 + 40; // RTP + UDP + IP/SRTP estimate
@@ -1013,8 +1002,10 @@ void USynavisStreamer::BeginPlay()
       if (MaxPayload < 200) MaxPayload = 200;
       if (MaxPayload > 1400) MaxPayload = 1400;
       uint16_t PayloadSize = static_cast<uint16_t>(MaxPayload);
-      UE_LOG(LogTemp, Log, TEXT("Synavis: Initializing packetizer implicitly: Mtu=%d MaxMessageSize=%d => payload=%d"), EffectiveMtu, MaxMessageSize, PayloadSize);
-      Vp9Packetizer->Initialize(98, GetNextSSRC(), PayloadSize);
+      SendoffHandler->Initialize(98, GetNextSSRC(), PayloadSize);
+      // Ensure streamer LibAVState points to the handler-owned encoder state
+      LibAVState = SendoffHandler->GetOrCreateLibAVEncoderState();
+      UE_LOG(LogTemp, Warning, TEXT("Synavis: Linked LibAVState to SendoffHandler %p -> LibAVState=%p"), SendoffHandler, LibAVState);
     }
   }
 
@@ -1068,8 +1059,12 @@ void USynavisStreamer::TickComponent(float DeltaTime, ELevelTick TickType, FActo
         if (rec.ReadbackY->IsReady() && rec.ReadbackU->IsReady() && rec.ReadbackV->IsReady())
         {
           UE_LOG(LogTemp, Verbose, TEXT("Synavis: Pending readback ready, starting zero-copy encode (Width=%d Height=%d)"), rec.Width, rec.Height);
-          EncodeNV12ReadbackAndSend(rec.ReadbackY, rec.ReadbackU, rec.ReadbackV, rec.Width, rec.Height, rec.TargetTracks);
-          // EncodeNV12ReadbackAndSend takes ownership of the readbacks via AVBuffer free callbacks,
+          // Enqueue non-blocking sendoff via the centralized sendoff handler (takes ownership)
+          if (SendoffHandler)
+          {
+            SendoffHandler->EnqueueReadbackNonBlocking(rec.ReadbackY, rec.ReadbackU, rec.ReadbackV, rec.Width, rec.Height, rec.TargetTracks, SendoffHandler->GetOrCreateLibAVEncoderState());
+          }
+          // EnqueueReadbackNonBlocking takes ownership of the readbacks via AVBuffer free callbacks,
           // so do not unlock/delete them here - remove entry from queue.
           PendingReadbacks.RemoveAtSwap(i);
           DidWorkThisIteration = true;
@@ -1114,12 +1109,7 @@ void USynavisStreamer::TickComponent(float DeltaTime, ELevelTick TickType, FActo
   }
 }
 
-USynavisStreamer::FLibAVEncoderState::~FLibAVEncoderState()
-{
-  if (Packet) { av_packet_free(&Packet); Packet = nullptr; }
-  if (Frame) { av_frame_free(&Frame); Frame = nullptr; }
-  if (CodecCtx) { avcodec_free_context(&CodecCtx); CodecCtx = nullptr; }
-}
+
 
 // Public helpers for external callbacks to manage the central DataChannelCtx map
 void USynavisStreamer::AddDataChannelContext(int32 DcId, TSharedPtr<DataChannelCtx> Ctx)
@@ -1374,14 +1364,9 @@ bool USynavisStreamer::AnyConnectionStreaming() const
 void USynavisStreamer::StartStreaming()
 {
   UE_LOG(LogTemp, Log, TEXT("Synavis: StartStreaming called"));
-  // Initialize persistent libav encoder state lazily and enable streaming on
-  // existing connections. New connections default to bStreaming=false.
-  if (!LibAVState)
-  {
-    LibAVState = new FLibAVEncoderState();
-    LibAVState->Codec = avcodec_find_encoder(AV_CODEC_ID_VP9);
-    // actual codec context will be created when first frame with size arrives
-  }
+
+
+
 
   for (auto& Pair : Connections)
   {
@@ -1400,15 +1385,8 @@ void USynavisStreamer::StopStreaming()
     if (C) C->bStreaming = false;
   }
 
-  if (LibAVState)
-  {
-    FScopeLock lock(&LibAVState->Mutex);
-    if (LibAVState->Packet) { av_packet_free(&LibAVState->Packet); LibAVState->Packet = nullptr; }
-    if (LibAVState->Frame) { av_frame_free(&LibAVState->Frame); LibAVState->Frame = nullptr; }
-    if (LibAVState->CodecCtx) { avcodec_free_context(&LibAVState->CodecCtx); LibAVState->CodecCtx = nullptr; }
-    delete LibAVState;
-    LibAVState = nullptr;
-  }
+
+
 }
 
 void USynavisStreamer::StopStreaming(int32 ConnectionID)
@@ -1422,19 +1400,8 @@ void USynavisStreamer::StopStreaming(int32 ConnectionID)
 
   Conn->bStreaming = false;
 
-  // If no connections are streaming anymore, free libav state
-  if (!AnyConnectionStreaming())
-  {
-    if (LibAVState)
-    {
-      FScopeLock lock(&LibAVState->Mutex);
-      if (LibAVState->Packet) { av_packet_free(&LibAVState->Packet); LibAVState->Packet = nullptr; }
-      if (LibAVState->Frame) { av_frame_free(&LibAVState->Frame); LibAVState->Frame = nullptr; }
-      if (LibAVState->CodecCtx) { avcodec_free_context(&LibAVState->CodecCtx); LibAVState->CodecCtx = nullptr; }
-      delete LibAVState;
-      LibAVState = nullptr;
-    }
-  }
+
+
 }
 
 void USynavisStreamer::StartSignalling()
@@ -3169,174 +3136,6 @@ void USynavisStreamer::StartConnectionNegotiation()
   }
 }
 
-// Zero-copy: accept three FRHIGPUTextureReadback objects (Y, U, V planes in I420 layout), wrap their locked pointers into
-// AVBufferRefs so FFmpeg manages lifetime and calls our free-callback to unlock/delete readbacks.
-void USynavisStreamer::EncodeNV12ReadbackAndSend(FRHIGPUTextureReadback* ReadbackY, FRHIGPUTextureReadback* ReadbackU, FRHIGPUTextureReadback* ReadbackV, int Width, int Height, const TArray<int32>& TargetTracks)
-{
-  if (!ReadbackY || !ReadbackU || !ReadbackV) return;
 
-  // Poll briefly
-  const double TimeoutSeconds = 0.5;
-  double StartTime = FPlatformTime::Seconds();
-  while (FPlatformTime::Seconds() - StartTime < TimeoutSeconds)
-  {
-    if (ReadbackY->IsReady() && ReadbackU->IsReady() && ReadbackV->IsReady()) break;
-    FPlatformProcess::Sleep(0.001f);
-  }
-  if (!ReadbackY->IsReady() || !ReadbackU->IsReady() || !ReadbackV->IsReady())
-  {
-    return;
-  }
 
-  int YRowPitch = 0; void* YPtr = ReadbackY->Lock(YRowPitch);
-  if (!YPtr) { ReadbackY->Unlock(); ReadbackU->Unlock(); ReadbackV->Unlock(); return; }
-  int URowPitch = 0; void* UPtr = ReadbackU->Lock(URowPitch);
-  if (!UPtr) { ReadbackY->Unlock(); ReadbackU->Unlock(); ReadbackV->Unlock(); return; }
-  int VRowPitch = 0; void* VPtr = ReadbackV->Lock(VRowPitch);
-  if (!VPtr) { ReadbackY->Unlock(); ReadbackU->Unlock(); ReadbackV->Unlock(); return; }
-
-  // Compute sizes in bytes. U and V are half height.
-  int YSize = YRowPitch * Height;
-  int HalfHeight = (Height + 1) / 2;
-  int USize = URowPitch * HalfHeight;
-  int VSize = VRowPitch * HalfHeight;
-
-  UE_LOG(LogTemp, Verbose, TEXT("Synavis: EncodeNV12ReadbackAndSend lock OK W=%d H=%d Ystride=%d Ustride=%d Vstride=%d targets=%d"), Width, Height, YRowPitch, URowPitch, VRowPitch, TargetTracks.Num());
-
-  struct ReadbackFreeCtx { FRHIGPUTextureReadback* RB; };
-
-  ReadbackFreeCtx* ctxY = new ReadbackFreeCtx{ ReadbackY };
-  ReadbackFreeCtx* ctxU = new ReadbackFreeCtx{ ReadbackU };
-  ReadbackFreeCtx* ctxV = new ReadbackFreeCtx{ ReadbackV };
-
-  AVBufferRef* bufY = av_buffer_create(static_cast<uint8_t*>(YPtr), static_cast<int>(YSize), AvFreeReadback, ctxY, 0);
-  AVBufferRef* bufU = av_buffer_create(static_cast<uint8_t*>(UPtr), static_cast<int>(USize), AvFreeReadback, ctxU, 0);
-  AVBufferRef* bufV = av_buffer_create(static_cast<uint8_t*>(VPtr), static_cast<int>(VSize), AvFreeReadback, ctxV, 0);
-
-  if (!bufY || !bufU || !bufV)
-  {
-    if (bufY) av_buffer_unref(&bufY);
-    if (bufU) av_buffer_unref(&bufU);
-    if (bufV) av_buffer_unref(&bufV);
-    return;
-  }
-
-  FScopeLock guard(&LibAVState->Mutex);
-  // Ensure libav encoder context and packet are available (lazy init)
-  if (!LibAVState->CodecCtx)
-  {
-    if (!LibAVState->Codec)
-    {
-      UE_LOG(LogTemp, Error, TEXT("Synavis: No libav codec available for initialization"));
-      // free AVBufferRefs now to trigger their free callbacks
-      av_buffer_unref(&bufY);
-      av_buffer_unref(&bufU);
-      av_buffer_unref(&bufV);
-      return;
-    }
-    LibAVState->CodecCtx = avcodec_alloc_context3(LibAVState->Codec);
-    if (!LibAVState->CodecCtx)
-    {
-      UE_LOG(LogTemp, Error, TEXT("Synavis: avcodec_alloc_context3 failed"));
-      av_buffer_unref(&bufY);
-      av_buffer_unref(&bufU);
-      av_buffer_unref(&bufV);
-      return;
-    }
-    LibAVState->CodecCtx->width = Width;
-    LibAVState->CodecCtx->height = Height;
-    // Target encoder expects YUV420P (libvpx)
-    LibAVState->CodecCtx->pix_fmt = AV_PIX_FMT_YUV420P;
-    LibAVState->CodecCtx->time_base = AVRational{1, 30};
-    // Allocate packet container used for receive
-    if (!LibAVState->Packet) LibAVState->Packet = av_packet_alloc();
-    int openRc = avcodec_open2(LibAVState->CodecCtx, LibAVState->Codec, nullptr);
-    if (openRc < 0)
-    {
-      char errbuf[128]; av_strerror(openRc, errbuf, sizeof(errbuf));
-      UE_LOG(LogTemp, Error, TEXT("Synavis: avcodec_open2 failed: %s"), ANSI_TO_TCHAR(errbuf));
-      avcodec_free_context(&LibAVState->CodecCtx);
-      av_buffer_unref(&bufY);
-      av_buffer_unref(&bufU);
-      av_buffer_unref(&bufV);
-      return;
-    }
-    LibAVState->Width = Width;
-    LibAVState->Height = Height;
-    UE_LOG(LogTemp, Log, TEXT("Synavis: Initialized libav CodecCtx %p (w=%d h=%d pix=%d)"), LibAVState->CodecCtx, Width, Height, AV_PIX_FMT_YUV420P);
-  }
-
-  // Build an AVFrame that references the three plane buffers (Y, U, V)
-  AVFrame* frame = av_frame_alloc();
-  frame->format = AV_PIX_FMT_YUV420P;
-  frame->width = Width; frame->height = Height;
-
-  // Create refs owned by the frame: av_buffer_ref increments refcount, then we drop our temporary refs
-  AVBufferRef* refY = av_buffer_ref(bufY);
-  AVBufferRef* refU = av_buffer_ref(bufU);
-  AVBufferRef* refV = av_buffer_ref(bufV);
-  // Drop our initial refs; frame now holds references
-  av_buffer_unref(&bufY);
-  av_buffer_unref(&bufU);
-  av_buffer_unref(&bufV);
-
-  if (!refY || !refU || !refV)
-  {
-    if (refY) av_buffer_unref(&refY);
-    if (refU) av_buffer_unref(&refU);
-    if (refV) av_buffer_unref(&refV);
-    av_frame_free(&frame);
-    return;
-  }
-
-  frame->buf[0] = refY;
-  frame->buf[1] = refU;
-  frame->buf[2] = refV;
-  frame->data[0] = refY->data; frame->linesize[0] = YRowPitch;
-  frame->data[1] = refU->data; frame->linesize[1] = URowPitch;
-  frame->data[2] = refV->data; frame->linesize[2] = VRowPitch;
-
-  // Send frame directly to encoder
-  int ret = avcodec_send_frame(LibAVState->CodecCtx, frame);
-  if (ret < 0)
-  {
-    char errbuf[128]; av_strerror(ret, errbuf, sizeof(errbuf));
-    UE_LOG(LogTemp, Error, TEXT("Synavis: avcodec_send_frame (I420 zero-copy) failed: %s"), ANSI_TO_TCHAR(errbuf));
-  }
-
-  // Free the frame; this will unref the frame->buf refs when appropriate and eventually trigger our free callbacks
-  av_frame_free(&frame);
-
-  while ((ret = avcodec_receive_packet(LibAVState->CodecCtx, LibAVState->Packet)) >= 0)
-  {
-    size_t sz = static_cast<size_t>(LibAVState->Packet->size);
-    if (sz == 0)
-    {
-      av_packet_unref(LibAVState->Packet);
-      continue;
-    }
-    TArray<uint8> Vp9Buffer;
-    Vp9Buffer.Append(reinterpret_cast<uint8*>(LibAVState->Packet->data), LibAVState->Packet->size);
-    uint32_t rtpTs = 0;
-#if defined(LIBAV_AVAILABLE)
-    if (LibAVState->Packet->pts != AV_NOPTS_VALUE)
-    {
-      AVRational outQ = {1, 90000};
-      rtpTs = static_cast<uint32_t>(av_rescale_q(LibAVState->Packet->pts, LibAVState->CodecCtx->time_base, outQ));
-    }
-    else
-    {
-      rtpTs = static_cast<uint32_t>(FPlatformTime::Seconds() * 90000.0);
-    }
-#else
-    rtpTs = static_cast<uint32_t>(FPlatformTime::Seconds() * 90000.0);
-#endif
-    if (Vp9Packetizer)
-    {
-      Vp9Packetizer->SendFrame(MoveTemp(Vp9Buffer), rtpTs, 90000/30, TargetTracks);
-    }
-    av_packet_unref(LibAVState->Packet);
-  }
-
-}
 
