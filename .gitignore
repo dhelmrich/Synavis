@@ -50,10 +50,10 @@ CMakeFiles/*
 release/*
 CMakeCache.txt
 
-SynavisUE/Intermediate/*
-SynavisUE/Binaries/*
-SynavisUE/Saved/*
-SynavisUE/Build/*
+**/Intermediate/*
+**/Binaries/*
+**/Saved/*
+**/Build/*
 
 /python/coupling/output
 **/output*.txt
@@ -63,16 +63,17 @@ SynavisUE/Build/*
 /SynavisBackend/include
 /SynavisBackend/lib
 /.history
-/SynavisBackend/Intermediate
-/SynavisBackend/Source/libdatachannel
-/SynavisBackend/Binaries
-/SynavisBackend/Source/libvpx
+**/SynavisBackend/Intermediate/*
+**/SynavisBackend/Source/libdatachannel/*
+**/SynavisBackend/Binaries/*
+**/SynavisBackend/Source/libvpx/*
 *.vcxproj
 *.filters
 *.pbxproj
 *.xcworkspacedata
-/SynavisBackend/Source/libav
+SynavisBackend/Source/libav/*
 /CPlantBox
 /dist
 /synenv
 **/build_*/*
+
