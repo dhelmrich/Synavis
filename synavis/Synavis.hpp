@@ -6,6 +6,7 @@
 #include <variant>
 #include <chrono>
 #include <fstream>
+#include <filesystem>
 #include <queue>
 #include <ostream>
 #include <rtc/rtc.hpp>
@@ -162,10 +163,7 @@ namespace Synavis
   std::string SYNAVIS_EXPORT GetLocalIP();
   std::string SYNAVIS_EXPORT FormattedTime(std::chrono::system_clock::time_point Time, bool ms = false);
 
-  inline void SYNAVIS_EXPORT VerboseMode()
-  {
-    rtcInitLogger(RTC_LOG_VERBOSE, nullptr);
-  }
+  void SYNAVIS_EXPORT VerboseMode(bool useSynavisLogging = false);
 
   inline void SYNAVIS_EXPORT SilentMode()
   {
@@ -465,6 +463,52 @@ namespace Synavis
       LogFile = new std::ofstream(std::move(File));
       // combine file and cout streams
       LogFile->rdbuf()->pubsetbuf(0, 0);
+    }
+
+    // Rotate existing logfile by renaming it to a timestamped backup
+    // and start a new logfile at the provided location. This mirrors
+    // Unreal-style behavior where a previous log is preserved.
+    void SetupLogfileRotate(std::string Filename)
+    {
+      try
+      {
+        namespace fs = std::filesystem;
+        // if logfile exists, rename to a timestamped backup
+        if (fs::exists(Filename))
+        {
+          auto now = std::chrono::system_clock::now();
+          std::string stamp = FormattedTime(now, true);
+          std::string backup = Filename;
+          // insert timestamp before extension if present
+          auto pos = backup.find_last_of('.');
+          if (pos != std::string::npos)
+          {
+            backup.insert(pos, std::string(".") + stamp);
+          }
+          else
+          {
+            backup += std::string(".") + stamp;
+          }
+          backup += std::string(".bak");
+          // attempt rename (overwrite if target exists)
+          if (fs::exists(backup))
+          {
+            // if backup exists, append additional timestamp
+            backup += std::string(".") + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count());
+          }
+          fs::rename(Filename, backup);
+        }
+        // open new logfile at the requested filename
+        if (LogFile)
+        {
+          LogFile->flush();
+          delete LogFile;
+          LogFile = nullptr;
+        }
+        LogFile = reinterpret_cast<std::ostream*>(new std::ofstream(Filename, std::ios::app));
+        LogFile->rdbuf()->pubsetbuf(0, 0);
+      }
+      catch (...) { /* best-effort: ignore filesystem errors */ }
     }
 
     // two stream operators for logging

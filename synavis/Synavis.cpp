@@ -24,6 +24,7 @@ namespace std
 
 
 static auto lbridge = Synavis::Logger::Get()->LogStarter("Bridge");
+static auto ldatachannel = Synavis::Logger::Get()->LogStarter("DataChannel");
 
 
 int Synavis::BridgeSocket::Receive(bool invalidIsFailure)
@@ -137,6 +138,22 @@ std::string Synavis::FormattedTime(std::chrono::system_clock::time_point Time, b
   }
 
   return time;
+}
+
+void SYNAVIS_EXPORT Synavis::VerboseMode(bool useSynavisLogging)
+{
+  if (useSynavisLogging)
+  {
+    ldatachannel(ELogVerbosity::Verbose) << "Enabling verbose logging for WebRTC backend" << std::endl;
+    rtcInitLogger(RTC_LOG_VERBOSE, [](rtcLogLevel level, const char* message)
+    {
+      ldatachannel(ELogVerbosity::Verbose) << "WebRTC: " << message << std::endl;
+    });
+  }
+  else
+  {
+    rtcInitLogger(RTC_LOG_VERBOSE, nullptr);
+  }
 }
 
 void Synavis::BridgeSocket::SetAddress(std::string inAddress)
@@ -589,7 +606,15 @@ Synavis::WorkerThread::WorkerThread()
 
 Synavis::WorkerThread::~WorkerThread()
 {
-  Running = false;
+  {
+    std::unique_lock<std::mutex> lock(TaskMutex);
+    Running = false;
+  }
+  TaskCondition.notify_all();
+  if (Thread.valid())
+  {
+    try { Thread.wait(); } catch (...) {}
+  }
 }
 
 void Synavis::WorkerThread::Run()
@@ -616,7 +641,11 @@ void Synavis::WorkerThread::Run()
 
 void Synavis::WorkerThread::Stop()
 {
-  Running = false;
+  {
+    std::unique_lock<std::mutex> lock(TaskMutex);
+    Running = false;
+  }
+  TaskCondition.notify_all();
 }
 
 uint64_t Synavis::WorkerThread::GetTaskCount()
