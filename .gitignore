@@ -77,3 +77,4 @@ SynavisBackend/Source/libav/*
 /synenv
 **/build_*/*
 
+*.bak
