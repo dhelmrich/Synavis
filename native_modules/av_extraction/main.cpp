@@ -226,9 +226,9 @@ int main(int args, char** argv)
   if(codec != Synavis::ECodec::None)
   {
     vpx = std::make_shared<Synavis::FrameDecode>(nullptr, codec);
-    dc->SetFrameReceptionCallback(vpx->CreateAcceptor([&FrameSizes](rtc::binary frame_or_data)
+    dc->SetFrameReceptionCallback(vpx->CreateAcceptor([&FrameSizes](Synavis::FrameContent frame)
     {
-      FrameSizes.push_back(static_cast<int>(frame_or_data.size()));
+      FrameSizes.push_back(static_cast<int>(frame.Data.size()));
     }));
     vpx->SetFrameCallback([](Synavis::FrameContent frame)
     {

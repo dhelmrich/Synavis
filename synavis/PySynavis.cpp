@@ -11,7 +11,6 @@
 #include "pybind11/stl.h"
 #include <pybind11/numpy.h>
 #include <pybind11/functional.h>
-#include <pybind11/numpy.h>
 #include <pybind11/cast.h>
 #include <pybind11/iostream.h>
 #include <pybind11/stl_bind.h>
@@ -35,6 +34,22 @@ namespace py = pybind11;
 
 namespace Synavis
 {
+
+  // Helper: convert rtc::binary to Python bytes without iterating
+  static py::bytes BinaryToPyBytes(const rtc::binary &data)
+  {
+    if (data.empty()) return py::bytes();
+    return py::bytes(reinterpret_cast<const char*>(data.data()), data.size());
+  }
+
+  // Helper: convert Python bytes to rtc::binary
+  static rtc::binary PyBytesToBinary(const py::bytes &b)
+  {
+    std::string s = static_cast<std::string>(b);
+    rtc::binary out;
+    out.assign(reinterpret_cast<const std::byte*>(s.data()), reinterpret_cast<const std::byte*>(s.data() + s.size()));
+    return out;
+  }
 
   template < typename T = Adapter > class PyAdapter : public T
   {
@@ -160,6 +175,10 @@ namespace Synavis
       {
         Synavis::Logger::Get()->SetupLogfile(filename);
       }
+      void rotateLogFile(std::string filename)
+      {
+        Synavis::Logger::Get()->SetupLogfileRotate(filename);
+      }
     private:
     Synavis::Logger::LoggerInstance lp{Synavis::Logger::Get()->LogStarter("Python")};
   };
@@ -182,6 +201,7 @@ namespace Synavis
       .def("logjson", &SynavisLogger::logjson, py::arg("Message"))
       .def("setidentity", &SynavisLogger::setidentity, py::arg("Identity"))
       .def("logFile", &SynavisLogger::logFile, py::arg("Filename"))
+      .def("rotateLogFile", &SynavisLogger::rotateLogFile, py::arg("Filename"))
     ;
 
     py::enum_<ELogVerbosity>(m, "LogVerbosity")
@@ -212,9 +232,17 @@ namespace Synavis
     py::class_<rtc::PeerConnection> (m, "PeerConnection")
     ;
 
-    m.def("VerboseMode", &VerboseMode);
+    // Bind rtc::FrameInfo so Python callbacks can accept it directly
+    py::class_<rtc::FrameInfo>(m, "FrameInfo")
+      .def(py::init<uint32_t>())
+      .def_readwrite("timestamp", &rtc::FrameInfo::timestamp)
+      .def_readwrite("payloadType", &rtc::FrameInfo::payloadType)
+    ;
+
+    m.def("VerboseMode", &VerboseMode, py::arg("useSynavisLogging") = false);
     m.def("SilentMode", &SilentMode);
     m.def("ExitWithMessage", &ExitWithMessage, py::arg("Message"), py::arg("Code"));
+    m.def("RegisterAvLogCallback", &Synavis::RegisterAvLogCallback, py::arg("useSynavisLogging") = false);
 
 
     py::class_<rtc::Configuration>(m, "PeerConnectionConfig")
@@ -298,7 +326,19 @@ namespace Synavis
     py::class_<MediaReceiver, PyMediaReceiver<>, std::shared_ptr<MediaReceiver>>(m, "MediaReceiver")
       .def(py::init<>())
       .def("Initialize", &MediaReceiver::Initialize)
-      .def("SetFrameReceptionCallback", &MediaReceiver::SetFrameReceptionCallback,py::arg("Callback"))
+      .def("SetFrameReceptionCallback", [](MediaReceiver &self, std::function<bool(py::bytes, rtc::FrameInfo)> cb) {
+        self.SetFrameReceptionCallback([cb](rtc::binary data, rtc::FrameInfo info) -> bool {
+          py::gil_scoped_acquire acquire;
+          try {
+            py::bytes b = BinaryToPyBytes(data);
+            return cb(b, info);
+          } catch (const py::error_already_set &e) {
+            Synavis::Logger::Get()->LogStarter("PyBind")(ELogVerbosity::Error) << "SetFrameReceptionCallback python exception: " << e.what() << std::endl;
+            return false;
+          }
+        });
+      }, py::arg("Callback"))
+
       .def("SetOnTrackOpenCallback", &MediaReceiver::SetOnTrackOpenCallback,py::arg("Callback"))
       .def("SetOnRemoteDescriptionCallback", &MediaReceiver::SetOnRemoteDescriptionCallback, py::arg("Callback"))
       .def("SetOnDataChannelAvailableCallback", &MediaReceiver::SetOnDataChannelAvailableCallback,py::arg("Callback"))
@@ -337,6 +377,8 @@ namespace Synavis
       .def("GetDataChannelNames", &MediaReceiver::GetDataChannelNames)
       .def("SelectDataChannelByName", &MediaReceiver::SelectDataChannelByName, py::arg("Name"))
       .def("SelectDataChannelByIndex", &MediaReceiver::SelectDataChannelByIndex, py::arg("Index"))
+      .def("NumRemoteMedia", &MediaReceiver::NumRemoteMedia)
+      .def("RemoteMediaDescription", &MediaReceiver::RemoteMediaDescription, py::arg("id"))
     ;
 
     py::enum_<rtc::PeerConnection::GatheringState>(m, "GatheringState")
@@ -373,8 +415,43 @@ namespace Synavis
 #ifdef BUILD_WITH_DECODING
     py::class_<FrameDecode, std::shared_ptr<FrameDecode>>(m, "FrameDecode")
       .def(py::init<>())
-      .def("CreateAcceptor", &FrameDecode::CreateAcceptor)
+      .def("CreateAcceptor", [](FrameDecode &self, py::function cb){
+        // Wrap a python callable into a C++ acceptor invoked for decoded frames
+        auto fn = [cb](Synavis::FrameContent frame){
+          py::gil_scoped_acquire acquire;
+          py::bytes pydata(reinterpret_cast<const char*>(frame.Data.data()), frame.Data.size());
+          py::dict infodict;
+          infodict["timestamp"] = static_cast<uint64_t>(frame.Timestamp);
+          infodict["width"] = frame.Width;
+          infodict["height"] = frame.Height;
+          infodict["is_keyframe"] = false;
+          // Let Python exceptions propagate so they are visible to the user
+          cb(pydata, infodict);
+        };
+        // Get the C++ acceptor (takes rtc::binary, rtc::FrameInfo)
+        auto acceptor = self.CreateAcceptor(std::function<void(Synavis::FrameContent)>(fn));
+        // Return a Python-callable that accepts bytes or sequences and calls the C++ acceptor directly
+        return py::cpp_function([acceptor](py::object data, rtc::FrameInfo info) -> bool {
+          py::gil_scoped_acquire acquire;
+          rtc::binary bin;
+          if (py::isinstance<py::bytes>(data) || py::isinstance<py::bytearray>(data)) {
+            py::bytes b = py::bytes(data);
+            bin = PyBytesToBinary(b);
+          } else if (py::isinstance<py::sequence>(data)) {
+            auto seq = py::reinterpret_borrow<py::sequence>(data);
+            bin.clear();
+            for (auto item : seq) {
+              int v = item.cast<int>();
+              bin.push_back(static_cast<std::byte>(v));
+            }
+          } else {
+            throw py::type_error("CreateAcceptor wrapper: expected bytes or sequence for data");
+          }
+          return acceptor(bin, info);
+        });
+      })
       .def("SetFrameCallback", &FrameDecode::SetFrameCallback)
+      .def("ParseDescription", &FrameDecode::ParseDescription, py::arg("desc"))
     ;
 #endif
 

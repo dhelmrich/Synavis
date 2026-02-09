@@ -147,9 +147,10 @@ int main(int args, char** argv)
       {
       }
     });
-  dc->SetFrameReceptionCallback([](auto frame)
+  dc->SetFrameReceptionCallback([](rtc::binary frame, rtc::FrameInfo info)->bool
     {
       //std::cout << "Received frame: " << frame.size() << std::endl;
+      return true;
     });
   while (dc->GetState() != Synavis::EConnectionState::CONNECTED)
   {

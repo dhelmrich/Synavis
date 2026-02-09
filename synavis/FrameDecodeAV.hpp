@@ -29,6 +29,8 @@ namespace rtc
 
 namespace Synavis
 {
+  // we allow for the registering of the av_log_set_callback much like we did for the libdatachannel log in the Synavis.hpp header
+  void RegisterAvLogCallback(bool bUseSynavis = false);
 
   struct SYNAVIS_EXPORT FrameContent
   {
@@ -68,6 +70,8 @@ namespace Synavis
     virtual bool IsFrameComplete() = 0;
     virtual AVPacket* GetAVFrame() = 0;
     virtual void ResetPacket();
+    // Reserve capacity for the upcoming frame to avoid repeated allocations
+    void ReserveFrame(size_t Size) { frame.reserve(Size); }
 
   protected:
     uint32_t timestamp { static_cast<uint32_t>(-1) };
@@ -77,13 +81,18 @@ namespace Synavis
   class SYNAVIS_EXPORT VP9Depacketizer : public PacketDepacketizer
   {
   public:
-    VP9Depacketizer() = default;
+    VP9Depacketizer();
     virtual ~VP9Depacketizer() override;
 
     virtual void AddPacket(rtc::binary Packet) override;
     virtual bool IsFrameComplete() override;
     virtual AVPacket* GetAVFrame() override;
     bool MarkerSeen = false;
+    uint16_t PictureId = 0;
+    // Diagnostic counters and timers migrated from MediaReceiver depacketizer
+    uint32_t NumFragments = 0; // number of RTP fragments appended for current frame
+    double LastPacketTime = 0.0; // milliseconds since epoch steady clock
+    static constexpr double FRAME_TIMEOUT_MS = 100.0; // flush incomplete frames after 100 ms
   };
 
   class SYNAVIS_EXPORT H264Depacketizer : public PacketDepacketizer
@@ -105,15 +114,23 @@ namespace Synavis
     FrameDecode(rtc::Track* VideoInfo = nullptr, ECodec StreamCodec = ECodec::H264);
     virtual ~FrameDecode();
 
-    std::function<void(rtc::binary)> CreateAcceptor(std::function<void(rtc::binary)>&& Callback);
+    // Parse a remote media description (as produced by MediaReceiver::RemoteMediaDescription)
+    void ParseDescription(const nlohmann::json& desc);
 
-    void SetFrameCallback(std::function<void(FrameContent)> Callback);
+    std::function<bool(rtc::binary, rtc::FrameInfo)> CreateAcceptor(std::function<void(FrameContent)>&& Callback);
+
+    // set a direct frame callback (invoked with decoded FrameContent)
+    void SetFrameCallback(std::function<void(FrameContent)>&& Callback)
+    {
+      FrameCallback = std::move(Callback);
+    }
 
     void SetMaxFrameBuffer(uint32_t MaxFrames);
 
   private:
 
     std::optional<std::function<void(FrameContent)>> FrameCallback;
+    std::optional<std::function<void(std::variant<rtc::binary, std::string>)>> MessageCallback;
 
     inline AVPacket* InitializePacketFromData(uint32_t index);
 
@@ -131,6 +148,8 @@ namespace Synavis
     AVFrame* Frame;
     AVPacket* Packet;
     std::unique_ptr<PacketDepacketizer> Depacketizer;
+
+    int ExpectedPayloadType = -1;
 
     uint64_t MaxMessageSize;
   };

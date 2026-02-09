@@ -1,4 +1,5 @@
 #include "MediaReceiver.hpp"
+#include <utility>
 
 #include <iostream>
 #include <algorithm>
@@ -9,30 +10,17 @@ static std::string Prefix = "MediaReceiver: ";
 static const Synavis::Logger::LoggerInstance lmedia = Synavis::Logger::Get()->LogStarter("MediaReceiver");
 
 
-
 // literal for converting to byte
 constexpr std::byte operator"" _b(unsigned long long int Value)
 {
   return static_cast<std::byte>(Value);
 }
 
-void Synavis::MediaReceiver::SetVp9FrameCallback(std::function<void(rtc::binary)> cb)
-{
-  Vp9Depacketizer = Vp9RtpDepacketizer(std::move(cb));
-}
+
+
 
 Synavis::MediaReceiver::MediaReceiver()
 {
-  // initialize VP9 depacketizer to forward completed frames to FrameReceptionCallback
-  Vp9Depacketizer = Vp9RtpDepacketizer([this](rtc::binary frame)
-  {
-    if (FrameReceptionCallback.has_value())
-    {
-      try { FrameReceptionCallback.value()(std::move(frame)); }
-      catch (const std::exception &e) { lmedia(ELogVerbosity::Error) << "VP9 callback threw: " << e.what() << std::endl; }
-      catch (...) { lmedia(ELogVerbosity::Error) << "VP9 callback threw unknown exception" << std::endl; }
-    }
-  });
 }
 
 Synavis::MediaReceiver::~MediaReceiver()
@@ -46,30 +34,7 @@ void Synavis::MediaReceiver::Initialize()
   DataConnector::Initialize();
   lmedia(ELogVerbosity::Warning) << "Initializing MediaReceiver" << std::endl;
   const unsigned int bitrate = 90000;
-  //if(!FrameRelay)
-  //  FrameRelay = std::make_shared<BridgeSocket>();
-  //FrameRelay->Outgoing = true;
-  //FrameRelay->Address = "127.0.0.1";
-  //FrameRelay->Port = 5535;
-  MediaDescription.setDirection(rtc::Description::Direction::RecvOnly);
-  MediaDescription.setBitrate(bitrate);
-  RtcpReceivingSession = std::make_shared<rtc::RtcpReceivingSession>();
-  switch (Codec)
-  {
-  default:
-  case ECodec::H264:
-    MediaDescription.addH264Codec(96);
-    break;
-  case ECodec::H265:
-    MediaDescription.addVideoCodec(96, "H265", "MAIN");
-    break;
-  case ECodec::VP8:
-    MediaDescription.addVP8Codec(96);
-    break;
-  case ECodec::VP9:
-    MediaDescription.addVP9Codec(96);
-    break;
-  }
+
   // amazon h264 codec : "packetization-mode=1;profile-level-id=42e01f"
   // source: https://docs.aws.amazon.com/kinesisvideostreams/latest/dg/producer-reference-nal.html
   PeerConnection->onTrack([this](std::shared_ptr<rtc::Track> Track)
@@ -79,12 +44,53 @@ void Synavis::MediaReceiver::Initialize()
     {
       // check if track is a video track
       auto description = Track->description();
-      // if track is a video track, set it as theirTrack
+      // ensure that we have the callback installed as precaution
+        Track->onMessage(std::bind(&MediaReceiver::MessageHandler, this, std::placeholders::_1));
+        // if track is a video track, set it as theirTrack
       if (description.type() == "video")
       {
         lmedia(ELogVerbosity::Debug) << "Track is a video track" << std::endl;
         this->theirTracks.push_back(Track);
-        Track->setMediaHandler(std::make_shared<rtc::RtcpReceivingSession>());
+        // Create a dedicated RTCP receiving session for this track and set it
+        
+        auto session = std::make_shared<rtc::RtcpReceivingSession>();
+        Track->setMediaHandler(session);
+        this->theirRtcpSessions.push_back(session);
+
+        // Diagnostics: verify handler assignment and exercise RTCP helper calls
+        try
+        {
+          auto current = Track->getMediaHandler();
+          lmedia(ELogVerbosity::Info) << "Created RtcpReceivingSession for track mid " << Track->mid()
+                                      << "; handler_ptr=" << static_cast<const void*>(current.get())
+                                      << " expected_ptr=" << static_cast<const void*>(session.get()) << std::endl;
+
+          // Prepare a lightweight send callback that logs outgoing RTCP messages
+          rtc::message_callback send_cb = [mid = Track->mid()](rtc::message_ptr msg)
+          {
+            try
+            {
+              Synavis::Logger::Get()->LogStarter("MediaReceiver")(ELogVerbosity::Info)
+                << "RTCP send callback for track mid " << mid << " msg size=" << (msg ? msg->size() : 0)
+                << " type=" << (msg ? msg->type : rtc::Message::Binary) << std::endl;
+            }
+            catch (...) { /* best-effort logging */ }
+          };
+
+          // Try requesting a keyframe and bitrate to see whether session will attempt to send RTCP
+          bool rk = session->requestKeyframe(send_cb);
+          lmedia(ELogVerbosity::Debug) << "RtcpReceivingSession::requestKeyframe returned " << rk << std::endl;
+
+          bool rb = session->requestBitrate(90000, send_cb);
+          lmedia(ELogVerbosity::Debug) << "RtcpReceivingSession::requestBitrate returned " << rb << std::endl;
+        }
+        catch (const std::exception &e)
+        {
+          lmedia(ELogVerbosity::Error) << "Diagnostics on RtcpReceivingSession failed: " << e.what() << std::endl;
+        }
+        // Also register an onFrame handler so depacketized frames (if produced by a packetizer)
+        // are forwarded to the FrameReceptionCallback (e.g. FrameDecode acceptor).
+        Track->onFrame(std::bind(&MediaReceiver::FrameHandler, this, std::placeholders::_1, std::placeholders::_2));
         Track->onOpen([this, NewTrack = Track]()
           {
             lmedia(ELogVerbosity::Info) << "THEIR Track labeled opened with mid " << NewTrack->mid() << std::endl;
@@ -103,7 +109,6 @@ void Synavis::MediaReceiver::Initialize()
               FrameRelay->Connect();
             }
           });
-        Track->onMessage(std::bind(&MediaReceiver::MediaHandler, this, std::placeholders::_1));
         Track->onClosed([this, NewTrack = Track]()
           {
             lmedia(ELogVerbosity::Debug) << "THEIR Track with mid " << NewTrack->mid() << " closed" << std::endl;
@@ -176,6 +181,58 @@ void Synavis::MediaReceiver::ConfigureRelay(std::string IP, int Port)
   }
 }
 
+int Synavis::MediaReceiver::NumRemoteMedia()
+{
+  if (!PeerConnection) return 0;
+  auto rd = PeerConnection->remoteDescription();
+  if (!rd) return 0;
+  return rd->mediaCount();
+}
+
+Synavis::MediaReceiver::json Synavis::MediaReceiver::RemoteMediaDescription(int id)
+{
+  json out = json::object();
+  if (!PeerConnection) return out;
+  auto rd = PeerConnection->remoteDescription();
+  if (!rd) return out;
+  int count = rd->mediaCount();
+  if (id < 0 || id >= count) return out;
+  auto var = rd->media(id);
+  // variant holds either Media* or Application*
+  if (std::holds_alternative<rtc::Description::Media*>(var))
+  {
+    auto m = std::get<rtc::Description::Media*>(var);
+    out["mid"] = m->mid();
+    out["type"] = m->type();
+    out["bitrate"] = m->bitrate();
+    // payload types
+    std::vector<int> pts = m->payloadTypes();
+    out["payloadTypes"] = json::array();
+    for (int pt : pts)
+    {
+      json entry;
+      entry["payloadType"] = pt;
+      if (auto r = m->rtpMap(pt))
+      {
+        entry["format"] = r->format;
+        entry["clockRate"] = r->clockRate;
+        entry["encParams"] = r->encParams;
+        entry["fmtps"] = r->fmtps;
+      }
+      out["payloadTypes"].push_back(entry);
+    }
+  }
+  else if (std::holds_alternative<rtc::Description::Application*>(var))
+  {
+    auto a = std::get<rtc::Description::Application*>(var);
+    out["mid"] = a->mid();
+    out["type"] = "application";
+    if (a->sctpPort()) out["sctpPort"] = *a->sctpPort();
+    if (a->maxMessageSize()) out["maxMessageSize"] = *a->maxMessageSize();
+  }
+  return out;
+}
+
 void Synavis::MediaReceiver::PrintCommunicationData()
 {
   DataConnector::PrintCommunicationData();
@@ -222,63 +279,78 @@ void Synavis::MediaReceiver::StartStreaming()
 
 void Synavis::MediaReceiver::StopStreaming()
 {
-  if (auto ch = this->GetDataChannel()) ch->send(rtc::binary({ 5_b }));
+  if (auto ch = this->GetDataChannel())
+  {
+    ch->send(rtc::binary({ 5_b }));
+  }
 }
 
-void Synavis::MediaReceiver::MediaHandler(rtc::message_variant DataOrMessage)
+void Synavis::MediaReceiver::MessageHandler(rtc::message_variant DataOrMessage)
 {
-  lmedia(ELogVerbosity::Verbose) << "MediaHandler called" << std::endl;
+  // Minimal message handler: forward binary payloads to the FrameReceptionCallback.
+  lmedia(ELogVerbosity::Verbose) << "MessageHandler called" << std::endl;
+  // If this is a binary RTP message, hand it to the VP9 depacketizer so
+  // frames can be assembled and delivered via the frame callback.
   if (std::holds_alternative<rtc::binary>(DataOrMessage))
   {
-    lmedia(ELogVerbosity::Verbose) << "MediaHandler: binary message received: size=" << std::get<rtc::binary>(DataOrMessage).size() << std::endl;
-#ifdef SYNAVIS_UPDATE_TIMECODE
-    auto Frame = std::get<rtc::binary>(DataOrMessage);
-    auto* RTP = reinterpret_cast<rtc::RtpHeader*>(Frame.data());
-    // set timestamp to unix time
-    RTP->setTimestamp(static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()));
-#endif // SYNAVIS_UPDATE_TIMECODE
+    auto bin = std::get<rtc::binary>(DataOrMessage);
+    lmedia(ELogVerbosity::Verbose) << "MessageHandler: binary message size=" << bin.size() << std::endl;
 
-    //Track->requestKeyframe();
-    try
+    // If an external FrameReceptionCallback is installed (e.g. FrameDecode::CreateAcceptor),
+    // forward the raw RTP packet and a constructed FrameInfo so the acceptor receives
+    // the packet with RTP headers intact (FrameDecode expects RTP packets).
+    if (this->FrameReceptionCallback.has_value())
     {
-      auto &binRef = std::get<rtc::binary>(DataOrMessage);
-      lmedia(ELogVerbosity::Debug) << "MediaHandler: binary message received size=" << binRef.size() << std::endl;
-
-      // Detect raw VP9 RTP from UE: payload type 98 and 12-byte RTP header + 1-byte VP9 descriptor
-      if (binRef.size() >= 13)
+      // parse RTP header fields directly and construct FrameInfo
+      const rtc::RtpHeader* Header = reinterpret_cast<const rtc::RtpHeader*>(bin.data());
+      uint32_t ts = Header->timestamp();
+      rtc::FrameInfo info(ts);
+      info.payloadType = Header->payloadType();
+      bool handled = this->FrameReceptionCallback.value()(bin, info);
+      lmedia(ELogVerbosity::Info) << "MessageHandler: forwarded raw RTP to FrameReceptionCallback handled=" << (handled ? 1 : 0) << std::endl;
+      if (handled)
       {
-        const uint8_t* data = reinterpret_cast<const uint8_t*>(binRef.data());
-        uint8_t pt = data[1] & 0x7F;
-        if (pt == 98)
-        {
-          // hand off to depacketizer (make a movable copy)
-          rtc::binary copy = binRef;
-          Vp9Depacketizer.OnRtpPacket(std::move(copy));
-          return; // bypass direct FrameReceptionCallback/FrameRelay for raw RTP
-        }
+        // acceptor will handle packet assembly/decoding; do not double-depacketize
+        return;
       }
+      // otherwise fall through and let local depacketizer attempt assembly
+    }
 
-      // non-VP9 path: forward raw binary directly
-      if (FrameReceptionCallback.has_value())
-      {
-        FrameReceptionCallback.value()(binRef);
-      }
-      if (FrameRelay)
-        FrameRelay->Send(binRef);
-    }
-    catch (const std::bad_variant_access&)
-    {
-      lmedia(ELogVerbosity::Warning) << "MediaHandler: expected binary but variant access failed" << std::endl;
-    }
-    catch (const std::exception &e)
-    {
-      lmedia(ELogVerbosity::Error) << "MediaHandler: FrameReceptionCallback threw: " << e.what() << std::endl;
-    }
-}
-  else if (std::holds_alternative<std::string>(DataOrMessage))
+ 
+  }
+
+  // forward to MessageHandler if set
+  if(this->MessageCallback.has_value())
   {
-    auto Message = std::get<std::string>(DataOrMessage);
-    rtc::binary MessageBinary((std::byte*)Message.data(), (std::byte*)(Message.data() + Message.size()));
-    //FrameRelay->Send(MessageBinary);
+    this->MessageCallback.value()(DataOrMessage);
+  }
+}
+
+void Synavis::MediaReceiver::FrameHandler(rtc::binary FrameData, rtc::FrameInfo Info)
+{
+  lmedia(ELogVerbosity::Verbose) << "FrameHandler called, size=" << FrameData.size() << std::endl;
+  // log an explicit decode/dispatch attempt so avcodec activity is observable
+  lmedia(ELogVerbosity::Info) << "FrameHandler: attempting decode/dispatch size=" << FrameData.size()
+                               << " ts=" << Info.timestamp << " payloadType=" << int(Info.payloadType) << std::endl;
+
+    if (FrameReceptionCallback.has_value())
+    {
+      bool handled = false;
+      handled = FrameReceptionCallback.value()(FrameData, Info);
+
+      // Log whether the frame was handled by the receiver's acceptor
+      lmedia(ELogVerbosity::Info) << "FrameHandler: FrameReceptionCallback handled=" << (handled ? 1 : 0)
+                                   << " size=" << FrameData.size() << " ts=" << Info.timestamp << std::endl;
+
+      // If callback didn't handle the frame, forward to MessageHandler for fallback processing.
+      if (!handled)
+      {
+        this->MessageHandler(FrameData);
+      }
+    }
+  // Forward raw frame bytes to relay if configured
+  if (FrameRelay)
+  {
+    FrameRelay->Send(FrameData);
   }
 }
