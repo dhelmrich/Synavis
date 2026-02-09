@@ -25,18 +25,8 @@
 
 THIRD_PARTY_INCLUDES_START
 #include "rtc/rtc.h"
-#if 0
-// C++ API headers intentionally omitted to avoid C++ ABI crossing in this module.
-// If you need the C++ API, include <rtc/rtc.hpp> etc. and adapt usage accordingly.
-#include <rtc/rtc.hpp>
-#include <rtc/websocket.hpp>
-#include <rtc/rtppacketizer.hpp>
-#include <rtc/rtppacketizationconfig.hpp>
-#include <rtc/frameinfo.hpp>
-#include <rtc/datachannel.hpp>
-#include <rtc/configuration.hpp>
-#endif
-#if defined(LIBAV_AVAILABLE)
+
+
 extern "C" {
 
 
@@ -45,9 +35,9 @@ extern "C" {
 #include <libavutil/imgutils.h>
 #include <libavutil/opt.h>
 #include <libavutil/error.h>
+#include <libavutil/log.h>
 #include <libavutil/buffer.h>
 }
-#endif
 
 static USynavisStreamer* GGlobalStreamer = nullptr;
 static FCriticalSection GGlobalStreamerMutex;
@@ -191,6 +181,39 @@ static void Synavis_Rtc_Logger(rtcLogLevel level, const char* message)
   }
 }
 
+extern "C" {
+  static void av_log_callback(void *ptr, int level, const char *fmt, va_list vargs)
+  {
+    if (level > av_log_get_level()) return;  // Respect global level
+
+    char buf[4096];
+    vsnprintf(buf, sizeof(buf), fmt, vargs);
+    buf[sizeof(buf)-1] = 0;  // Force null-terminate [web:14]
+
+    // Use FString for safe UE conversion (UTF8_TO_TCHAR can fail on malformed UTF-8)
+    FString Msg = FString(UTF8_TO_TCHAR(buf));
+
+    // Map AV_LOG_* to UE_LOG levels (ensure LogTemp is visible/compiled)
+    switch (level) {
+    case AV_LOG_PANIC:
+    case AV_LOG_FATAL:
+    case AV_LOG_ERROR:
+      UE_LOG(LogTemp, Error, TEXT("LIBAV[%d]: %s"), level, *Msg);
+      break;
+    case AV_LOG_WARNING:
+      UE_LOG(LogTemp, Warning, TEXT("LIBAV[%d]: %s"), level, *Msg);
+      break;
+    case AV_LOG_INFO:
+      UE_LOG(LogTemp, Log, TEXT("LIBAV[%d]: %s"), level, *Msg);
+      break;
+    default:  // DEBUG, VERBOSE
+      UE_LOG(LogTemp, Verbose, TEXT("LIBAV[%d]: %s"), level, *Msg);
+      break;
+    }
+  }
+}
+
+
 
 // Static hex-dump logger. Logs the byte values of the provided buffer as hex
 // for debugging encoding/round-trip issues. Keep this function static to
@@ -255,6 +278,11 @@ static FString MungSDPForLibdatachannel(const FString& RawSdp)
   return Fixed;
 }
 
+// helper for low-level pointer validation
+bool is_canonical_x64(const void* ptr) {
+    uintptr_t address = reinterpret_cast<uintptr_t>(ptr);
+    return ((address >> 47) & 0xFFFFULL) == 0 || ((address >> 47) & 0xFFFFULL) == 0xFFFFULL;
+}
 
 
 
@@ -329,8 +357,13 @@ extern "C" {
     if (size < 0)
     {
       std::string s = data ? std::string(data) : std::string();
-      AsyncTask(ENamedThreads::GameThread, [self, s]() {
-        self->HandleSignallingMessage(std::variant<TArray<uint8>, std::string>(s));
+      AsyncTask(ENamedThreads::GameThread, [s]() {
+        USynavisStreamer* selfLocal = nullptr;
+        {
+          FScopeLock lock(&GGlobalStreamerMutex);
+          selfLocal = GGlobalStreamer;
+        }
+        if (selfLocal) selfLocal->HandleSignallingMessage(std::variant<TArray<uint8>, std::string>(s));
       });
     }
     else
@@ -341,8 +374,13 @@ extern "C" {
         b.AddUninitialized(size);
         memcpy(b.GetData(), data, static_cast<size_t>(size));
       }
-      AsyncTask(ENamedThreads::GameThread, [self, b]() mutable {
-        self->HandleSignallingMessage(std::variant<TArray<uint8>, std::string>(b));
+      AsyncTask(ENamedThreads::GameThread, [b]() mutable {
+        USynavisStreamer* selfLocal = nullptr;
+        {
+          FScopeLock lock(&GGlobalStreamerMutex);
+          selfLocal = GGlobalStreamer;
+        }
+        if (selfLocal) selfLocal->HandleSignallingMessage(std::variant<TArray<uint8>, std::string>(b));
       });
     }
   }
@@ -537,11 +575,17 @@ void Synavis_Rtc_DataChannel_OnOpen(int id, void* user_ptr)
   }
   if (!streamer) return;
   UE_LOG(LogTemp, Warning, TEXT("[%0.6f] DC_OnOpen cthread dc=%d label='%s' userPtr=%p"), FPlatformTime::Seconds(), id, *GetDataChannelLabelSafe(id), rtcGetUserPointer(id));
-  AsyncTask(ENamedThreads::GameThread, [streamer, id]() {
-    TSharedPtr<DataChannelCtx> ctx = streamer->GetDataChannelContext(id);
+  AsyncTask(ENamedThreads::GameThread, [id]() {
+    USynavisStreamer* streamerLocal = nullptr;
+    {
+      FScopeLock lock(&GGlobalStreamerMutex);
+      streamerLocal = GGlobalStreamer;
+    }
+    if (!streamerLocal) return;
+    TSharedPtr<DataChannelCtx> ctx = streamerLocal->GetDataChannelContext(id);
     DataChannelCtx* p = ctx.Get();
     UE_LOG(LogTemp, Warning, TEXT("[%0.6f] DC_OnOpen game dc=%d label='%s' ctx=%p conn=%d handler=%u userPtr=%p"), FPlatformTime::Seconds(), id, *GetDataChannelLabelSafe(id), p, p ? p->ConnectionID : 0, p ? p->HandlerID : 0, rtcGetUserPointer(id));
-    streamer->HandleDataChannelOpenCallback(id);
+    streamerLocal->HandleDataChannelOpenCallback(id);
   });
 }
 
@@ -554,11 +598,47 @@ void Synavis_Rtc_DataChannel_OnClosed(int id, void* user_ptr)
   }
   if (!streamer) return;
   UE_LOG(LogTemp, Warning, TEXT("[%0.6f] DC_OnClosed cthread dc=%d userPtr=%p"), FPlatformTime::Seconds(), id, rtcGetUserPointer(id));
-  AsyncTask(ENamedThreads::GameThread, [streamer, id]() {
-    TSharedPtr<DataChannelCtx> ctx = streamer->GetDataChannelContext(id);
-    DataChannelCtx* p = ctx.Get();
-    UE_LOG(LogTemp, Warning, TEXT("[%0.6f] DC_OnClosed game dc=%d ctx=%p conn=%d handler=%u userPtr=%p"), FPlatformTime::Seconds(), id, p, p ? p->ConnectionID : 0, p ? p->HandlerID : 0, rtcGetUserPointer(id));
-    streamer->HandleDataChannelClosedCallback(id);
+  AsyncTask(ENamedThreads::GameThread, [id]() {
+    USynavisStreamer* streamerLocal = nullptr;
+    {
+      FScopeLock lock(&GGlobalStreamerMutex);
+      streamerLocal = GGlobalStreamer;
+    }
+    if (!streamerLocal && is_canonical_x64(streamerLocal))
+      return;
+    // Defensive: avoid dereferencing potentially-invalid pointers returned
+    // from the C callbacks. Prefer using rtcGetUserPointer() first and
+    // validate any raw context with diagnostics before touching fields.
+    DataChannelCtx* p = nullptr;
+    void* uptr = rtcGetUserPointer(id);
+    if (uptr && is_canonical_x64(uptr))
+    {
+      p = reinterpret_cast<DataChannelCtx*>(uptr);
+      if (!__isValidContextWithDiagnostics(p, id, true))
+      {
+        // If the raw user-pointer looks invalid, try central map as fallback
+        TSharedPtr<DataChannelCtx> ctxFallback;
+        // Only call GetDataChannelContext if streamerLocal still looks sane
+        if (streamerLocal)
+          ctxFallback = streamerLocal->GetDataChannelContext(id);
+        if (ctxFallback.IsValid())
+          p = ctxFallback.Get();
+        else
+          p = nullptr;
+      }
+    }
+    else
+    {
+      // No user pointer: try central map
+      TSharedPtr<DataChannelCtx> ctxFallback = streamerLocal->GetDataChannelContext(id);
+      if (ctxFallback.IsValid()) p = ctxFallback.Get();
+    }
+
+    // Log safely without dereferencing invalid pointers
+    UE_LOG(LogTemp, Warning, TEXT("[%0.6f] DC_OnClosed game dc=%d ctx=%p conn=%d handler=%u userPtr=%p"),
+      FPlatformTime::Seconds(), id, p, p ? p->ConnectionID : 0, p ? p->HandlerID : 0, uptr);
+
+    streamerLocal->HandleDataChannelClosedCallback(id);
   });
 }
 
@@ -933,9 +1013,6 @@ USynavisStreamer::USynavisStreamer()
   // off to improve performance if you don't need them.
   PrimaryComponentTick.bCanEverTick = true;
   this->WebSocketUri.reserve(100);
-
-  // ...
-  // Allocate heap-owned container for per-datachannel contexts
   
   // Register this instance as the global streamer for C callbacks (single-instance policy)
   {
@@ -953,6 +1030,12 @@ uint32_t USynavisStreamer::GetNextSSRC()
 
 USynavisStreamer::~USynavisStreamer()
 {
+  // Clear global streamer pointer under lock so C callbacks don't race
+  // against a partially-destroyed object (prevents use-after-free).
+  {
+    FScopeLock lock(&GGlobalStreamerMutex);
+    if (GGlobalStreamer == this) GGlobalStreamer = nullptr;
+  }
   if (SignallingId != 0)
   {
     // send close first
@@ -978,17 +1061,25 @@ void USynavisStreamer::BeginPlay()
 {
   Super::BeginPlay();
 
-  // temporarily set the log to Verbose for initialization diagnostics
-  GetWorld()->GetFirstPlayerController()->ConsoleCommand(TEXT("log LogTemp VeryVerbose"), true);
-
   // set the logging level for libdatachannel to verbose only when UE global verbosity is VeryVerbose
-  if (UE_GET_LOG_VERBOSITY(LogTemp) >= ELogVerbosity::VeryVerbose || true)
+  if (UE_GET_LOG_VERBOSITY(LogTemp) >= ELogVerbosity::VeryVerbose && false)
   {
     rtcInitLogger(RTC_LOG_VERBOSE, Synavis_Rtc_Logger);
   }
 
+  // Force DEBUG level so libav/avcodec emits useful diagnostic messages during development.
+  // Adjust this if the log stream becomes too noisy in production.
+  av_log_set_level(AV_LOG_DEBUG);
+  // Include the AV severity label in codec messages and skip repeated messages
+  // to make logs easier to parse in the UE log stream.
+  av_log_set_flags(AV_LOG_PRINT_LEVEL | AV_LOG_SKIP_REPEATED);
+  av_log_set_callback(av_log_callback);
+  UE_LOG(LogTemp, Log, TEXT("Synavis: Installed libav log callback with av_log_level=Debug"));
+
+
   // sanity check: fire function
   Synavis_Rtc_Logger(RTC_LOG_INFO, "SynavisStreamer Synavis_Rtc_Logger initialized");
+  av_log(nullptr, AV_LOG_INFO, "SynavisStreamer av_log_callback initialized with level Debug");
 
 
   // Non-blocking sendoff handler: offloads readback locking, encoding and packetization
@@ -1002,7 +1093,7 @@ void USynavisStreamer::BeginPlay()
       if (MaxPayload < 200) MaxPayload = 200;
       if (MaxPayload > 1400) MaxPayload = 1400;
       uint16_t PayloadSize = static_cast<uint16_t>(MaxPayload);
-      SendoffHandler->Initialize(98, GetNextSSRC(), PayloadSize);
+      SendoffHandler->Initialize(this->VideoPayloadType, GetNextSSRC(), PayloadSize);
       // Ensure streamer LibAVState points to the handler-owned encoder state
       LibAVState = SendoffHandler->GetOrCreateLibAVEncoderState();
       UE_LOG(LogTemp, Warning, TEXT("Synavis: Linked LibAVState to SendoffHandler %p -> LibAVState=%p"), SendoffHandler, LibAVState);
@@ -1023,7 +1114,7 @@ void USynavisStreamer::TickComponent(float DeltaTime, ELevelTick TickType, FActo
     return;
 
   // Capture frames for all registered handlers for this tick. This will enqueue
-  // NV12 GPU readbacks (FRHIGPUTextureReadback) for each active handler/source.
+  // I420 GPU readbacks (FRHIGPUTextureReadback) for each active handler/source.
   CaptureFrame();
 
   // Block-and-poll pattern: process pending readbacks until they have been
@@ -1059,6 +1150,8 @@ void USynavisStreamer::TickComponent(float DeltaTime, ELevelTick TickType, FActo
         if (rec.ReadbackY->IsReady() && rec.ReadbackU->IsReady() && rec.ReadbackV->IsReady())
         {
           UE_LOG(LogTemp, Verbose, TEXT("Synavis: Pending readback ready, starting zero-copy encode (Width=%d Height=%d)"), rec.Width, rec.Height);
+          // temporarily report on the size of the GPU buffers for diagnostics (note: these may be larger than the actual encoded frame size due to padding/row pitch)
+          UE_LOG(LogTemp, Verbose, TEXT("Synavis: Readback buffer sizes Y=%d U=%d V=%d"), rec.ReadbackY->GetGPUSizeBytes(), rec.ReadbackU->GetGPUSizeBytes(), rec.ReadbackV->GetGPUSizeBytes());
           // Enqueue non-blocking sendoff via the centralized sendoff handler (takes ownership)
           if (SendoffHandler)
           {
@@ -1283,9 +1376,6 @@ void USynavisStreamer::RTCReport() const
       }
     }
   }
-
-  
-
 }
 
 TSharedPtr<DataChannelCtx> USynavisStreamer::GetDataChannelContext(int32 DcId) const
@@ -1488,7 +1578,43 @@ void USynavisStreamer::HandlePcLocalDescriptionCallback(int pc, const char* sdp,
   }
   // When local description becomes available, send via signalling
   if (!this->bHoldNegotiation)
+  {
+    // Attempt to parse negotiated VP9 payload type from the local SDP and
+    // update the sendoff handler so outgoing RTP uses the same PT as SDP.
+    if (sdff.Len() > 0)
+    {
+      int32 NegotiatedVp9Pt = -1;
+      TArray<FString> Lines;
+      sdff.ParseIntoArrayLines(Lines);
+      for (const FString& L : Lines)
+      {
+        FString Trim = L.TrimStartAndEnd();
+        if (Trim.StartsWith(TEXT("a=rtpmap:"), ESearchCase::IgnoreCase))
+        {
+          FString Rest = Trim.Mid(9);
+          FString PayloadStr, CodecStr;
+          if (Rest.Split(TEXT(" "), &PayloadStr, &CodecStr))
+          {
+            FString CodecName, Dummy;
+            if (CodecStr.Split(TEXT("/"), &CodecName, &Dummy))
+            {
+              if (CodecName.Equals(TEXT("VP9"), ESearchCase::IgnoreCase))
+              {
+                int32 Pt = FCString::Atoi(*PayloadStr);
+                if (Pt >= 96 && Pt <= 127) { NegotiatedVp9Pt = Pt; break; }
+              }
+            }
+          }
+        }
+      }
+      if (NegotiatedVp9Pt > 0 && this->SendoffHandler)
+      {
+        UE_LOG(LogTemp, Log, TEXT("Synavis: negotiated VP9 payload type %d for conn %d - updating sendoff handler"), NegotiatedVp9Pt, Conn->ConnectionID);
+        this->SendoffHandler->SetPayloadType(NegotiatedVp9Pt);
+      }
+    }
     CommunicateSDPForConnection(*Conn);
+  }
 }
 
 void USynavisStreamer::HandlePcGatheringStateChangeCallback(int pc, int state)
@@ -2232,6 +2358,19 @@ void USynavisStreamer::CreateConnectionForPlayer(int32 PlayerID)
         if (trDescLen > 0)
         {
           UE_LOG(LogTemp, Verbose, TEXT("Synavis: rtcGetTrackDescription returned %d for track %d immediately after creation:\n%s"), trDescLen, trid, ANSI_TO_TCHAR(trDescBuf));
+          // Parse the returned description once to extract the assigned SSRC
+          const char* key = "a=ssrc:";
+          const char* found = strstr(trDescBuf, key);
+          if (found)
+          {
+            const char* numstart = found + strlen(key);
+            char* endptr = nullptr;
+            unsigned long parsed = strtoul(numstart, &endptr, 10);
+            if (parsed > 0 && SendoffHandler)
+            {
+              SendoffHandler->RegisterTrackSsrc(trid, static_cast<uint32>(parsed));
+            }
+          }
         }
         else
         {
@@ -2735,6 +2874,19 @@ int USynavisStreamer::RegisterDataSource(
           if (trDescLen > 0)
           {
             UE_LOG(LogTemp, Verbose, TEXT("Synavis: rtcGetTrackDescription returned %d for track %d immediately after creation (post-register):\n%s"), trDescLen, trid, ANSI_TO_TCHAR(trDescBuf));
+            // Extract assigned SSRC once and register with sendoff handler
+            const char* key = "a=ssrc:";
+            const char* found = strstr(trDescBuf, key);
+            if (found && SendoffHandler)
+            {
+              const char* numstart = found + strlen(key);
+              char* endptr = nullptr;
+              unsigned long parsed = strtoul(numstart, &endptr, 10);
+              if (parsed > 0)
+              {
+                SendoffHandler->RegisterTrackSsrc(trid, static_cast<uint32>(parsed));
+              }
+            }
           }
           else
           {
@@ -2759,7 +2911,7 @@ int USynavisStreamer::RegisterDataSource(
 
 void USynavisStreamer::CaptureFrame()
 {
-  // Capture frames for registered handlers using only the zero-copy NV12 path.
+  // Capture frames for registered handlers using the zero-copy I420 path.
   // The registration step is expected to have created a valid video track for each handler.
   // If there is no connection that requests streaming, skip capture.
   bool anyStreaming = false;
@@ -2816,11 +2968,11 @@ void USynavisStreamer::CaptureFrame()
 
     if (TracksToSend.Num() == 0)
     {
-      UE_LOG(LogTemp, Verbose, TEXT("Synavis: No open tracks for handler %d, skipping readback"), Handler.HandlerID);
-      RTCReport();
+      UE_LOG(LogTemp, Error, TEXT("Synavis: No open tracks for handler %d, skipping readback"), Handler.HandlerID);
+      //RTCReport();
       // this is what we need to fix so there is no point going on after this
       // exit game
-      GetWorld()->GetFirstPlayerController()->ConsoleCommand(TEXT("exit"));
+      //GetWorld()->GetFirstPlayerController()->ConsoleCommand(TEXT("exit"));
     }
     else
     {

@@ -24,7 +24,7 @@ bool ConvertRenderTargetToI420_GPU(UTextureRenderTarget2D* SrcRT, TArray<uint8>&
     if (!SrcRT)
         return false;
 
-    // Create RDG graph and dispatch compute shader to output NV12: Y plane (full res) + interleaved UV (half res)
+    // Create RDG graph and dispatch compute shader to output I420: Y plane (full res) + separate U and V (half res)
     FTextureRenderTargetResource* RTResource = SrcRT->GameThread_GetRenderTargetResource();
     if (!RTResource)
         return false;
@@ -40,7 +40,7 @@ bool ConvertRenderTargetToI420_GPU(UTextureRenderTarget2D* SrcRT, TArray<uint8>&
     TUniquePtr<FRHIGPUTextureReadback> ReadbackV = MakeUnique<FRHIGPUTextureReadback>(TEXT("Synavis_V_Readback"));
 
     // Run render graph on render thread
-    ENQUEUE_RENDER_COMMAND(Synavis_ConvertRTToNV12)([RTTexture = RTResource->GetRenderTargetTexture(), Width, Height, ReadbackYPtr = ReadbackY.Get(), ReadbackUPtr = ReadbackU.Get(), ReadbackVPtr = ReadbackV.Get()](FRHICommandListImmediate& RHICmdList)
+    ENQUEUE_RENDER_COMMAND(Synavis_ConvertRTToI420)([RTTexture = RTResource->GetRenderTargetTexture(), Width, Height, ReadbackYPtr = ReadbackY.Get(), ReadbackUPtr = ReadbackU.Get(), ReadbackVPtr = ReadbackV.Get()](FRHICommandListImmediate& RHICmdList)
     {
       // Build RDG
       FRDGBuilder GraphBuilder(RHICmdList);
@@ -48,13 +48,13 @@ bool ConvertRenderTargetToI420_GPU(UTextureRenderTarget2D* SrcRT, TArray<uint8>&
       // Register external texture (source render target) with RDG
       FRDGTextureRef RDGInput = RegisterExternalTexture(GraphBuilder, RTTexture, TEXT("Synavis_Input"));
 
-      FRDGTextureDesc DescY = FRDGTextureDesc::Create2D(FIntPoint(Width, Height), PF_R8, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
+    FRDGTextureDesc DescY = FRDGTextureDesc::Create2D(FIntPoint(Width, Height), PF_R8_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
       FRDGTextureRef RDGY = GraphBuilder.CreateTexture(DescY, TEXT("Synavis_Y"));
 
-    FRDGTextureDesc DescU = FRDGTextureDesc::Create2D(FIntPoint((Width + 1) / 2, (Height + 1) / 2), PF_R8, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
+    FRDGTextureDesc DescU = FRDGTextureDesc::Create2D(FIntPoint((Width + 1) / 2, (Height + 1) / 2), PF_R8_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
     FRDGTextureRef RDGU = GraphBuilder.CreateTexture(DescU, TEXT("Synavis_U"));
 
-    FRDGTextureDesc DescV = FRDGTextureDesc::Create2D(FIntPoint((Width + 1) / 2, (Height + 1) / 2), PF_R8, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
+    FRDGTextureDesc DescV = FRDGTextureDesc::Create2D(FIntPoint((Width + 1) / 2, (Height + 1) / 2), PF_R8_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
     FRDGTextureRef RDGV = GraphBuilder.CreateTexture(DescV, TEXT("Synavis_V"));
 
     // Ensure a global shader map exists for the current feature level and obtain the compute shader via TShaderMapRef.
@@ -74,7 +74,7 @@ bool ConvertRenderTargetToI420_GPU(UTextureRenderTarget2D* SrcRT, TArray<uint8>&
 
       // Add a compute pass and dispatch via helper
       GraphBuilder.AddPass(
-          RDG_EVENT_NAME("SynavisConvertToNV12"),
+          RDG_EVENT_NAME("SynavisConvertToI420"),
           PassParameters,
           ERDGPassFlags::Compute,
           [PassParameters, ComputeShader, Width, Height](FRHIComputeCommandList& RHICmdListInner)
@@ -92,7 +92,7 @@ bool ConvertRenderTargetToI420_GPU(UTextureRenderTarget2D* SrcRT, TArray<uint8>&
     });
 
     // Hint for Option B (pixel-shader fullscreen pass):
-    // - Implement a pixel shader that writes Y to RT0 and packed UV to RT1.
+    // - Implement a pixel shader that writes Y to RT0 and packed UV to RT1 (NV12) if desired.
     // - Create two transient render targets via RDG with PF_R8 and PF_R8G8.
     // - Use AddDrawScreenPass or a full-screen draw call to render a quad using the pixel shader.
     // - Enqueue readbacks similarly with AddEnqueueCopyPass for each RT.
@@ -199,19 +199,19 @@ bool EnqueueNV12ReadbackFromRenderTarget(UTextureRenderTarget2D* SrcRT, FRHIGPUT
     FRHIGPUTextureReadback* ReadbackV = new FRHIGPUTextureReadback(TEXT("Synavis_V_Readback"));
 
     // Enqueue on render thread
-    ENQUEUE_RENDER_COMMAND(Synavis_EnqueueNV12Readback)([RTTexture = RTResource->GetRenderTargetTexture(), Width, Height, ReadbackY, ReadbackU, ReadbackV](FRHICommandListImmediate& RHICmdList)
+    ENQUEUE_RENDER_COMMAND(Synavis_EnqueueI420Readback)([RTTexture = RTResource->GetRenderTargetTexture(), Width, Height, ReadbackY, ReadbackU, ReadbackV](FRHICommandListImmediate& RHICmdList)
     {
-        UE_LOG(LogTemp, Verbose, TEXT("Synavis: EnqueueNV12ReadbackFromRenderTarget - dispatching RDG for %dx%d"), Width, Height);
+        UE_LOG(LogTemp, Verbose, TEXT("Synavis: EnqueueI420ReadbackFromRenderTarget - dispatching RDG for %dx%d"), Width, Height);
         FRDGBuilder GraphBuilder(RHICmdList);
         FRDGTextureRef RDGInput = RegisterExternalTexture(GraphBuilder, RTTexture, TEXT("Synavis_Input"));
 
-        FRDGTextureDesc DescY = FRDGTextureDesc::Create2D(FIntPoint(Width, Height), PF_R8, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
+        FRDGTextureDesc DescY = FRDGTextureDesc::Create2D(FIntPoint(Width, Height), PF_R8_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
         FRDGTextureRef RDGY = GraphBuilder.CreateTexture(DescY, TEXT("Synavis_Y"));
 
-        FRDGTextureDesc DescU = FRDGTextureDesc::Create2D(FIntPoint((Width + 1) / 2, (Height + 1) / 2), PF_R8, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
+        FRDGTextureDesc DescU = FRDGTextureDesc::Create2D(FIntPoint((Width + 1) / 2, (Height + 1) / 2), PF_R8_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
         FRDGTextureRef RDGU = GraphBuilder.CreateTexture(DescU, TEXT("Synavis_U"));
 
-        FRDGTextureDesc DescV = FRDGTextureDesc::Create2D(FIntPoint((Width + 1) / 2, (Height + 1) / 2), PF_R8, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
+        FRDGTextureDesc DescV = FRDGTextureDesc::Create2D(FIntPoint((Width + 1) / 2, (Height + 1) / 2), PF_R8_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
         FRDGTextureRef RDGV = GraphBuilder.CreateTexture(DescV, TEXT("Synavis_V"));
 
         const auto* GlobalMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
@@ -226,7 +226,7 @@ bool EnqueueNV12ReadbackFromRenderTarget(UTextureRenderTarget2D* SrcRT, FRHIGPUT
         PassParameters->OutV = GraphBuilder.CreateUAV(RDGV);
         PassParameters->TextureSize = FIntPoint(Width, Height);
 
-        GraphBuilder.AddPass(RDG_EVENT_NAME("SynavisConvertToNV12"), PassParameters, ERDGPassFlags::Compute,
+        GraphBuilder.AddPass(RDG_EVENT_NAME("SynavisConvertToI420"), PassParameters, ERDGPassFlags::Compute,
             [PassParameters, ComputeShader, Width, Height](FRHIComputeCommandList& RHICmdListInner)
             {
                 FComputeShaderUtils::Dispatch(RHICmdListInner, ComputeShader, *PassParameters, FIntVector((Width + 15) / 16, (Height + 15) / 16, 1));
@@ -238,7 +238,7 @@ bool EnqueueNV12ReadbackFromRenderTarget(UTextureRenderTarget2D* SrcRT, FRHIGPUT
         AddEnqueueCopyPass(GraphBuilder, ReadbackV, RDGV);
 
         GraphBuilder.Execute();
-        UE_LOG(LogTemp, Verbose, TEXT("Synavis: EnqueueNV12ReadbackFromRenderTarget - RDG executed and readbacks enqueued"));
+        UE_LOG(LogTemp, Verbose, TEXT("Synavis: EnqueueI420ReadbackFromRenderTarget - RDG executed and readbacks enqueued"));
     });
 
     OutReadbackY = ReadbackY;

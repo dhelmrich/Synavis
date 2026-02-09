@@ -13,6 +13,8 @@ extern "C" {
 
 #include <libavcodec/avcodec.h>
 #include <libavutil/avutil.h>
+#include <libavutil/error.h>
+#include <libavutil/opt.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/buffer.h>
 #include <libavutil/mathematics.h>
@@ -20,6 +22,36 @@ extern "C" {
 }
 
 THIRD_PARTY_INCLUDES_END
+
+// LogHexVerbose as expected below:
+static void LogHexVerbose(const char* Data, int32 Size, const TCHAR* Prefix)
+{
+  if (Size <= 0 || !Data) return;
+  FString HexStr;
+  for (int32 i = 0; i < Size; ++i)
+  {
+    HexStr += FString::Printf(TEXT("%02X "), static_cast<uint8>(Data[i]));
+  }
+  UE_LOG(LogTemp, Verbose, TEXT("%s: %s"), Prefix, *HexStr);
+}
+
+// Small helper to format FFmpeg errors succinctly
+static void LogAvError(int Ret, const TCHAR* Msg)
+{
+        if (Ret >= 0) return;
+        char Err[128] = {0};
+        av_strerror(Ret, Err, sizeof(Err));
+        UE_LOG(LogTemp, Error, TEXT("%s: %S (%d)"), Msg, Err, Ret);
+}
+
+// Small helper returning a short hex string for the first N bytes of a buffer
+static FString DumpFirstBytes(const uint8* Data, int32 Count)
+{
+        if (!Data || Count <= 0) return FString(TEXT(""));
+        FString S;
+        for (int i = 0; i < Count; ++i) S += FString::Printf(TEXT("%02X"), Data[i]);
+        return S;
+}
 
 // Helper: compute an RTP 90kHz timestamp without requiring av_rescale_q at call
 // site. Updates state->RtpMultiplier on first use using codec time_base.
@@ -90,63 +122,77 @@ FVp9SendoffWorker::FVp9SendoffWorker(USynavisVp9SendoffHandler* InOwner)
 // Destructor for FLibAVEncoderState (defined here so we can use libav free functions)
 FLibAVEncoderState::~FLibAVEncoderState()
 {
-    FScopeLock guard(&Mutex);
-    if (Packet)
-    {
-        av_packet_free(&Packet);
-        Packet = nullptr;
-    }
-    if (Frame)
-    {
-        av_frame_free(&Frame);
-        Frame = nullptr;
-    }
-    if (CodecCtx)
-    {
-        avcodec_free_context(&CodecCtx);
-        CodecCtx = nullptr;
-    }
+  FScopeLock guard(&Mutex);
+  if (Packet)
+  {
+      av_packet_free(&Packet);
+      Packet = nullptr;
+  }
+  if (Frame)
+  {
+      av_frame_free(&Frame);
+      Frame = nullptr;
+  }
+  if (CodecCtx)
+  {
+    avcodec_free_context(&CodecCtx);
+    CodecCtx = nullptr;
+  }
 }
 
 uint32 FVp9SendoffWorker::Run()
 {
-    UE_LOG(LogTemp, Warning, TEXT("VP9 Worker: started for owner=%p"), Owner);
-    while (!Owner->bShouldExit.Load())
+  UE_LOG(LogTemp, Warning, TEXT("VP9 Worker: started for owner=%p"), Owner);
+  while (Owner && !Owner->bShouldExit.Load())
+  {
+    FEncodedVp9Frame Frame;
+    if (Owner && Owner->FrameQueue && Owner->FrameQueue->Dequeue(Frame))
     {
-        FEncodedVp9Frame Frame;
-        if (Owner->FrameQueue && Owner->FrameQueue->Dequeue(Frame))
-        {
-            UE_LOG(LogTemp, Verbose, TEXT("VP9 Worker: dequeued frame %d bytes"), Frame.Buffer.Num());
-            Owner->ProcessFrame(Frame);
-        }
-        else
-        {
-            FPlatformProcess::Sleep(0.001f);
-        }
+      UE_LOG(LogTemp, Verbose, TEXT("VP9 Worker: dequeued frame %d bytes"), Frame.Buffer.Num());
+      Owner->ProcessFrame(Frame);
     }
-    return 0;
+    else
+    {
+      FPlatformProcess::Sleep(0.001f);
+    }
+  }
+  return 0;
 }
 
 void FVp9SendoffWorker::Stop()
 {
-    Owner->bShouldExit = true;
+  Owner->bShouldExit = true;
 }
 
 USynavisVp9SendoffHandler::USynavisVp9SendoffHandler()
 {
-    PacketBuffers.SetNum(MaxPacketsPerFrame * PacketBufSize);
-    PacketPool.SetNum(MaxPacketsPerFrame);
-    FrameQueue = new TCircularQueue<FEncodedVp9Frame>(128);
+  PacketBuffers.SetNum(MaxPacketsPerFrame * PacketBufSize);
+  PacketPool.SetNum(MaxPacketsPerFrame);
+  FrameQueue = new TCircularQueue<FEncodedVp9Frame>(128);
+}
+
+void USynavisVp9SendoffHandler::RegisterTrackSsrc(int32 TrackId, uint32 Ssrc)
+{
+        FScopeLock guard(&TrackSsrcMutex);
+        TrackSsrcMap.Add(TrackId, Ssrc);
+        UE_LOG(LogTemp, Verbose, TEXT("VP9 Sendoff: registered SSRC %u for track %d"), Ssrc, TrackId);
+}
+
+void USynavisVp9SendoffHandler::UnregisterTrack(int32 TrackId)
+{
+        FScopeLock guard(&TrackSsrcMutex);
+        TrackSsrcMap.Remove(TrackId);
+        UE_LOG(LogTemp, Verbose, TEXT("VP9 Sendoff: unregistered track %d"), TrackId);
 }
 
 FLibAVEncoderState* USynavisVp9SendoffHandler::GetOrCreateLibAVEncoderState()
 {
-    if (!InternalLibAVState)
-    {
-        InternalLibAVState = new FLibAVEncoderState();
-        InternalLibAVState->Codec = avcodec_find_encoder(AV_CODEC_ID_VP9);
-    }
-    return InternalLibAVState;
+  if (!InternalLibAVState)
+  {
+    InternalLibAVState = new FLibAVEncoderState();
+    InternalLibAVState->Codec = avcodec_find_encoder(AV_CODEC_ID_VP9);
+  }
+  return InternalLibAVState;
 }
 
 void USynavisVp9SendoffHandler::Initialize(int32 InPayloadType, uint32 InSSRC, uint16 InMaxPayloadSize)
@@ -171,6 +217,14 @@ void USynavisVp9SendoffHandler::Initialize(int32 InPayloadType, uint32 InSSRC, u
         WorkerThread = FRunnableThread::Create(Worker, TEXT("SynavisVp9SendoffHandlerWorker"));
         UE_LOG(LogTemp, Warning, TEXT("VP9 Sendoff: worker thread created, owner=%p thread=%p"), this, WorkerThread);
     }
+}
+
+void USynavisVp9SendoffHandler::SetPayloadType(int32 NewPayloadType)
+{
+    if (NewPayloadType <= 0) return;
+    if (PayloadType == NewPayloadType) return;
+    UE_LOG(LogTemp, Log, TEXT("VP9 Sendoff: updating payload type from %d to %d"), PayloadType, NewPayloadType);
+    PayloadType = NewPayloadType;
 }
 
 void USynavisVp9SendoffHandler::SendFrame(TArray<uint8>&& InFrameBuffer, uint32 FrameTimestamp90khz, uint32 FrameDuration90khz, const TArray<int32>& TracksToSend)
@@ -229,7 +283,13 @@ static int BuildRtpVp9Packet_local(uint8* OutBuf, int Remaining, const uint8* Fr
     OutBuf[0] = 0x80; // V=2, P=0, X=0, CC=0
     OutBuf[1] = PayloadType & 0x7F;
     if (IsLast) OutBuf[1] |= 0x80;
-    WriteBE16_local(OutBuf + 2, SeqNum);
+
+    // According to RFC9628, Sequence number is big endian
+    uint16_t SeqNet = static_cast<uint16_t>(SeqNum);
+#if PLATFORM_LITTLE_ENDIAN
+    SeqNet = BYTESWAP_ORDER16(SeqNet);
+#endif
+    FMemory::Memcpy(OutBuf + 2, &SeqNet, sizeof(SeqNet));
     WriteBE32_local(OutBuf + 4, Timestamp);
     WriteBE32_local(OutBuf + 8, SSRC);
     OutBuf[12] = 0;
@@ -262,6 +322,10 @@ void USynavisVp9SendoffHandler::ProcessFrame(const FEncodedVp9Frame& Frame)
         SequenceNumber++;
         PacketIdx++;
     }
+    if( Remaining > 0 )
+    {
+        UE_LOG(LogTemp, Warning, TEXT("VP9 Frame too large to packetize: %d bytes remaining after %d packets"), Remaining, PacketIdx);
+    }
     UE_LOG(LogTemp, Verbose, TEXT("VP9 Packetized %d bytes into %d RTP packets (TS=%u)"), FrameSize, PacketIdx, Frame.Timestamp90khz);
     UE_LOG(LogTemp, Warning, TEXT("VP9 RTP send: PT=%d SSRC=%u startSeq=%u TS=%u packets=%d"), PayloadType, SSRC, StartSequence, Frame.Timestamp90khz, PacketIdx);
     for (int32 i = 0; i < PacketIdx; ++i)
@@ -272,7 +336,26 @@ void USynavisVp9SendoffHandler::ProcessFrame(const FEncodedVp9Frame& Frame)
         {
             if (rtcIsOpen(Track))
             {
-                UE_LOG(LogTemp, Verbose, TEXT("VP9 Send: PT=%d SSRC=%u Seq=%u Len=%d Track=%d TS=%u"), PayloadType, SSRC, SeqForPacket, Packet.Len, Track, Frame.Timestamp90khz);
+                // Determine the SSRC to stamp for this track. Use per-track mapping
+                // if available, otherwise fall back to the handler-wide SSRC.
+                uint32_t trackSsrc = SSRC;
+                {
+                    FScopeLock guard(&TrackSsrcMutex);
+                    uint32* found = TrackSsrcMap.Find(Track);
+                    if (found) trackSsrc = *found;
+                }
+
+                UE_LOG(LogTemp, Verbose, TEXT("VP9 Send: PT=%d SSRC=%u(seq_base=%u) Seq=%u Len=%d Track=%d TS=%u"), PayloadType, trackSsrc, SSRC, SeqForPacket, Packet.Len, Track, Frame.Timestamp90khz);
+
+                // Patch SSRC in packet header (bytes 8..11) with track-specific SSRC.
+                if (Packet.Len >= 12)
+                {
+                    Packet.Data[8] = static_cast<uint8_t>((trackSsrc >> 24) & 0xFF);
+                    Packet.Data[9] = static_cast<uint8_t>((trackSsrc >> 16) & 0xFF);
+                    Packet.Data[10] = static_cast<uint8_t>((trackSsrc >> 8) & 0xFF);
+                    Packet.Data[11] = static_cast<uint8_t>((trackSsrc) & 0xFF);
+                }
+
                 rtcSendMessage(Track, reinterpret_cast<const char*>(Packet.Data), Packet.Len);
             }
             else
@@ -287,9 +370,16 @@ void USynavisVp9SendoffHandler::ProcessFrame(const FEncodedVp9Frame& Frame)
 // Non-blocking enqueue: runs encoding and sending on an async thread so game thread is not blocked.
 void USynavisVp9SendoffHandler::EnqueueReadbackNonBlocking(FRHIGPUTextureReadback* ReadbackY, FRHIGPUTextureReadback* ReadbackU, FRHIGPUTextureReadback* ReadbackV, int Width, int Height, const TArray<int32>& TargetTracks, FLibAVEncoderState* LibAVState)
 {
+    UE_LOG(LogTemp, Verbose, TEXT("VP9 EnqueueReadbackNonBlocking called Width=%d Height=%d ReadbackY=%p ReadbackU=%p ReadbackV=%p LibAVState=%p Tracks=%d"),
+        Width, Height, ReadbackY, ReadbackU, ReadbackV, LibAVState, TargetTracks.Num());
     if (!ReadbackY || !ReadbackU || !ReadbackV || !LibAVState)
     {
-        UE_LOG(LogTemp, Warning, TEXT("VP9 EnqueueReadbackNonBlocking: invalid args ReadbackY=%p ReadbackU=%p ReadbackV=%p LibAVState=%p"), ReadbackY, ReadbackU, ReadbackV, LibAVState);
+        bool nullY = (ReadbackY == nullptr);
+        bool nullU = (ReadbackU == nullptr);
+        bool nullV = (ReadbackV == nullptr);
+        bool nullState = (LibAVState == nullptr);
+        UE_LOG(LogTemp, Warning, TEXT("VP9 EnqueueReadbackNonBlocking: invalid args ReadbackY=%p ReadbackU=%p ReadbackV=%p LibAVState=%p (nullY=%d nullU=%d nullV=%d nullState=%d)"),
+            ReadbackY, ReadbackU, ReadbackV, LibAVState, nullY ? 1 : 0, nullU ? 1 : 0, nullV ? 1 : 0, nullState ? 1 : 0);
         return;
     }
     // Capture by value necessary params; run on worker thread
@@ -322,6 +412,17 @@ void USynavisVp9SendoffHandler::EnqueueReadbackNonBlocking(FRHIGPUTextureReadbac
         int HalfHeight = (Height + 1) / 2;
         int USize = URowPitch * HalfHeight;
         int VSize = VRowPitch * HalfHeight;
+
+        // Diagnostic: log row pitches vs logical plane widths so we can detect pitch/padding issues
+        int UVWidth = (Width + 1) / 2;
+        int UVHeight = (Height + 1) / 2;
+        UE_LOG(LogTemp, Verbose, TEXT("ENC readback dims W=%d H=%d UVW=%d UVH=%d RowPitch Y=%d U=%d V=%d"), Width, Height, UVWidth, UVHeight, YRowPitch, URowPitch, VRowPitch);
+        if (UE_GET_LOG_VERBOSITY(LogTemp) >= ELogVerbosity::VeryVerbose)
+        {
+            const int DumpBytes = FMath::Min(16, URowPitch);
+            UE_LOG(LogTemp, VeryVerbose, TEXT("ENC readback U[0..15]=%s rowPitch=%d UVW=%d UVH=%d"), *DumpFirstBytes(static_cast<const uint8*>(UPtr), DumpBytes), URowPitch, UVWidth, UVHeight);
+            UE_LOG(LogTemp, VeryVerbose, TEXT("ENC readback V[0..15]=%s rowPitch=%d UVW=%d UVH=%d"), *DumpFirstBytes(static_cast<const uint8*>(VPtr), DumpBytes), VRowPitch, UVWidth, UVHeight);
+        }
 
         struct ReadbackFreeCtx { FRHIGPUTextureReadback* RB; };
         ReadbackFreeCtx* ctxY = new ReadbackFreeCtx{ ReadbackY };
@@ -364,16 +465,73 @@ void USynavisVp9SendoffHandler::EnqueueReadbackNonBlocking(FRHIGPUTextureReadbac
             LibAVState->CodecCtx->pix_fmt = AV_PIX_FMT_YUV420P;
             LibAVState->CodecCtx->time_base = AVRational{1, 30};
             if (!LibAVState->Packet) LibAVState->Packet = av_packet_alloc();
+            // Apply libvpx tuning options for low-latency debugging (non-hot path)
+            if (LibAVState->CodecCtx && LibAVState->CodecCtx->priv_data)
+            {
+                int r1 = av_opt_set(LibAVState->CodecCtx->priv_data, "deadline", "realtime", 0);
+                LogAvError(r1, TEXT("VP9 Enqueue: av_opt_set(deadline)"));
+                int r2 = av_opt_set_int(LibAVState->CodecCtx->priv_data, "lag-in-frames", 0, 0);
+                LogAvError(r2, TEXT("VP9 Enqueue: av_opt_set_int(lag-in-frames)"));
+                int r3 = av_opt_set_int(LibAVState->CodecCtx->priv_data, "cpu-used", 8, 0);
+                LogAvError(r3, TEXT("VP9 Enqueue: av_opt_set_int(cpu-used)"));
+                // Use configured UPROPERTYs (kbps / frames) when present, otherwise fall back to sensible defaults
+                int64_t EffectiveBitrateKbps = (this && this->TargetBitrateKbps > 0) ? this->TargetBitrateKbps : 512;
+                int64_t EffectiveKeyframeInterval = (this && this->KeyframeInterval > 0) ? this->KeyframeInterval : 128;
+                int r4 = av_opt_set_int(LibAVState->CodecCtx->priv_data, "rc_target_bitrate", (int)EffectiveBitrateKbps, 0);
+                LogAvError(r4, TEXT("VP9 Enqueue: av_opt_set_int(rc_target_bitrate)"));
+                int r5 = av_opt_set_int(LibAVState->CodecCtx->priv_data, "kf-max-dist", (int)EffectiveKeyframeInterval, 0);
+                LogAvError(r5, TEXT("VP9 Enqueue: av_opt_set_int(kf-max-dist)"));
+                // Also set codec context fields as a fallback/default (bit_rate is in bits/sec)
+                LibAVState->CodecCtx->bit_rate = (int64_t)EffectiveBitrateKbps * 1000;
+                LibAVState->CodecCtx->gop_size = (int)EffectiveKeyframeInterval;
+            }
+            UE_LOG(LogTemp, Warning, TEXT("VP9 Enqueue: pre-open: codec=%S id=%d width=%d height=%d pix_fmt=%d (NV12=%d YUV420P=%d) RowPitch Y=%d U=%d V=%d"),
+                LibAVState->Codec ? LibAVState->Codec->name : (const char*)"?",
+                LibAVState->Codec ? (int)LibAVState->Codec->id : -1,
+                LibAVState->CodecCtx->width,
+                LibAVState->CodecCtx->height,
+                LibAVState->CodecCtx->pix_fmt,
+                AV_PIX_FMT_NV12,
+                AV_PIX_FMT_YUV420P,
+                YRowPitch, URowPitch, VRowPitch);
+
             int openRc = avcodec_open2(LibAVState->CodecCtx, LibAVState->Codec, nullptr);
             if (openRc < 0)
             {
-                UE_LOG(LogTemp, Warning, TEXT("VP9 Enqueue: avcodec_open2 failed rc=%d"), openRc);
+                LogAvError(openRc, TEXT("VP9 Enqueue: avcodec_open2 failed"));
+                // Dump codec context fields to help diagnose invalid-argument failures
+                if (LibAVState->CodecCtx)
+                {
+                    UE_LOG(LogTemp, Error, TEXT("VP9 Enqueue: CodecCtx dump before free: codec=%S id=%d width=%d height=%d pix_fmt=%d threads=%d bit_rate=%lld gop_size=%d max_b_frames=%d profile=%d level=%d"),
+                        LibAVState->Codec ? LibAVState->Codec->name : (const char*)"?",
+                        (int)LibAVState->CodecCtx->codec_id,
+                        LibAVState->CodecCtx->width,
+                        LibAVState->CodecCtx->height,
+                        LibAVState->CodecCtx->pix_fmt,
+                        LibAVState->CodecCtx->thread_count,
+                        (long long)LibAVState->CodecCtx->bit_rate,
+                        LibAVState->CodecCtx->gop_size,
+                        LibAVState->CodecCtx->max_b_frames,
+                        LibAVState->CodecCtx->profile,
+                        LibAVState->CodecCtx->level);
+                    UE_LOG(LogTemp, Error, TEXT("VP9 Enqueue: time_base=%d/%d framerate=%d/%d sample_aspect_ratio=%d/%d"),
+                        LibAVState->CodecCtx->time_base.num, LibAVState->CodecCtx->time_base.den,
+                        LibAVState->CodecCtx->framerate.num, LibAVState->CodecCtx->framerate.den,
+                        LibAVState->CodecCtx->sample_aspect_ratio.num, LibAVState->CodecCtx->sample_aspect_ratio.den);
+                    UE_LOG(LogTemp, Error, TEXT("VP9 Enqueue: pix_fmt description hint: NV12=%d YUV420P=%d"), AV_PIX_FMT_NV12, AV_PIX_FMT_YUV420P);
+                    UE_LOG(LogTemp, Error, TEXT("VP9 Enqueue: CodecCtx priv_data=%p priv_class=%p"), LibAVState->CodecCtx->priv_data, LibAVState->CodecCtx->av_class ? (void*)LibAVState->CodecCtx->av_class : nullptr);
+                }
                 avcodec_free_context(&LibAVState->CodecCtx);
                 av_buffer_unref(&bufY);
                 av_buffer_unref(&bufU);
                 av_buffer_unref(&bufV);
                 return;
             }
+            UE_LOG(LogTemp, Log, TEXT("ENC init codec=%S w=%d h=%d pix_fmt=%d tb=%d/%d fr=%d/%d gop=%d max_b=%d"),
+                LibAVState->Codec ? LibAVState->Codec->name : "?", LibAVState->CodecCtx->width, LibAVState->CodecCtx->height, LibAVState->CodecCtx->pix_fmt,
+                LibAVState->CodecCtx->time_base.num, LibAVState->CodecCtx->time_base.den,
+                LibAVState->CodecCtx->framerate.num, LibAVState->CodecCtx->framerate.den,
+                LibAVState->CodecCtx->gop_size, LibAVState->CodecCtx->max_b_frames);
             LibAVState->Width = Width;
             LibAVState->Height = Height;
         }
@@ -417,47 +575,71 @@ void USynavisVp9SendoffHandler::EnqueueReadbackNonBlocking(FRHIGPUTextureReadbac
         frame->buf[0] = refY;
         frame->buf[1] = refU;
         frame->buf[2] = refV;
-        frame->data[0] = refY->data; frame->linesize[0] = YRowPitch;
-        frame->data[1] = refU->data; frame->linesize[1] = URowPitch;
-        frame->data[2] = refV->data; frame->linesize[2] = VRowPitch;
+        frame->data[0] = refY->data;
+        frame->data[1] = refU->data;
+        frame->data[2] = refV->data;
+        frame->linesize[0] = YRowPitch;
+        frame->linesize[1] = URowPitch;
+        frame->linesize[2] = VRowPitch;
 
+        // Assign a monotonic PTS to help encoders that require/expect timestamps
+        frame->pts = static_cast<int64_t>(++LibAVState->FrameCounter);
+        UE_LOG(LogTemp, Verbose, TEXT("ENC send_frame pts=%lld fmt=%d w=%d h=%d"), (long long)frame->pts, frame->format, frame->width, frame->height);
         int ret = avcodec_send_frame(LibAVState->CodecCtx, frame);
-        if (ret < 0)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("VP9 Enqueue: avcodec_send_frame failed rc=%d"), ret);
-            // Do not free the persistent AVFrame; just unreference buffers
-            av_frame_unref(frame);
-        }
+        if (ret == AVERROR(EAGAIN)) { UE_LOG(LogTemp, Verbose, TEXT("ENC send_frame: EAGAIN, must drain packets")); av_frame_unref(frame); }
+        else if (ret == AVERROR_EOF) { UE_LOG(LogTemp, Warning, TEXT("ENC send_frame: EOF, encoder flushed")); av_frame_unref(frame); }
+        else if (ret < 0) { LogAvError(ret, TEXT("ENC send_frame error")); av_frame_unref(frame); return; }
         else
         {
-            int recvCount = 0;
-            while ((ret = avcodec_receive_packet(LibAVState->CodecCtx, LibAVState->Packet)) >= 0)
+            UE_LOG(LogTemp, VeryVerbose, TEXT("ENC send_frame ok"));
+            UE_LOG(LogTemp, Verbose, TEXT("VP9 Enqueue: frame input width=%d height=%d linesize[0]=%d linesize[1]=%d linesize[2]=%d"),
+                frame->width, frame->height, frame->linesize[0], frame->linesize[1], frame->linesize[2]);
+            if (frame->data[0] && frame->linesize[0] > 0)
             {
-                recvCount++;
-                size_t sz = static_cast<size_t>(LibAVState->Packet->size);
-                UE_LOG(LogTemp, Verbose, TEXT("VP9 Enqueue: received packet size=%zu pts=%lld"), sz, LibAVState->Packet->pts);
-                if (sz == 0)
+                const int DumpBytes = FMath::Min(16, frame->linesize[0]);
+                UE_LOG(LogTemp, VeryVerbose, TEXT("ENC frame Y[0..15]=%s linesizeY=%d"), *DumpFirstBytes(frame->data[0], DumpBytes), frame->linesize[0]);
+            }
+
+            int packets = 0;
+            for (;;)
+            {
+                int r = avcodec_receive_packet(LibAVState->CodecCtx, LibAVState->Packet);
+                if (r == 0)
                 {
+                    ++packets;
+                    size_t sz = static_cast<size_t>(LibAVState->Packet->size);
+                    UE_LOG(LogTemp, Verbose, TEXT("ENC got packet size=%d pts=%lld dts=%lld flags=%d"), (int)sz, (long long)LibAVState->Packet->pts, (long long)LibAVState->Packet->dts, LibAVState->Packet->flags);
+                    if (sz > 0 && sz < 100)
+                    {
+                        AVCodecContext* c = LibAVState->CodecCtx;
+                        UE_LOG(LogTemp, Verbose, TEXT("ENC small-pkt state: sz=%d codec=%S w=%d h=%d pix=%d tb=%d/%d fr=%d/%d gop=%d max_b=%d frameCounter=%llu lastPktPts=%lld rtpMult=%f"),
+                            (int)sz,
+                            c && c->codec ? c->codec->name : "?",
+                            c ? c->width : 0,
+                            c ? c->height : 0,
+                            c ? c->pix_fmt : -1,
+                            c ? c->time_base.num : 0, c ? c->time_base.den : 0,
+                            c ? c->framerate.num : 0, c ? c->framerate.den : 0,
+                            c ? c->gop_size : 0, c ? c->max_b_frames : 0,
+                            (unsigned long long)LibAVState->FrameCounter,
+                            (long long)LibAVState->LastPacketPts,
+                            LibAVState->RtpMultiplier);
+                    }
+                    if (sz > 0 && sz <= 128) { LogHexVerbose(reinterpret_cast<const char*>(LibAVState->Packet->data), (int)sz, TEXT("VP9 Enqueue: pkt hex")); }
+                    if (sz == 0) { av_packet_unref(LibAVState->Packet); UE_LOG(LogTemp, Verbose, TEXT("VP9 Enqueue: empty packet received, skip")); continue; }
+                    TArray<uint8> Vp9Buffer;
+                    Vp9Buffer.Append(reinterpret_cast<uint8*>(LibAVState->Packet->data), LibAVState->Packet->size);
+                    uint32_t rtpTs = ComputeRtpTimestamp(LibAVState, LibAVState->Packet->pts, LibAVState->CodecCtx->time_base);
+                    UE_LOG(LogTemp, Verbose, TEXT("VP9 Enqueue: sending encoded frame %d bytes TS=%u"), Vp9Buffer.Num(), rtpTs);
+                    this->SendFrame(MoveTemp(Vp9Buffer), rtpTs, 90000/30, Tracks);
                     av_packet_unref(LibAVState->Packet);
                     continue;
                 }
-                TArray<uint8> Vp9Buffer;
-                Vp9Buffer.Append(reinterpret_cast<uint8*>(LibAVState->Packet->data), LibAVState->Packet->size);
-                uint32_t rtpTs = 0;
-                // Compute RTP timestamp using local timestamp state in LibAVState.
-                // This avoids requiring av_rescale_q at every callsite and
-                // yields stable timestamps even when encoders skip PTS.
-                rtpTs = ComputeRtpTimestamp(LibAVState, LibAVState->Packet->pts, LibAVState->CodecCtx->time_base);
-                UE_LOG(LogTemp, Verbose, TEXT("VP9 Enqueue: sending encoded frame %d bytes TS=%u"), Vp9Buffer.Num(), rtpTs);
-                // Use this object's SendFrame to queue packetization and send
-                this->SendFrame(MoveTemp(Vp9Buffer), rtpTs, 90000/30, Tracks);
-                av_packet_unref(LibAVState->Packet);
+                if (r == AVERROR(EAGAIN)) { UE_LOG(LogTemp, VeryVerbose, TEXT("ENC recv_packet: EAGAIN after %d packets"), packets); break; }
+                if (r == AVERROR_EOF) { UE_LOG(LogTemp, Warning, TEXT("ENC recv_packet: EOF after %d packets"), packets); UE_LOG(LogTemp, Log, TEXT("ENC flush complete, encoder drained")); break; }
+                { char ebuf[128] = {0}; av_strerror(r, ebuf, sizeof(ebuf)); UE_LOG(LogTemp, Error, TEXT("ENC recv_packet error: %S (%d) after %d packets"), ebuf, r, packets); break; }
             }
-            if (recvCount == 0)
-            {
-                UE_LOG(LogTemp, Verbose, TEXT("VP9 Enqueue: no packets produced by encoder"));
-            }
-            // After encoding, release the per-frame buffer refs but keep the AVFrame
+            if (packets == 0) UE_LOG(LogTemp, Verbose, TEXT("ENC frame pts=%lld produced no packets this cycle"), (long long)frame->pts);
             av_frame_unref(frame);
         }
     });

@@ -35,6 +35,9 @@ extern "C" {
 struct AVCodecContext; struct AVFrame; struct AVPacket; struct AVCodec;
 #endif
 
+// Forward-declare the shared encoder state (actual definition in SynavisVp9SendoffHandler.h)
+struct FLibAVEncoderState;
+
 THIRD_PARTY_INCLUDES_END
 
 
@@ -43,7 +46,7 @@ THIRD_PARTY_INCLUDES_END
 class UTextureRenderTarget2D;
 class USceneCaptureComponent2D;
 class USynavisStreamer;
-class USynavisVp9Packetizer;
+class USynavisVp9SendoffHandler;
 
 DECLARE_DYNAMIC_DELEGATE_OneParam(FSynavisMessage, FString, Message);
 DECLARE_DYNAMIC_DELEGATE_OneParam(FSynavisData, const TArray<uint8>&, Data);
@@ -225,9 +228,9 @@ public:
   UPROPERTY()
   FSynavisData DataBroadcast;
 
-    // VP9 RTP packetizer (zero-alloc, async)
+    // Centralized non-blocking sendoff handler (encodes+packetizes+sends on workers)
     UPROPERTY()
-    USynavisVp9Packetizer* Vp9Packetizer = nullptr;
+    USynavisVp9SendoffHandler* SendoffHandler = nullptr;
 
   // Resolve channel -> connection mapping on the game thread and dispatch message
   void ResolveAndHandleDataChannelMessage(int dc, const std::variant<TArray<uint8>, std::string>& message);
@@ -273,6 +276,11 @@ public:
   // Optional MTU hint (bytes). Set to 0 to use automatic/default.
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Streaming|Signalling")
   int32 Mtu = 0;
+
+  // Optional explicit payload type to use for outgoing VP9 RTP packets.
+  // Set to 96 by default (dynamic range 96-127). Use -1 for library default.
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Streaming|Signalling")
+  int32 VideoPayloadType = 96;
 
   // If true the streamer will create local SDPs (take the first step / be offerer).
   // Set to false to let remote endpoints offer first and make this component passive.
@@ -423,8 +431,8 @@ protected:
 
   void TakeSignallingMessage(const FString& Message);
 
-  // Zero-copy variant: accept FRHIGPUTextureReadback readbacks for Y and UV (NV12). The helper will wrap
-  // the readback pointers into AVBufferRefs that free/unlock the readbacks when FFmpeg is done.
+  // Zero-copy variant: accept FRHIGPUTextureReadback readbacks for Y, U and V (I420 planar layout).
+  // The helper will wrap the readback pointers into AVBufferRefs that free/unlock the readbacks when FFmpeg is done.
   // TargetTracks contains one or more tracks that should receive the encoded packets.
   // Accept separate Y, U and V readbacks (I420). The helper will wrap
   // the readback pointers into AVBufferRefs that free/unlock the readbacks when FFmpeg is done.
@@ -482,19 +490,8 @@ protected:
   // Teardown a connection and free its resources (PeerConnection, DataChannels, Tracks)
   void TeardownConnection(int32 PlayerID);
 
-  // Persistent libav encoder context to avoid allocations per-frame
-  struct FLibAVEncoderState
-  {
-    AVCodecContext* CodecCtx = nullptr;
-    AVFrame* Frame = nullptr;
-    AVPacket* Packet = nullptr;
-    const AVCodec* Codec = nullptr;
-    int Width = 0;
-    int Height = 0;
-    FCriticalSection Mutex;
-    FLibAVEncoderState() {}
-    ~FLibAVEncoderState(); // defined in cpp
-  };
+  // Persistent libav encoder context shared with the sendoff handler.
+  // Type defined in SynavisVp9SendoffHandler.h; forward-declared above.
   FLibAVEncoderState* LibAVState = nullptr;
 
   std::atomic<uint32_t> NextSSRC {1001};

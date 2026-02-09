@@ -1,4 +1,4 @@
-// Compute shader: Convert RGBA render target to NV12 (Y plane + interleaved UV)
+// Compute shader: Convert RGBA render target to I420 (Y plane + separate U and V)
 // Required engine includes for shader compilation
 #include "/Engine/Public/Platform.ush"
 #include "/Engine/Private/Common.ush"

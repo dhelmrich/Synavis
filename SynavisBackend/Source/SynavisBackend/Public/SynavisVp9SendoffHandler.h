@@ -60,6 +60,14 @@ class SYNAVISBACKEND_API USynavisVp9SendoffHandler : public UObject
 public:
     USynavisVp9SendoffHandler();
 
+    // Target encoder bitrate in kilobits per second. Editable from editor/blueprints.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Synavis|VP9")
+    int32 TargetBitrateKbps = 512;
+
+    // Keyframe interval (GOP size) in frames. Editable from editor/blueprints.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Synavis|VP9")
+    int32 KeyframeInterval = 1;
+
     // Internal initialize (not Blueprint-exposed due to non-Blueprint-safe integer types)
     void Initialize(int32 InPayloadType, uint32 InSSRC, uint16 InMaxPayloadSize);
 
@@ -82,13 +90,27 @@ public:
                                     const TArray<int32>& TargetTracks,
                                     FLibAVEncoderState* LibAVState);
 
+    // Update the RTP payload type used for packetization. Can be called
+    // at runtime when negotiated payload type differs from the default.
+    UFUNCTION(BlueprintCallable, Category="Synavis|VP9")
+    void SetPayloadType(int32 NewPayloadType);
+
+    // Register the SSRC associated with a libdatachannel track id. This should
+    // be called once when the track is created (rtcAddTrackEx) so the sendoff
+    // handler can stamp outgoing RTP with the correct SSRC without parsing
+    // descriptions per-packet.
+    void RegisterTrackSsrc(int32 TrackId, uint32 Ssrc);
+
+    // Unregister a track when it is torn down.
+    void UnregisterTrack(int32 TrackId);
+
 private:
-    int32 PayloadType = 98;
+    int32 PayloadType = 96;
     uint32 SSRC = 12345678U;
     uint16 MaxPayloadSize = 1200;
     TArray<int32> CurrentTracksToSend;
 
-    static constexpr int32 MaxPacketsPerFrame = 32;
+    static constexpr int32 MaxPacketsPerFrame = 999;
     static constexpr int32 PacketBufSize = 1400;
     TArray<uint8> PacketBuffers;
     TArray<FVp9PacketDesc> PacketPool;
@@ -99,6 +121,11 @@ private:
     TAtomic<bool> bShouldExit{false};
     uint16 SequenceNumber = 0;
     uint8 PictureId = 0;
+
+    // Map of libdatachannel track id -> SSRC assigned by libdatachannel for that track.
+    // Protected by TrackSsrcMutex for concurrent access from game/worker threads.
+    FCriticalSection TrackSsrcMutex;
+    TMap<int32, uint32> TrackSsrcMap;
 
     void ProcessFrame(const FEncodedVp9Frame& Frame);
 
