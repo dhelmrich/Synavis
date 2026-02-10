@@ -23,6 +23,7 @@ extern "C" {
 // global private logger initialization
 static std::string Prefix = "FrameDecoder: ";
 static const Synavis::Logger::LoggerInstance ldecoder = Synavis::Logger::Get()->LogStarter("FrameDecoder");
+static const Synavis::Logger::LoggerInstance lthread = Synavis::Logger::Get()->LogStarter("WorkerThread");
 static const Synavis::Logger::LoggerInstance lffmpeg = Synavis::Logger::Get()->LogStarter("FFmpeg");
 
 namespace Synavis
@@ -512,16 +513,16 @@ namespace Synavis
         ldecoder(ELogVerbosity::Info) << "Frame complete, creating decoding task" << std::endl;
         DecoderThread->AddTask([this, ts = Header->timestamp(), Data, cbptr]()
         {
-          ldecoder(ELogVerbosity::Info) << "Decoder thread started for timestamp " << ts << std::endl;
-          while (avcodec_receive_frame(CodecContext, Frame) != AVERROR(EAGAIN))
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-          ldecoder(ELogVerbosity::Debug) << "Flushed decoder buffers, now sending packet for timestamp " << ts << std::endl;
+          lthread(ELogVerbosity::Info) << "Decoder thread started for timestamp " << ts << std::endl;
+          //while (avcodec_receive_frame(CodecContext, Frame) != AVERROR(EAGAIN))
+          //  std::this_thread::sleep_for(std::chrono::milliseconds(1));
+          //lthread(ELogVerbosity::Debug) << "Flushed decoder buffers, now sending packet for timestamp " << ts << std::endl;
           // create a packet from the buffer
           AVPacket* packet = InitializePacketFromData(ts);
-          ldecoder(ELogVerbosity::Debug) << "Initialized AVPacket from data for timestamp " << ts << std::endl;
+          lthread(ELogVerbosity::Debug) << "Initialized AVPacket from data for timestamp " << ts << std::endl;
           if (!packet)
           {
-            ldecoder(ELogVerbosity::Warning) << "InitializePacketFromData returned null for timestamp " << ts << " (incomplete frame or sequence error)" << std::endl;
+            lthread(ELogVerbosity::Warning) << "InitializePacketFromData returned null for timestamp " << ts << " (incomplete frame or sequence error)" << std::endl;
             // Diagnostic: dump any buffered packets we have for this timestamp so
             // the sender/receiver header bytes can be compared when we bail.
             if (frameBuffer.find(ts) != frameBuffer.end())
@@ -539,18 +540,21 @@ namespace Synavis
                   if (i) oss << ' ';
                   oss << std::hex << std::setw(2) << std::setfill('0') << (static_cast<int>(p[i]) & 0xFF);
                 }
-                ldecoder(ELogVerbosity::Debug) << "Buffered packet dump: " << oss.str() << std::endl;
+                lthread(ELogVerbosity::Debug) << "Buffered packet dump: " << oss.str() << std::endl;
                 ++pktIdx;
               }
+            }
+            else
+            {
+              lthread(ELogVerbosity::Debug) << "No buffered packets found for timestamp " << ts << std::endl;
             }
             // packet is not complete
             return;
           }
+          lthread(ELogVerbosity::Debug) << "AVPacket ready for decoding for timestamp " << ts << std::endl;
           int GotFrame = 0;
           int Result = 0;
-#if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(58, 9, 100)
-          Result = avcodec_decode_video2(CodecContext, Frame, &GotFrame, packet);
-#else
+
           Result = avcodec_send_packet(CodecContext, packet);
           lffmpeg(ELogVerbosity::Debug) << "avcodec_send_packet result: " << Result << std::endl;
           if (Result < 0)
@@ -559,16 +563,10 @@ namespace Synavis
             av_strerror(Result, Error, AV_ERROR_MAX_STRING_SIZE);
             lffmpeg(ELogVerbosity::Error) << "avcodec_send_packet failed: " << Error << std::endl;
           }
-          GotFrame = avcodec_receive_frame(CodecContext, Frame);
-          lffmpeg(ELogVerbosity::Debug) << "avcodec_receive_frame return: " << GotFrame << std::endl;
-#endif
-          // check if the frame is decoded
-          if (Result < 0)
-          {
-            // already logged send failure above
-          }
           else
           {
+            GotFrame = avcodec_receive_frame(CodecContext, Frame);
+            lffmpeg(ELogVerbosity::Debug) << "avcodec_receive_frame return: " << GotFrame << std::endl;
             // frame decoded?
             if (GotFrame >= 0)
             {
@@ -619,14 +617,16 @@ namespace Synavis
 
   inline AVPacket* FrameDecode::InitializePacketFromData(uint32_t index)
   {
+    lthread(ELogVerbosity::Info) << "Initializing AVPacket from buffered data for index " << index << std::endl;
     Depacketizer->ResetPacket();
     // to extract the VP9 package from multiple RTP packages, we need to sort them by sequence number
     // return nullptr if the frameBuffer does not contain the index
     if (frameBuffer.find(index) == frameBuffer.end())
     {
-      ldecoder(ELogVerbosity::Debug) << "InitializePacketFromData: no frame for index " << index << std::endl;
+      lthread(ELogVerbosity::Debug) << "InitializePacketFromData: no frame for index " << index << std::endl;
       return nullptr;
     }
+    lthread(ELogVerbosity::Debug) << "InitializePacketFromData: found frame for index " << index << " with " << frameBuffer[index].size() << " packets" << std::endl;
     auto& frame = frameBuffer[index];
     std::ranges::sort(frame, [](const rtc::binary& a, const rtc::binary& b)
     {
@@ -650,7 +650,7 @@ namespace Synavis
         if (sq + 1 != header->seqNumber())
         {
           // sequence number is not correct
-          ldecoder(ELogVerbosity::Warning) << "InitializePacketFromData: sequence gap for index " << index << 
+          lthread(ELogVerbosity::Warning) << "InitializePacketFromData: sequence gap for index " << index << 
             " expected " << (sq + 1) << " got " << header->seqNumber() << std::endl;
           return nullptr;
         }
@@ -660,11 +660,13 @@ namespace Synavis
     }
     // Reserve expected total frame size in the depacketizer to avoid
     // repeated allocations during AddPacket (prevents allocation churn).
+    lthread(ELogVerbosity::Debug) << "Reserving frame buffer size " << size << " for index " << index << std::endl;
     Depacketizer->ReserveFrame(static_cast<size_t>(size));
     for (auto& packet : frame)
     {
       Depacketizer->AddPacket(packet);
     }
+    lthread(ELogVerbosity::Debug) << "All packets added to depacketizer for index " << index << std::endl;
     AVPacket* out = Depacketizer->GetAVFrame(); // implicit copy
     if (!out)
     {
@@ -694,7 +696,9 @@ namespace Synavis
       }
       else
       {
+        // create a new frame entry and track its timestamp so we can remove oldest later
         frameBuffer[Header->timestamp()] = std::vector<rtc::binary>();
+        currentlyCapturing.push_back(Header->timestamp());
         // insert the frame into the buffer
         frameBuffer[Header->timestamp()].push_back(Data); // copy!
       }

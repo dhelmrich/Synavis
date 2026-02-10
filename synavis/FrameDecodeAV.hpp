@@ -135,7 +135,7 @@ namespace Synavis
     inline AVPacket* InitializePacketFromData(uint32_t index);
 
     std::shared_ptr<WorkerThread> DecoderThread;
-    uint32_t MaxFrames;
+    uint32_t MaxFrames{64};
 
     std::map<uint32_t, std::vector<rtc::binary>> frameBuffer;
     std::deque<uint32_t> currentlyCapturing;
