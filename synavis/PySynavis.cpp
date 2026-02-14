@@ -228,6 +228,15 @@ namespace Synavis
       .export_values()
     ;
 
+    // Expose decoded frame container so Python callbacks can accept it directly
+    py::class_<Synavis::FrameContent>(m, "FrameContent")
+      .def(py::init<>())
+      .def_readwrite("Data", &Synavis::FrameContent::Data)
+      .def_readwrite("Width", &Synavis::FrameContent::Width)
+      .def_readwrite("Height", &Synavis::FrameContent::Height)
+      .def_readwrite("Timestamp", &Synavis::FrameContent::Timestamp)
+    ;
+
     
     py::class_<rtc::PeerConnection> (m, "PeerConnection")
     ;
@@ -414,19 +423,17 @@ namespace Synavis
 
 #ifdef BUILD_WITH_DECODING
     py::class_<FrameDecode, std::shared_ptr<FrameDecode>>(m, "FrameDecode")
-      .def(py::init<>())
+      .def(py::init([](ECodec codec){ return std::make_shared<FrameDecode>(codec, nullptr); }), py::arg("codec"))
       .def("CreateAcceptor", [](FrameDecode &self, py::function cb){
-        // Wrap a python callable into a C++ acceptor invoked for decoded frames
+        // Wrap a python callable that expects a FrameContent into a C++ acceptor
         auto fn = [cb](Synavis::FrameContent frame){
           py::gil_scoped_acquire acquire;
-          py::bytes pydata(reinterpret_cast<const char*>(frame.Data.data()), frame.Data.size());
-          py::dict infodict;
-          infodict["timestamp"] = static_cast<uint64_t>(frame.Timestamp);
-          infodict["width"] = frame.Width;
-          infodict["height"] = frame.Height;
-          infodict["is_keyframe"] = false;
-          // Let Python exceptions propagate so they are visible to the user
-          cb(pydata, infodict);
+          try {
+            cb(frame);
+          } catch (const py::error_already_set &e) {
+            Synavis::Logger::Get()->LogStarter("PyBind")(ELogVerbosity::Error) << "CreateAcceptor python exception: " << e.what() << std::endl;
+            throw;
+          }
         };
         // Get the C++ acceptor (takes rtc::binary, rtc::FrameInfo)
         auto acceptor = self.CreateAcceptor(std::function<void(Synavis::FrameContent)>(fn));

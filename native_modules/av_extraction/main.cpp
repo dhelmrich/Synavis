@@ -27,19 +27,6 @@ inline std::byte operator++(std::byte& b) noexcept
 
 static Synavis::Logger::LoggerInstance lmain = Synavis::Logger::Get()->LogStarter("main");
 
-void help(auto program)
-{
-  std::cout << "Usage: " << program << " [options]" << std::endl;
-  std::cout << "Options:" << std::endl;
-  std::cout << "  -v, --verbose\t\t\tEnable verbose logging on the WebRTC backend" << std::endl;
-  std::cout << "  -i, --ip <ip address>\t\tSet the IP address to connect to for webrtc" << std::endl;
-  std::cout << "  -l, --loglevel <log level>\t\tSet the log level (verbose, info, debug, warning, error, silent)" << std::endl;
-  std::cout << "  -c, --codec <codec>\t\t\tSet the codec to use (h264, vp8, vp9, h265)" << std::endl;
-  std::cout << "  -r, --relay <ip>:<port>\t\t\tSet the relay server to use" << std::endl;
-  std::cout << "  -s  --signalling <ip>:<port>\t\t\tSet the signalling server to use" << std::endl;
-  std::cout << "  -d  --sdp <filename>\t\t\tLogs the SDP Description to a file" << std::endl;
-  std::cout << "  -h, --help\t\t\t\tShow this help" << std::endl;
-}
 
 int main(int args, char** argv)
 {
@@ -47,200 +34,52 @@ int main(int args, char** argv)
   auto dc = std::make_shared<Synavis::MediaReceiver>();
   //rtcInitLogger(RTC_LOG_VERBOSE,nullptr);
   // if we have arguments, we check if verbose logging is requested
-  Synavis::ELogVerbosity LogVerbosity = Synavis::ELogVerbosity::Error;
-  Synavis::ECodec codec = Synavis::ECodec::H264;
+  Synavis::ELogVerbosity LogVerbosity = Synavis::ELogVerbosity::Verbose;
+  Synavis::Logger::Get()->SetVerbosity(LogVerbosity);
+  Synavis::Logger::Get()->SetupLogfileRotate("MediaReceiver.log");
+  Synavis::ECodec codec = Synavis::ECodec::VP9;
+  Synavis::RegisterAvLogCallback(true);
   bool logsdp = false;
   json Config = { {"SignallingIP","127.0.0.1"}, {"SignallingPort", 8080} };
-  if (args > 1)
-  {
-    for (int a = 1; a < args; ++a)
-    {
-      std::string arg = argv[a];
-      if (arg == "-h" || arg == "--help")
-      {
-        help(argv[0]);
-        return 0;
-      }
-      if (arg == "-l" || arg == "--loglevel")
-      {
-        if (args < a + 1)
-        {
-          std::cout << "No log level provided" << std::endl;
-          return -1;
-        }
-        std::cout << "Setting log level to " << argv[a + 1] << std::endl;
-        std::string loglevel = argv[a + 1];
-        if (loglevel == "verbose")
-        {
-          LogVerbosity = Synavis::ELogVerbosity::Verbose;
-        }
-        else if (loglevel == "info")
-        {
-          LogVerbosity = Synavis::ELogVerbosity::Info;
-        }
-        else if (loglevel == "debug")
-        {
-          LogVerbosity = Synavis::ELogVerbosity::Debug;
-        }
-        else if (loglevel == "warning")
-        {
-          LogVerbosity = Synavis::ELogVerbosity::Warning;
-        }
-        else if (loglevel == "error")
-        {
-          LogVerbosity = Synavis::ELogVerbosity::Error;
-        }
-        else if (loglevel == "silent")
-        {
-          LogVerbosity = Synavis::ELogVerbosity::Silent;
-        }
-        else
-        {
-          std::cout << "Unknown log level " << loglevel << std::endl;
-        }
-      }
-      if (arg == "-v" || arg == "--verbose")
-      {
-        lmain(Synavis::ELogVerbosity::Debug) << "Verbose logging enabled" << std::endl;
-        rtcInitLogger(RTC_LOG_VERBOSE, nullptr);
-      }
-      if (arg == "-i" || arg == "--ip")
-      {
-        if (args < a + 1)
-        {
-          lmain(Synavis::ELogVerbosity::Debug) << "No IP address provided" << std::endl;
-          return -1;
-        }
-        lmain(Synavis::ELogVerbosity::Debug) << "Setting IP to " << argv[a + 1] << std::endl;
-        dc->IP = argv[a + 1];
-      }
-      if (arg == "-c" || arg == "--codec")
-      {
-        if (args < a + 1)
-        {
-          lmain(Synavis::ELogVerbosity::Debug) << "No codec provided" << std::endl;
-          return -1;
-        }
-        lmain(Synavis::ELogVerbosity::Debug) << "Setting codec to " << argv[a + 1] << std::endl;
-        std::string strcodec = argv[a + 1];
-        if (strcodec == "h264")
-        {
-          codec = Synavis::ECodec::H264;
-        }
-        else if (strcodec == "vp8")
-        {
-          codec = Synavis::ECodec::VP8;
-        }
-        else if (strcodec == "vp9")
-        {
-          codec = Synavis::ECodec::VP9;
-        }
-        else if (strcodec == "h265")
-        {
-          codec = Synavis::ECodec::H265;
-        }
-        else
-        {
-          codec = Synavis::ECodec::None;
-        }
-      }
-      if (arg == "-r" || arg == "--relay")
-      {
-        if (args < a + 1)
-        {
-          lmain(Synavis::ELogVerbosity::Error) << "No relay provided" << std::endl;
-          return -1;
-        }
-        lmain(Synavis::ELogVerbosity::Warning) << "Setting relay to " << argv[a + 1] << std::endl;
-        std::string strrelay = argv[a + 1];
-        auto pos = strrelay.find(':');
-        if (pos == std::string::npos)
-        {
-          lmain(Synavis::ELogVerbosity::Error) << "Invalid relay " << strrelay << std::endl;
-          return -1;
-        }
-        auto ip = strrelay.substr(0, pos);
-        auto port = std::stoi(strrelay.substr(pos + 1));
-        // check if ip is valid
-        if (ip.find_first_not_of("0123456789.") != std::string::npos)
-        {
-          lmain(Synavis::ELogVerbosity::Error) << "Invalid relay " << strrelay << std::endl;
-          return -1;
-        }
-        dc->ConfigureRelay(strrelay.substr(0, pos), std::stoi(strrelay.substr(pos + 1)));
-      }
-      if (arg == "-s" || arg == "--signalling")
-      {
-        if (args < a + 1)
-        {
-          lmain(Synavis::ELogVerbosity::Debug) << "No signalling provided" << std::endl;
-          return -1;
-        }
-        lmain(Synavis::ELogVerbosity::Debug) << "Setting signalling to " << argv[a + 1] << std::endl;
-        std::string strsignalling = argv[a + 1];
-        auto pos = strsignalling.find(':');
-        if (pos == std::string::npos)
-        {
-                   lmain(Synavis::ELogVerbosity::Debug) << "Invalid signalling " << strsignalling << std::endl;
-          return -1;
-        }
-        auto ip = strsignalling.substr(0, pos);
-        auto port = std::stoi(strsignalling.substr(pos + 1));
-        // check if ip is valid
-        if (ip.find_first_not_of("0123456789.") != std::string::npos)
-        {
-          lmain(Synavis::ELogVerbosity::Debug) << "Invalid signalling " << strsignalling << std::endl;
-          return -1;
-        }
-        // put it in the config
-        Config["SignallingIP"] = ip;
-        Config["SignallingPort"] = port;
-      }
-      if (arg == "-d" || arg == "--sdp")
-      {
-        if (args < a + 1)
-        {
-          lmain(Synavis::ELogVerbosity::Debug) << "No SDP file provided" << std::endl;
-          return -1;
-        }
-        lmain(Synavis::ELogVerbosity::Debug) << "Setting SDP file to " << argv[a + 1] << std::endl;
-        logsdp = true;
-        Config["SDPFile"] = argv[a + 1];
-      }
-    }
-  }
-  else
-  {
-    std::cout << "No comand line options provided, this launch will not have any effect." << std::endl;
-    help(argv[0]);
-    return 0;
-  }
-  Synavis::Logger::Get()->SetVerbosity(LogVerbosity);
-  Synavis::Logger::Get()->SetupLogfile(Synavis::OpenUniqueFile("log.txt"));
+
+  lmain(Synavis::ELogVerbosity::Info) << "Starting MediaReceiver example with config: " << Config.dump() << std::endl;
+  // set the config for the MediaReceiver based on Config
+  dc->SetConfig(Config);
+
+  lmain(Synavis::ELogVerbosity::Info) << "Creating MediaReceiver with codec VP9" << std::endl;
   dc->SetCodec(codec);
   dc->SetTakeFirstStep(false);
   //dc->ConfigureRelay("127.0.0.1", 5535);
+
+  lmain(Synavis::ELogVerbosity::Info) << "Setting up frame reception callback and FrameDecode instance" << std::endl;
   std::vector<int> FrameSizes;
   std::shared_ptr<Synavis::FrameDecode> vpx;
 
-  if(codec != Synavis::ECodec::None)
+  vpx = std::make_shared<Synavis::FrameDecode>(codec, nullptr);
+  dc->SetFrameReceptionCallback(vpx->CreateAcceptor([&FrameSizes](Synavis::FrameContent frame)
   {
-    vpx = std::make_shared<Synavis::FrameDecode>(nullptr, codec);
-    dc->SetFrameReceptionCallback(vpx->CreateAcceptor([&FrameSizes](Synavis::FrameContent frame)
-    {
-      FrameSizes.push_back(static_cast<int>(frame.Data.size()));
-    }));
-    vpx->SetFrameCallback([](Synavis::FrameContent frame)
-    {
-      lmain(Synavis::ELogVerbosity::Debug) << "Got frame (" << frame.Width << "/" << frame.Height << ")" << std::endl;
-    });
-  }
+    FrameSizes.push_back(static_cast<int>(frame.Data.size()));
+  }));
+  vpx->SetFrameCallback([](Synavis::FrameContent frame)
+  {
+    lmain(Synavis::ELogVerbosity::Debug) << "Got frame (" << frame.Width << "/" << frame.Height << ")" << std::endl;
+  });
+
   dc->SetMessageCallback([](auto message)
   {
     lmain(Synavis::ELogVerbosity::Debug) << "Got message: " << message << std::endl;
   });
 
-  dc->SetConfig(Config);
+  // lifecycle callbacks and retry/lock behavior (helpful when debugging/connectivity)
+  dc->SetOnTrackCloseCallback([]()
+  {
+    lmain(Synavis::ELogVerbosity::Debug) << "Track closed" << std::endl;
+  });
+  dc->SetOnClosedCallback([]()
+  {
+    lmain(Synavis::ELogVerbosity::Debug) << "Data channel closed" << std::endl;
+  });
+
   if(logsdp)
   {
     dc->SetOnTrackOpenCallback([&Config,dc]()
@@ -254,6 +93,10 @@ int main(int args, char** argv)
   dc->Initialize();
   dc->StartSignalling();
 
+  std::this_thread::sleep_for(1s);
+
+  dc->LockUntilConnected(2000);
+
   while (dc->GetState() != Synavis::EConnectionState::CONNECTED)
   {
     std::this_thread::yield();
@@ -261,16 +104,28 @@ int main(int args, char** argv)
   lmain(Synavis::ELogVerbosity::Debug)
   << "----------------------------------------- Connected ------------------------------------------------------" << std::endl;
 
+  // Parse remote media descriptions so the FrameDecode instance knows codec/format
+  // information before frames arrive. This mirrors extraction.py's ParseDescription
+  // handling and helps the decoder accept frames correctly.
+  int cnt = dc->NumRemoteMedia();
+  lmain(Synavis::ELogVerbosity::Debug) << "NumRemoteMedia=" << cnt << std::endl;
+  for (int i = 0; i < cnt; ++i)
+  {
+    auto desc = dc->RemoteMediaDescription(i);
+    lmain(Synavis::ELogVerbosity::Debug) << "RemoteMediaDescription[" << i << "]=" << desc.dump() << std::endl;
+    vpx->ParseDescription(desc);
+  }
+  lmain(Synavis::ELogVerbosity::Debug) << "Called FrameDecode.ParseDescription for all remote media" << std::endl;
+
   std::this_thread::sleep_for(std::chrono::seconds(2));
 
   dc->SendJSON(json({ {"type","command"},{"name","cam"}, {"camera", "scene"} }));
+  dc->SendJSON(json({ {"type","command"},{"name","start"} }));
   dc->StartStreaming();
-  dc->SendMouseClick();
 
   while (Synavis::EConnectionState::CONNECTED == dc->GetState())
   {
     std::this_thread::sleep_for(500ms);
-    dc->StartStreaming();
     //dc->SendMouseClick();
     //dc->RequestKeyFrame();
   }

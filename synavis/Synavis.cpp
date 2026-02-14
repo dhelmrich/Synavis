@@ -633,7 +633,17 @@ void Synavis::WorkerThread::Run()
       auto Task = std::move(Tasks.front());
       Tasks.pop();
       lock.unlock();
-      Task();
+      try {
+        Task();
+      }
+      catch (const std::exception& e)
+      {
+        lbridge(Synavis::ELogVerbosity::Error) << "Exception in worker thread task: " << e.what() << std::endl;
+      }
+      catch (...)
+      {
+        lbridge(Synavis::ELogVerbosity::Error) << "Unknown exception in worker thread task" << std::endl;
+      }
       lock.lock();
     }
   }

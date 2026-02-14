@@ -40,16 +40,34 @@ namespace Synavis
     timestamp = static_cast<uint32_t>(-1);
   }
 
+  void PacketDepacketizer::ReserveFrame(size_t Size)
+  {
+    ldecoder(ELogVerbosity::Info) << "PacketDepacketizer: Reserving frame buffer with capacity " << Size << " bytes" << std::endl;
+    frame.reserve(Size);
+  }
+
+  size_t PacketDepacketizer::FrameCapacity() const
+  {
+    return frame.capacity();
+  }
+
+  size_t PacketDepacketizer::FrameSize() const
+  {
+    return frame.size();
+  }
+
   VP9Depacketizer::VP9Depacketizer()
   {
-    frame.reserve(1500); // pre-allocate typical MTU size for efficiency
+    ldecoder(ELogVerbosity::Info) << "VP9Depacketizer constructor: pre-reserving frame buffer to 8000 bytes" << std::endl;
+    frame.reserve(8000); // pre-allocate typical MTU size for efficiency
+    ldecoder(ELogVerbosity::Info) << "VP9Depacketizer constructor: initial buffer capacity is " << frame.capacity() << " bytes" << std::endl;
   }
 
   VP9Depacketizer::~VP9Depacketizer()
   {
   }
 
-  void VP9Depacketizer::AddPacket(rtc::binary Data)
+  void VP9Depacketizer::AddPacket(const rtc::binary& Data)
   {
     const rtc::RtpHeader* Header = reinterpret_cast<const rtc::RtpHeader*>(Data.data());
     size_t headerSize = Header->getSize();
@@ -206,7 +224,7 @@ namespace Synavis
   {
   }
 
-  void H264Depacketizer::AddPacket(rtc::binary Packet)
+  void H264Depacketizer::AddPacket(const rtc::binary& Packet)
   {
     auto header = reinterpret_cast<const rtc::RtpHeader*>(Packet.data());
     auto sq = header->seqNumber();
@@ -271,7 +289,7 @@ namespace Synavis
     return packet;
   }
 
-  FrameDecode::FrameDecode(rtc::Track* VideoInfo, ECodec StreamCodec)
+  FrameDecode::FrameDecode(ECodec StreamCodec, rtc::Track* VideoInfo)
   {
     ldecoder(ELogVerbosity::Info) << "Constructing FrameDecode (codec init)" << std::endl;
     switch (StreamCodec)
@@ -324,6 +342,9 @@ namespace Synavis
     {
       throw std::runtime_error("Could not allocate packet");
     }
+
+    // Pre-reserve the depacketizer buffer generously
+    Depacketizer->ReserveFrame(2 * 1024 * 1024); // 2 MB, should be enough for typical frames and prevent fragmentation churn
 
     // TODO bitrate is also in the session description protocoll
     // framerate and resolution should be transmitted either through data channel or as video track package
@@ -518,7 +539,7 @@ namespace Synavis
           //  std::this_thread::sleep_for(std::chrono::milliseconds(1));
           //lthread(ELogVerbosity::Debug) << "Flushed decoder buffers, now sending packet for timestamp " << ts << std::endl;
           // create a packet from the buffer
-          AVPacket* packet = InitializePacketFromData(ts);
+          AVPacket* packet = InitializePacketFromData(ts); // this calls a reserve function, might throw bad_alloc
           lthread(ELogVerbosity::Debug) << "Initialized AVPacket from data for timestamp " << ts << std::endl;
           if (!packet)
           {
@@ -574,6 +595,7 @@ namespace Synavis
               FrameContent Content;
               Content.Width = Frame->width;
               Content.Height = Frame->height;
+              Content.Timestamp = ts;
               Content.Data = std::vector<uint8_t>(Frame->data[0], Frame->data[0] + Frame->linesize[0] * Frame->height);
               Content.Data.insert(Content.Data.end(), Frame->data[1],
                                   Frame->data[1] + Frame->linesize[1] * Frame->height / 2);
@@ -627,8 +649,8 @@ namespace Synavis
       return nullptr;
     }
     lthread(ELogVerbosity::Debug) << "InitializePacketFromData: found frame for index " << index << " with " << frameBuffer[index].size() << " packets" << std::endl;
-    auto& frame = frameBuffer[index];
-    std::ranges::sort(frame, [](const rtc::binary& a, const rtc::binary& b)
+    auto& packets = frameBuffer[index];
+    std::ranges::sort(packets, [](const rtc::binary& a, const rtc::binary& b)
     {
       return reinterpret_cast<const rtc::RtpHeader*>(a.data())->seqNumber()
         < reinterpret_cast<const rtc::RtpHeader*>(b.data())->seqNumber();
@@ -636,7 +658,7 @@ namespace Synavis
     // ensure that the sequence numbers are correct
     int sq = -1;
     int size = 0;
-    for (auto& packet : frame)
+    for (auto& packet : packets)
     {
       size += static_cast<int>(packet.size() - sizeof(rtc::RtpHeader));
       const rtc::RtpHeader* header = reinterpret_cast<const rtc::RtpHeader*>(packet.data());
@@ -661,9 +683,12 @@ namespace Synavis
     // Reserve expected total frame size in the depacketizer to avoid
     // repeated allocations during AddPacket (prevents allocation churn).
     lthread(ELogVerbosity::Debug) << "Reserving frame buffer size " << size << " for index " << index << std::endl;
-    Depacketizer->ReserveFrame(static_cast<size_t>(size));
-    for (auto& packet : frame)
+    //Depacketizer->ReserveFrame(static_cast<size_t>(size));
+    // log capacity and size before adding packets (dep: depacketizer buffer)
+    lthread(ELogVerbosity::Debug) << "Depacketizer buffer capacity before adding packets: " << Depacketizer->FrameCapacity() << " bytes, current size: " << Depacketizer->FrameSize() << " bytes" << std::endl;
+    for (auto& packet : packets)
     {
+      lthread(ELogVerbosity::Debug) << "Adding packet with size " << packet.size() << " to depacketizer for index " << index << std::endl;
       Depacketizer->AddPacket(packet);
     }
     lthread(ELogVerbosity::Debug) << "All packets added to depacketizer for index " << index << std::endl;
@@ -675,8 +700,9 @@ namespace Synavis
     return out;
   }
 
-  void FrameDecode::AddPacket(rtc::binary Data)
+  void FrameDecode::AddPacket(const rtc::binary& Data)
   {
+    lthread(ELogVerbosity::Verbose) << "Adding packet to frame buffer, size=" << Data.size() << std::endl;
     const rtc::RtpHeader* Header = reinterpret_cast<const rtc::RtpHeader*>(Data.data());
     const uint8_t* body = reinterpret_cast<const uint8_t*>(Header->getBody());
 
@@ -684,30 +710,35 @@ namespace Synavis
     // check if timestamp is already in the buffer
     if (frameBuffer.find(Header->timestamp()) == frameBuffer.end())
     {
+      lthread(ELogVerbosity::Verbose) << "New timestamp " << Header->timestamp() << " - initializing buffer entry" << std::endl;
       // checif the buffer is full
       if (frameBuffer.size() >= MaxFrames)
       {
+        lthread(ELogVerbosity::Verbose) << "Frame buffer full (size=" << frameBuffer.size() << "), removing oldest frame to make room for new timestamp " << Header->timestamp() << std::endl;
         // remove the oldest frame
         uint32_t oldest = currentlyCapturing.front();
         currentlyCapturing.pop_front();
         frameBuffer.erase(oldest);
         // log to verbose
-        ldecoder(ELogVerbosity::Debug) << "Removed frame " << oldest << " from buffer" << std::endl;
+        ldecoder(ELogVerbosity::Verbose) << "Removed frame " << oldest << " from buffer" << std::endl;
       }
       else
       {
+        lthread(ELogVerbosity::Verbose) << "Frame buffer has space (size=" << frameBuffer.size() << "), adding new timestamp " << Header->timestamp() << std::endl;
         // create a new frame entry and track its timestamp so we can remove oldest later
         frameBuffer[Header->timestamp()] = std::vector<rtc::binary>();
         currentlyCapturing.push_back(Header->timestamp());
-        // insert the frame into the buffer
-        frameBuffer[Header->timestamp()].push_back(Data); // copy!
+        // move the packet into the buffer
+        frameBuffer[Header->timestamp()].push_back(std::move(Data)); // move!
       }
     }
     else
     {
+      lthread(ELogVerbosity::Verbose) <<  "Existing timestamp " << Header->timestamp() << " - appending packet to existing buffer entry" << std::endl;
       // insert the packet into the buffer
       frameBuffer[Header->timestamp()].push_back(Data); // copy!
     }
+  lthread(ELogVerbosity::Verbose) << "Current frame buffer size: " << frameBuffer.size() << " entries" << std::endl;
   }
 }
 

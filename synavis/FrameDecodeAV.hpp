@@ -30,7 +30,7 @@ namespace rtc
 namespace Synavis
 {
   // we allow for the registering of the av_log_set_callback much like we did for the libdatachannel log in the Synavis.hpp header
-  void RegisterAvLogCallback(bool bUseSynavis = false);
+  void SYNAVIS_EXPORT RegisterAvLogCallback(bool bUseSynavis = false);
 
   struct SYNAVIS_EXPORT FrameContent
   {
@@ -66,12 +66,15 @@ namespace Synavis
     // this function should be called in sequence order
     // package reception handling is NOT handled here
     // this is purely for depacketizing the data
-    virtual void AddPacket(rtc::binary Data) = 0;
+    virtual void AddPacket(const rtc::binary& Data) = 0;
     virtual bool IsFrameComplete() = 0;
     virtual AVPacket* GetAVFrame() = 0;
     virtual void ResetPacket();
     // Reserve capacity for the upcoming frame to avoid repeated allocations
-    void ReserveFrame(size_t Size) { frame.reserve(Size); }
+    void ReserveFrame(size_t Size);
+    // Accessors for diagnostics
+    size_t FrameCapacity() const;
+    size_t FrameSize() const;
 
   protected:
     uint32_t timestamp { static_cast<uint32_t>(-1) };
@@ -84,7 +87,7 @@ namespace Synavis
     VP9Depacketizer();
     virtual ~VP9Depacketizer() override;
 
-    virtual void AddPacket(rtc::binary Packet) override;
+    virtual void AddPacket(const rtc::binary& Packet) override;
     virtual bool IsFrameComplete() override;
     virtual AVPacket* GetAVFrame() override;
     bool MarkerSeen = false;
@@ -100,9 +103,7 @@ namespace Synavis
   public:
     H264Depacketizer() = default;
     virtual ~H264Depacketizer() override;
-
-    std::vector<std::byte> frame;
-    virtual void AddPacket(rtc::binary Packet) override;
+    virtual void AddPacket(const rtc::binary& Packet) override;
     virtual bool IsFrameComplete() override;
     virtual AVPacket* GetAVFrame() override;
 
@@ -111,7 +112,8 @@ namespace Synavis
   class SYNAVIS_EXPORT FrameDecode : public std::enable_shared_from_this<FrameDecode>
   {
   public:
-    FrameDecode(rtc::Track* VideoInfo = nullptr, ECodec StreamCodec = ECodec::H264);
+    // VideoInfo is optional (not exposed to Python), but codec is mandatory
+    FrameDecode(ECodec StreamCodec, rtc::Track* VideoInfo = nullptr);
     virtual ~FrameDecode();
 
     // Parse a remote media description (as produced by MediaReceiver::RemoteMediaDescription)
@@ -140,7 +142,7 @@ namespace Synavis
     std::map<uint32_t, std::vector<rtc::binary>> frameBuffer;
     std::deque<uint32_t> currentlyCapturing;
 
-    void AddPacket(rtc::binary Data);
+    void AddPacket(const rtc::binary& Data);
 
     // ffmpeg decoding context
     AVCodecContext* CodecContext;

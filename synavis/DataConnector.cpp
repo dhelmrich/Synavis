@@ -117,7 +117,7 @@ Synavis::DataConnector::DataConnector()
 Synavis::DataConnector::~DataConnector()
 {
   SignallingServer->close();
-  PeerConnection->close();
+  if(PeerConnection) PeerConnection->close();
   SubmissionHandler.Stop();
   for (auto &dc : DataChannels)
   {

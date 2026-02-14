@@ -41,6 +41,10 @@ plt.ion()
 _plt_fig = None
 _plt_ax = None
 _plt_img = None
+from queue import Queue, Empty
+
+# queue for handing frames from worker thread to main thread for plotting
+frame_queue = Queue(maxsize=8)
 
 message_buffer = []
 
@@ -86,100 +90,56 @@ def data_callback(data) :
   pylog.log("Received raw data packet of length {}".format(len(data)))
 
 def frame_callback(frame, info=None) :
-  # Update running statistics about received frames
-  pylog.log("Received frame callback: {}".format(frame))
-  # Support two invocation styles:
-  # - decoded FrameContent only (FrameDecode -> callback)
-  # - raw frame bytes + FrameInfo (MediaReceiver -> FrameReceptionCallback)
-  if isinstance(frame, (bytes, bytearray)):
-    # raw bytes were passed; convert to a placeholder FrameContent-like dict
-    data_len = len(frame)
-    width = height = None
-    timestamp = getattr(info, 'timestamp', None) if info is not None else None
-  else:
-    # Try to access expected FrameContent fields exposed from C++
-    width = getattr(frame, 'Width', None)
-    height = getattr(frame, 'Height', None)
-    timestamp = getattr(frame, 'Timestamp', None)
-    data_len = len(frame.Data)
+  global _plt_fig, _plt_ax, _plt_img
+  # log type of frame and size
+  pylog.log(f"Received frame of type {type(frame)} with size {len(frame.Data) if hasattr(frame, 'Data') else 'N/A'} bytes, timestamp={getattr(info, 'timestamp', None)}")
+  # log frame info if available
+  if info is not None:
+    pylog.log(f"Frame info: timestamp={getattr(info, 'timestamp', None)}, width={getattr(info, 'width', None)}, height={getattr(info, 'height', None)}")
+  # Attempt to interpret and display the received frame (live update)
+  if not isinstance(frame, (bytes, bytearray)):
+    w = getattr(frame, 'Width', None) or getattr(frame, 'width', None) or WIDTH
+    h = getattr(frame, 'Height', None) or getattr(frame, 'height', None) or HEIGHT
+    ts = getattr(frame, 'Timestamp', None) or (getattr(info, 'timestamp', None) if info is not None else None)
+    raw = bytes(frame.Data)
 
-  STATS['total_frames'] += 1
-  STATS['bytes_total'] += data_len
-  if width and height:
-    res = f"{int(width)}x{int(height)}"
-    STATS['by_resolution'][res] += 1
-  if timestamp is not None:
-    STATS['by_timestamp'][int(timestamp)] += 1
+    # detect YUV420, RGB or grayscale
+    y_size = int(w) * int(h)
+    uv_size = (int(w) // 2) * (int(h) // 2)
+    expected = y_size + 2 * uv_size
 
-  now = time.time()
-  STATS['frame_times'].append(now)
+    rgb = None
+    if expected and len(raw) == expected:
+      arr = np.frombuffer(raw, dtype=np.uint8)
+      Y = arr[0:y_size].reshape((int(h), int(w)))
+      U = arr[y_size:y_size + uv_size].reshape((int(h)//2, int(w)//2))
+      V = arr[y_size + uv_size:].reshape((int(h)//2, int(w)//2))
+      U_up = U.repeat(2, axis=0).repeat(2, axis=1)
+      V_up = V.repeat(2, axis=0).repeat(2, axis=1)
+      C = Y.astype(np.int32) - 16
+      D = U_up.astype(np.int32) - 128
+      E = V_up.astype(np.int32) - 128
+      R = (298 * C + 409 * E + 128) >> 8
+      G = (298 * C - 100 * D - 208 * E + 128) >> 8
+      B = (298 * C + 516 * D + 128) >> 8
+      rgb = np.stack([np.clip(R, 0, 255), np.clip(G, 0, 255), np.clip(B, 0, 255)], axis=-1).astype(np.uint8)
+    else:
+      if len(raw) == int(w) * int(h) * 3:
+        rgb = np.frombuffer(raw, dtype=np.uint8).reshape((int(h), int(w), 3)).copy()
+      elif len(raw) == int(w) * int(h):
+        g = np.frombuffer(raw, dtype=np.uint8).reshape((int(h), int(w)))
+        rgb = np.stack([g, g, g], axis=-1)
 
-  # Periodically log aggregated stats (every LOG_INTERVAL seconds)
-  if now - STATS['last_log'] >= LOG_INTERVAL:
-    elapsed = now - STATS['last_log']
-    frames = STATS['total_frames'] - STATS['last_total']
-    bytes_sent = STATS['bytes_total'] - STATS['last_bytes']
-    fps = frames / elapsed if elapsed > 0 else 0
-    avg_bytes = (bytes_sent / frames) if frames > 0 else 0
-    pylog.log(f"Frames total={STATS['total_frames']} recent={frames} fps={fps:.2f} avg_bytes={avg_bytes:.1f}")
-    # log top resolutions
-    top_res = sorted(STATS['by_resolution'].items(), key=lambda x: -x[1])[:5]
-    for r, c in top_res:
-      pylog.log(f"  res={r} count={c}")
-    STATS['last_log'] = now
-    STATS['last_total'] = STATS['total_frames']
-    STATS['last_bytes'] = STATS['bytes_total']
-
-    # Attempt to interpret and display the received frame (live update)
-    if not isinstance(frame, (bytes, bytearray)):
-      w = getattr(frame, 'Width', None) or getattr(frame, 'width', None) or WIDTH
-      h = getattr(frame, 'Height', None) or getattr(frame, 'height', None) or HEIGHT
-      ts = getattr(frame, 'Timestamp', None) or (getattr(info, 'timestamp', None) if info is not None else None)
-      raw = bytes(frame.Data)
-
-      # detect YUV420, RGB or grayscale
-      y_size = int(w) * int(h)
-      uv_size = (int(w) // 2) * (int(h) // 2)
-      expected = y_size + 2 * uv_size
-
-      rgb = None
-      if expected and len(raw) == expected:
-        arr = np.frombuffer(raw, dtype=np.uint8)
-        Y = arr[0:y_size].reshape((int(h), int(w)))
-        U = arr[y_size:y_size + uv_size].reshape((int(h)//2, int(w)//2))
-        V = arr[y_size + uv_size:].reshape((int(h)//2, int(w)//2))
-        U_up = U.repeat(2, axis=0).repeat(2, axis=1)
-        V_up = V.repeat(2, axis=0).repeat(2, axis=1)
-        C = Y.astype(np.int32) - 16
-        D = U_up.astype(np.int32) - 128
-        E = V_up.astype(np.int32) - 128
-        R = (298 * C + 409 * E + 128) >> 8
-        G = (298 * C - 100 * D - 208 * E + 128) >> 8
-        B = (298 * C + 516 * D + 128) >> 8
-        rgb = np.stack([np.clip(R, 0, 255), np.clip(G, 0, 255), np.clip(B, 0, 255)], axis=-1).astype(np.uint8)
-      else:
-        if len(raw) == int(w) * int(h) * 3:
-          rgb = np.frombuffer(raw, dtype=np.uint8).reshape((int(h), int(w), 3)).copy()
-        elif len(raw) == int(w) * int(h):
-          g = np.frombuffer(raw, dtype=np.uint8).reshape((int(h), int(w)))
-          rgb = np.stack([g, g, g], axis=-1)
-
-      # display via matplotlib (assume backend available)
-      if rgb is not None:
-        if _plt_fig is None:
-          _plt_fig, _plt_ax = plt.subplots()
-          _plt_img = _plt_ax.imshow(rgb)
-          _plt_ax.set_title(f"ts={ts}")
-          _plt_fig.canvas.draw()
-          plt.show(block=False)
-        else:
-          _plt_img.set_data(rgb)
-          _plt_ax.set_title(f"ts={ts}")
-          _plt_fig.canvas.draw_idle()
-        plt.pause(0.001)
+    # enqueue frame for plotting in main thread (matplotlib must run in main thread)
+    if rgb is not None:
+      try:
+        frame_queue.put_nowait((rgb, ts))
+      except Exception:
+        # drop frame if queue is full
+        pass
 
 m = syn.MediaReceiver()
-f = syn.FrameDecode()
+f = syn.FrameDecode(syn.Codec.VP9)
 
 m.Initialize()
 #Media.SetConfigFile("config.json")
@@ -285,11 +245,26 @@ for t in tests:
   m.SendJSON(t)
   time.sleep(0.3)
 
-# keep the script running
-
+# keep the script running and handle plotting from the main thread
 while True:
-  # allow for ctrl+c exit
   try:
-    time.sleep(1)
+    # process one frame for plotting if available
+    try:
+      rgb, ts = frame_queue.get(timeout=0.1)
+      if _plt_fig is None:
+        _plt_fig, _plt_ax = plt.subplots()
+        _plt_img = _plt_ax.imshow(rgb)
+        _plt_ax.set_title(f"ts={ts}")
+        _plt_fig.canvas.draw()
+        plt.show(block=False)
+      else:
+        _plt_img.set_data(rgb)
+        _plt_ax.set_title(f"ts={ts}")
+        _plt_fig.canvas.draw_idle()
+      plt.pause(0.001)
+    except Empty:
+      # no frame ready; yield to other work
+      pass
+    time.sleep(0.05)
   except KeyboardInterrupt:
     break
