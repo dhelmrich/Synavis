@@ -7,6 +7,8 @@ extern "C" {
 #include <libavutil/frame.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/buffer.h>
+// optional, using libswscale for pixel format conversion to RGB
+#include <libswscale/swscale.h>
 }
 
 #include <sstream>
@@ -593,14 +595,119 @@ namespace Synavis
             {
               // create a frame content
               FrameContent Content;
-              Content.Width = Frame->width;
-              Content.Height = Frame->height;
+              const int w = Frame->width;
+              const int h = Frame->height;
+              Content.Width = w;
+              Content.Height = h;
               Content.Timestamp = ts;
-              Content.Data = std::vector<uint8_t>(Frame->data[0], Frame->data[0] + Frame->linesize[0] * Frame->height);
-              Content.Data.insert(Content.Data.end(), Frame->data[1],
-                                  Frame->data[1] + Frame->linesize[1] * Frame->height / 2);
-              Content.Data.insert(Content.Data.end(), Frame->data[2],
-                                  Frame->data[2] + Frame->linesize[2] * Frame->height / 2);
+
+              // Prefer to export a tightly packed YUV420P buffer (WxH Y, WxH/4 U, WxH/4 V).
+              // Use linesize to copy each source row because linesize may contain padding.
+              if (Frame->format == AV_PIX_FMT_YUV420P)
+              {
+                Content.Data.resize(static_cast<size_t>(w) * h * 3 / 2);
+                uint8_t* dst = Content.Data.data();
+
+                // Copy Y plane: each destination row is 'w' bytes, source row is linesize[0]
+                for (int y = 0; y < h; ++y)
+                {
+                  memcpy(dst + y * w, Frame->data[0] + y * Frame->linesize[0], w);
+                }
+
+                const int ch = h / 2;
+                const int cw = w / 2;
+                uint8_t* dstU = dst + w * h;
+                uint8_t* dstV = dstU + (w * h) / 4;
+
+                // Copy U and V planes (4:2:0) row-by-row using source linesize but copying only active pixels
+                for (int y = 0; y < ch; ++y)
+                {
+                  memcpy(dstU + y * cw, Frame->data[1] + y * Frame->linesize[1], cw);
+                  memcpy(dstV + y * cw, Frame->data[2] + y * Frame->linesize[2], cw);
+                }
+                // Set metadata for consumer: packed, canonical linesizes and pixel format
+                Content.PixFmt = static_cast<int>(Frame->format);
+                Content.Linesize = { w, cw, cw };
+                Content.Packed = true;
+              }
+              else
+              {
+                // Fallback: copy plane-by-plane using linesize and correct plane heights derived from
+                // common chroma subsampling rules. This preserves stride/padding but produces a
+                // contiguous buffer of (linesize * rows) per plane. Downstream must be stride-aware
+                // or prefer the YUV420P re-packed path above.
+                const int plane0_h = h;
+                const int plane1_h = (h + 1) / 2;
+                const int plane2_h = (h + 1) / 2;
+
+                size_t y_bytes = static_cast<size_t>(Frame->linesize[0]) * plane0_h;
+                size_t u_bytes = static_cast<size_t>(Frame->linesize[1]) * plane1_h;
+                size_t v_bytes = static_cast<size_t>(Frame->linesize[2]) * plane2_h;
+
+                Content.Data.reserve(y_bytes + u_bytes + v_bytes);
+                // Append Y plane
+                for (int y = 0; y < plane0_h; ++y)
+                {
+                  const uint8_t* src = Frame->data[0] + y * Frame->linesize[0];
+                  Content.Data.insert(Content.Data.end(), src, src + Frame->linesize[0]);
+                }
+                // Append U plane
+                for (int y = 0; y < plane1_h; ++y)
+                {
+                  const uint8_t* src = Frame->data[1] + y * Frame->linesize[1];
+                  Content.Data.insert(Content.Data.end(), src, src + Frame->linesize[1]);
+                }
+                // Append V plane
+                for (int y = 0; y < plane2_h; ++y)
+                {
+                  const uint8_t* src = Frame->data[2] + y * Frame->linesize[2];
+                  Content.Data.insert(Content.Data.end(), src, src + Frame->linesize[2]);
+                }
+                // Set metadata for consumer: indicate source pixel format and actual linesizes
+                Content.PixFmt = static_cast<int>(Frame->format);
+                Content.Linesize = { Frame->linesize[0], Frame->linesize[1], Frame->linesize[2] };
+                Content.Packed = false;
+              }
+
+              if (OutputMode == EOutputMode::PackedRGB)
+              {
+                lffmpeg(ELogVerbosity::Debug) << "Output mode is PackedRGB, converting frame to RGB24" << std::endl;
+                // Convert the frame to RGB24 using sws_scale
+                SwsContext* swsCtx = sws_getContext(w, h, static_cast<AVPixelFormat>(Frame->format),
+                                                    w, h, AV_PIX_FMT_RGB24,
+                                                    SWS_BILINEAR, nullptr, nullptr, nullptr);
+                if (!swsCtx)
+                {
+                  lffmpeg(ELogVerbosity::Error) << "Failed to create SwsContext for RGB conversion" << std::endl;
+                  return;
+                }
+                // Allocate buffer for RGB data (uint8_t bytes)
+                std::vector<uint8_t> rgbData(static_cast<size_t>(w) * h * 3); // 3 bytes per pixel for RGB24
+                uint8_t* rgbPtr = rgbData.data();
+                int rgbLinesize = w * 3;
+
+                // Set up source and destination pointers and linesizes for sws_scale
+                const uint8_t* srcSlices[3] = { Frame->data[0], Frame->data[1], Frame->data[2] };
+                const int srcLinesizes[3] = { Frame->linesize[0], Frame->linesize[1], Frame->linesize[2] };
+                uint8_t* dstSlices[1] = { rgbPtr };
+                int dstLinesizes[1] = { rgbLinesize };
+
+                // Perform the conversion
+                int ret = sws_scale(swsCtx, srcSlices, srcLinesizes, 0, h, dstSlices, dstLinesizes);
+                sws_freeContext(swsCtx);
+                if (ret <= 0)
+                {
+                  lffmpeg(ELogVerbosity::Error) << "sws_scale failed for RGB conversion" << std::endl;
+                  return;
+                }
+                // Replace content data with converted RGB data and update metadata
+                Content.Data = std::move(rgbData);
+                Content.PixFmt = AV_PIX_FMT_RGB24;
+                // For RGB output, mark as not YUV-packed so consumers don't attempt YUV unpacking.
+                Content.Packed = false;
+                // Provide linesize information (store RGB stride in first element)
+                Content.Linesize = { rgbLinesize, 0, 0 };
+              }
               
               // Prefer the acceptor-local callback if provided, otherwise
               // fall back to the member FrameCallback set via SetFrameCallback.

@@ -32,12 +32,25 @@ namespace Synavis
   // we allow for the registering of the av_log_set_callback much like we did for the libdatachannel log in the Synavis.hpp header
   void SYNAVIS_EXPORT RegisterAvLogCallback(bool bUseSynavis = false);
 
+  enum class EOutputMode
+  {
+    Unchanged, // maintain original frame format (e.g. YUV420P with FFmpeg stride)
+    PackedRGB // convert to tightly packed RGB24 (no stride, 3 bytes per pixel)
+  };
+
   struct SYNAVIS_EXPORT FrameContent
   {
     std::vector<uint8_t> Data;
     uint32_t Width;
     uint32_t Height;
     uint32_t Timestamp;
+    // Pixel format (AVPixelFormat) of the packed data or source frame
+    int PixFmt{ -1 };
+    // Linesizes for each plane. If Packed==true, these are the tightly-packed strides (W, W/2, W/2 for YUV420P).
+    std::array<int,3> Linesize{0,0,0};
+    // If true, Data is tightly packed and consumer may assume canonical sizes; otherwise Data contains
+    // per-plane rows that include FFmpeg stride/padding and the consumer must use Linesize to read rows.
+    bool Packed{false};
   };
 
 #pragma pack(push, 1)
@@ -128,6 +141,8 @@ namespace Synavis
     }
 
     void SetMaxFrameBuffer(uint32_t MaxFrames);
+
+    EOutputMode OutputMode{EOutputMode::Unchanged};
 
   private:
 
