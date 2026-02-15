@@ -235,6 +235,9 @@ namespace Synavis
       .def_readwrite("Width", &Synavis::FrameContent::Width)
       .def_readwrite("Height", &Synavis::FrameContent::Height)
       .def_readwrite("Timestamp", &Synavis::FrameContent::Timestamp)
+      .def_readwrite("PixFmt", &Synavis::FrameContent::PixFmt)
+      .def_readwrite("Linesize", &Synavis::FrameContent::Linesize)
+      .def_readwrite("Packed", &Synavis::FrameContent::Packed)
     ;
 
     
@@ -422,6 +425,14 @@ namespace Synavis
     ;
 
 #ifdef BUILD_WITH_DECODING
+
+    // expose OutputMode enum for FrameDecode configuration
+    py::enum_<EOutputMode>(m, "OutputMode")
+      .value("Unchanged", EOutputMode::Unchanged)
+      .value("PackedRGB", EOutputMode::PackedRGB)
+      .export_values()
+    ;
+
     py::class_<FrameDecode, std::shared_ptr<FrameDecode>>(m, "FrameDecode")
       .def(py::init([](ECodec codec){ return std::make_shared<FrameDecode>(codec, nullptr); }), py::arg("codec"))
       .def("CreateAcceptor", [](FrameDecode &self, py::function cb){
@@ -459,6 +470,7 @@ namespace Synavis
       })
       .def("SetFrameCallback", &FrameDecode::SetFrameCallback)
       .def("ParseDescription", &FrameDecode::ParseDescription, py::arg("desc"))
+      .def_readwrite("OutputMode", &FrameDecode::OutputMode)
     ;
 #endif
 
