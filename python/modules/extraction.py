@@ -22,9 +22,9 @@ else:
 
 import PySynavis as syn
 
-syn.SetGlobalLogVerbosity(syn.LogVerbosity.LogVerbose)
+syn.SetGlobalLogVerbosity(syn.LogVerbosity.LogWarning)
 #syn.VerboseMode(True)
-syn.RegisterAvLogCallback(True)
+#syn.RegisterAvLogCallback(True)
 pylog = syn.Logger()
 pylog.setidentity("Synavis Unit Test")
 # ensure previous logfile is rotated and a fresh logfile started
@@ -101,45 +101,164 @@ def frame_callback(frame, info=None) :
     w = getattr(frame, 'Width', None) or getattr(frame, 'width', None) or WIDTH
     h = getattr(frame, 'Height', None) or getattr(frame, 'height', None) or HEIGHT
     ts = getattr(frame, 'Timestamp', None) or (getattr(info, 'timestamp', None) if info is not None else None)
-    raw = bytes(frame.Data)
-
-    # detect YUV420, RGB or grayscale
+    # Prefer consumers that support packed frames. If the producer sent a packed YUV420P buffer
+    # `frame.Packed` will be True and `frame.Linesize` contains the canonical (tight) strides.
+    # Otherwise `frame.Data` contains per-plane rows including FFmpeg stride/padding; use
+    # `frame.Linesize` to reconstruct a tightly-packed buffer for downstream code that
+    # expects canonical YUV420 layout.
+    packed = getattr(frame, 'Packed', False)
+    linesize = getattr(frame, 'Linesize', None)
+    if packed:
+      pylog.log("Frame is packed: assuming tightly-packed YUV420P layout")
+      raw = bytes(frame.Data)
+    else:
+      pylog.log("Frame is not packed: reconstructing tightly-packed buffer using linesize metadata")
+      # If linesize is present, first check whether it represents RGB stride (e.g. [3*w,0,0])
+      # in which case the frame.Data may already be RGB rows with pitch rather than YUV planes.
+      if linesize and len(linesize) >= 1 and int(linesize[0]) >= int(w) * 3 and (len(linesize) < 3 or (int(linesize[1]) == 0 and int(linesize[2]) == 0)):
+        pylog.log(f"Linesize indicates RGB/padded rows: {linesize}, attempting RGB row reconstruction")
+        # Ensure bytes-like
+        if isinstance(frame.Data, (bytes, bytearray, memoryview)):
+          srcbuf = bytes(frame.Data)
+        else:
+          srcbuf = bytes(frame.Data)
+        row_stride = int(linesize[0])
+        expected = row_stride * int(h)
+        if len(srcbuf) >= expected:
+          pylog.log(f"RGB with stride present and raw buffer size {len(srcbuf)} is sufficient for expected {expected}, attempting reshape")
+          buf = np.frombuffer(srcbuf, dtype=np.uint8)
+          try:
+            buf = buf.reshape((int(h), row_stride))
+            rgb = buf[:, :int(w) * 3].reshape((int(h), int(w), 3)).copy()
+            raw = srcbuf  # preserve raw for logging if needed
+          except Exception as e:
+            pylog.log(f"Failed to reshape RGB stride buffer: {e}")
+            raw = srcbuf
+        else:
+          pylog.log(f"RGB with stride present but raw buffer too small: raw={len(srcbuf)} expected>={expected}")
+          raw = srcbuf
+      # Otherwise, if linesize has 3 or more elements assume YUV plane rows with stride
+      elif linesize and len(linesize) >= 3:
+        pylog.log(f"Linesize metadata found: {linesize}")
+        ls0, ls1, ls2 = int(linesize[0]), int(linesize[1]), int(linesize[2])
+        # plane heights (support odd heights defensively)
+        ph0 = int(h)
+        ph1 = (int(h) + 1) // 2
+        ph2 = ph1
+        cw = (int(w) + 1) // 2
+        y_size = int(w) * int(h)
+        uv_size = cw * ph1
+        tight = bytearray(y_size + 2 * uv_size)
+        # frame.Data may be bytes-like or a Python list of ints depending on pybind exposure.
+        # Ensure we have a bytes-like object before creating a memoryview.
+        if isinstance(frame.Data, (bytes, bytearray, memoryview)):
+          src = memoryview(frame.Data)
+        else:
+          # convert list/iterable of ints to bytes
+          src = memoryview(bytes(frame.Data))
+        off = 0
+        dst_off = 0
+        # copy Y rows
+        for row in range(ph0):
+          row_src = src[off: off + ls0]
+          tight[dst_off: dst_off + int(w)] = row_src[:int(w)]
+          off += ls0
+          dst_off += int(w)
+        # copy U rows
+        for row in range(ph1):
+          row_src = src[off: off + ls1]
+          tight[dst_off: dst_off + cw] = row_src[:cw]
+          off += ls1
+          dst_off += cw
+        # copy V rows
+        for row in range(ph2):
+          row_src = src[off: off + ls2]
+          tight[dst_off: dst_off + cw] = row_src[:cw]
+          off += ls2
+          dst_off += cw
+        raw = bytes(tight)
+      else:
+        # No linesize metadata available: fall back to raw bytes as-is
+        pylog.log("No linesize metadata available; using raw frame data as-is (may be YUV420P with stride or RGB or grayscale)")
+        raw = bytes(frame.Data)
+    #
+    pylog.log(f"Interpreting frame data: width={w} height={h} packed={packed} linesize={linesize} raw_size={len(raw)}")
+    # Deterministic handling: prefer tightly-packed YUV420P (producer sets `Packed=True`).
+    # Fall back to RGB (3*w*h) or grayscale (w*h). If none match, log and skip frame.
+    rgb = None
     y_size = int(w) * int(h)
     uv_size = (int(w) // 2) * (int(h) // 2)
-    expected = y_size + 2 * uv_size
 
-    rgb = None
-    if expected and len(raw) == expected:
-      arr = np.frombuffer(raw, dtype=np.uint8)
-      Y = arr[0:y_size].reshape((int(h), int(w)))
-      U = arr[y_size:y_size + uv_size].reshape((int(h)//2, int(w)//2))
-      V = arr[y_size + uv_size:].reshape((int(h)//2, int(w)//2))
-      U_up = U.repeat(2, axis=0).repeat(2, axis=1)
-      V_up = V.repeat(2, axis=0).repeat(2, axis=1)
-      C = Y.astype(np.int32) - 16
-      D = U_up.astype(np.int32) - 128
-      E = V_up.astype(np.int32) - 128
-      R = (298 * C + 409 * E + 128) >> 8
-      G = (298 * C - 100 * D - 208 * E + 128) >> 8
-      B = (298 * C + 516 * D + 128) >> 8
-      rgb = np.stack([np.clip(R, 0, 255), np.clip(G, 0, 255), np.clip(B, 0, 255)], axis=-1).astype(np.uint8)
+    # If producer declared packed YUV420P, assume canonical layout and convert directly.
+    if getattr(frame, 'Packed', False):
+      if len(raw) >= y_size + 2 * uv_size:
+        pylog.log("Processing packed YUV420P frame")
+        arr = np.frombuffer(raw, dtype=np.uint8)
+        Y = arr[0:y_size].reshape((int(h), int(w)))
+        U = arr[y_size:y_size + uv_size].reshape((int(h)//2, int(w)//2))
+        V = arr[y_size + uv_size:].reshape((int(h)//2, int(w)//2))
+        U_up = U.repeat(2, axis=0).repeat(2, axis=1)
+        V_up = V.repeat(2, axis=0).repeat(2, axis=1)
+        C = Y.astype(np.int32) - 16
+        D = U_up.astype(np.int32) - 128
+        E = V_up.astype(np.int32) - 128
+        R = (298 * C + 409 * E + 128) >> 8
+        G = (298 * C - 100 * D - 208 * E + 128) >> 8
+        B = (298 * C + 516 * D + 128) >> 8
+        rgb = np.stack([np.clip(R, 0, 255), np.clip(G, 0, 255), np.clip(B, 0, 255)], axis=-1).astype(np.uint8)
+      else:
+        pylog.log(f"Packed frame signalled but buffer too small: got {len(raw)} expected {y_size + 2*uv_size}")
     else:
+      # try RGB or grayscale; handle possible per-row stride (pitch) provided via Linesize
+      pylog.log("Attempting to interpret frame as RGB or grayscale")
+      # Tightly-packed RGB
       if len(raw) == int(w) * int(h) * 3:
+        pylog.log("Frame data matches tightly-packed RGB size; interpreting as RGB")
         rgb = np.frombuffer(raw, dtype=np.uint8).reshape((int(h), int(w), 3)).copy()
+      # RGB delivered with per-row stride/pitch in linesize[0]
+      elif linesize and len(linesize) >= 1 and int(linesize[0]) >= int(w) * 3:
+        pylog.log(f"Attempting RGB reconstruction from stride using linesize: {linesize}")
+        try:
+          row_stride = int(linesize[0])
+          expected = row_stride * int(h)
+          if len(raw) >= expected:
+            buf = np.frombuffer(raw, dtype=np.uint8)
+            buf = buf.reshape((int(h), row_stride))
+            rgb = buf[:, :int(w) * 3].reshape((int(h), int(w), 3)).copy()
+          else:
+            pylog.log(f"RGB with stride present but raw buffer too small: raw={len(raw)} expected>={expected}")
+        except Exception as e:
+          pylog.log(f"Failed to reinterpret stride-RGB buffer: {e}")
+      # try grayscale
       elif len(raw) == int(w) * int(h):
         g = np.frombuffer(raw, dtype=np.uint8).reshape((int(h), int(w)))
         rgb = np.stack([g, g, g], axis=-1)
+      else:
+        pylog.log(f"Unsupported frame layout: size={len(raw)} w={w} h={h} Packed={getattr(frame,'Packed',False)} Linesize={getattr(frame,'Linesize',None)}")
+    
+    # diagnostic: if the frame is overwhelmingly green, dump the raw data to a file once for offline analysis (e.g. to check if it's actually YUV data with a misinterpretation)
+    if rgb is not None:
+      green_ratio = np.mean(rgb[:, :, 1]) / (np.mean(rgb) + 1e-6)
+      if green_ratio > 1.5:
+        pylog.log(f"High green ratio detected: {green_ratio:.2f}, dumping raw frame data for analysis")
+        with open("debug_frame_dump.bin", "wb") as f:
+          pylog.log(f"Dumping raw frame data of length {len(raw)} bytes to debug_frame_dump.bin")
+          f.write(raw)
+        syn.ExitWithMessage("High green ratio frame received; dumped raw data for analysis. Exiting.", 3)
 
     # enqueue frame for plotting in main thread (matplotlib must run in main thread)
     if rgb is not None:
       try:
+        pylog.log(f"Enqueuing frame for plotting: ts={ts} rgb_shape={rgb.shape}")
         frame_queue.put_nowait((rgb, ts))
-      except Exception:
+      except Exception as e:
+        pylog.log("Frame queue is full; dropping frame. Exception: {}".format(e))
         # drop frame if queue is full
         pass
 
 m = syn.MediaReceiver()
 f = syn.FrameDecode(syn.Codec.VP9)
+f.OutputMode = syn.OutputMode.PackedRGB
 
 m.Initialize()
 #Media.SetConfigFile("config.json")
@@ -231,9 +350,9 @@ tests = [
   {"type": "query"},
   #{"type": "query", "object": resolved_camera, "property": "Position"},
   #{"type": "command", "name": "navigate", "x": 100.0, "y": 200.0, "z": 300.0},
-  #{"type": "command", "name": "cam", "camera": "scene"},
+  {"type": "command", "name": "cam", "camera": "scene"},
   {"type": "console", "command": "t.MaxFPS 10"},
-  {"type": "console", "command": "log LogTemp Verbose"},
+  #{"type": "console", "command": "log LogTemp Verbose"},
   #{"type": "query", "spawn": "any"},
   #{"type": "track", "object": resolved_camera, "property": "Position"},
   #{"type": "untrack", "object": resolved_camera, "property": "Position"},
