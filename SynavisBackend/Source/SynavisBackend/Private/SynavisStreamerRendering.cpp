@@ -48,13 +48,13 @@ bool ConvertRenderTargetToI420_GPU(UTextureRenderTarget2D* SrcRT, TArray<uint8>&
       // Register external texture (source render target) with RDG
       FRDGTextureRef RDGInput = RegisterExternalTexture(GraphBuilder, RTTexture, TEXT("Synavis_Input"));
 
-    FRDGTextureDesc DescY = FRDGTextureDesc::Create2D(FIntPoint(Width, Height), PF_R8_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
+    FRDGTextureDesc DescY = FRDGTextureDesc::Create2D(FIntPoint(Width, Height), PF_R32_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
       FRDGTextureRef RDGY = GraphBuilder.CreateTexture(DescY, TEXT("Synavis_Y"));
 
-    FRDGTextureDesc DescU = FRDGTextureDesc::Create2D(FIntPoint((Width + 1) / 2, (Height + 1) / 2), PF_R8_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
+    FRDGTextureDesc DescU = FRDGTextureDesc::Create2D(FIntPoint((Width + 1) / 2, (Height + 1) / 2), PF_R32_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
     FRDGTextureRef RDGU = GraphBuilder.CreateTexture(DescU, TEXT("Synavis_U"));
 
-    FRDGTextureDesc DescV = FRDGTextureDesc::Create2D(FIntPoint((Width + 1) / 2, (Height + 1) / 2), PF_R8_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
+    FRDGTextureDesc DescV = FRDGTextureDesc::Create2D(FIntPoint((Width + 1) / 2, (Height + 1) / 2), PF_R32_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
     FRDGTextureRef RDGV = GraphBuilder.CreateTexture(DescV, TEXT("Synavis_V"));
 
     // Ensure a global shader map exists for the current feature level and obtain the compute shader via TShaderMapRef.
@@ -88,7 +88,8 @@ bool ConvertRenderTargetToI420_GPU(UTextureRenderTarget2D* SrcRT, TArray<uint8>&
     AddEnqueueCopyPass(GraphBuilder, ReadbackUPtr, RDGU);
     AddEnqueueCopyPass(GraphBuilder, ReadbackVPtr, RDGV);
 
-      GraphBuilder.Execute();
+            GraphBuilder.Execute();
+            UE_LOG(LogTemp, Verbose, TEXT("Synavis: ConvertRTToI420 RDG executed"));
     });
 
     // Hint for Option B (pixel-shader fullscreen pass):
@@ -127,46 +128,42 @@ bool ConvertRenderTargetToI420_GPU(UTextureRenderTarget2D* SrcRT, TArray<uint8>&
     OutU.SetNumUninitialized(UVSize);
     OutV.SetNumUninitialized(UVSize);
 
-    int RowPitchPixels = 0;
-    void* YData = ReadbackY->Lock(RowPitchPixels);
+    // PF_R8_UINT -> 1 byte per texel; CPU readback returns rows of bytes (low byte contains sample)
+    uint32 RowPitchBytes = 0;
+    void* YData = ReadbackY->Lock(RowPitchBytes);
     if (!YData)
     {
-        ReadbackY->Unlock();
-        ReadbackU->Unlock();
-        ReadbackV->Unlock();
         return false;
     }
     for (int y = 0; y < Height; ++y)
     {
-        uint8_t* srcRow = (uint8_t*)YData + y * RowPitchPixels;
+        uint8_t* srcRow = (uint8_t*)YData + (size_t)y * RowPitchBytes;
         memcpy(OutY.GetData() + y * Width, srcRow, Width);
     }
     ReadbackY->Unlock();
 
-    int URowPitch = 0;
-    void* UData = ReadbackU->Lock(URowPitch);
+    uint32 URowPitchBytes = 0;
+    void* UData = ReadbackU->Lock(URowPitchBytes);
     if (!UData)
     {
-        ReadbackU->Unlock();
         return false;
     }
     for (int y = 0; y < UVHeight; ++y)
     {
-        uint8_t* srcRow = (uint8_t*)UData + y * URowPitch;
+        uint8_t* srcRow = (uint8_t*)UData + (size_t)y * URowPitchBytes;
         memcpy(OutU.GetData() + y * UVWidth, srcRow, UVWidth);
     }
     ReadbackU->Unlock();
 
-    int VRowPitch = 0;
-    void* VData = ReadbackV->Lock(VRowPitch);
+    uint32 VRowPitchBytes = 0;
+    void* VData = ReadbackV->Lock(VRowPitchBytes);
     if (!VData)
     {
-        ReadbackV->Unlock();
         return false;
     }
     for (int y = 0; y < UVHeight; ++y)
     {
-        uint8_t* srcRow = (uint8_t*)VData + y * VRowPitch;
+        uint8_t* srcRow = (uint8_t*)VData + (size_t)y * VRowPitchBytes;
         memcpy(OutV.GetData() + y * UVWidth, srcRow, UVWidth);
     }
     ReadbackV->Unlock();
@@ -205,13 +202,13 @@ bool EnqueueNV12ReadbackFromRenderTarget(UTextureRenderTarget2D* SrcRT, FRHIGPUT
         FRDGBuilder GraphBuilder(RHICmdList);
         FRDGTextureRef RDGInput = RegisterExternalTexture(GraphBuilder, RTTexture, TEXT("Synavis_Input"));
 
-        FRDGTextureDesc DescY = FRDGTextureDesc::Create2D(FIntPoint(Width, Height), PF_R8_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
+        FRDGTextureDesc DescY = FRDGTextureDesc::Create2D(FIntPoint(Width, Height), PF_R32_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
         FRDGTextureRef RDGY = GraphBuilder.CreateTexture(DescY, TEXT("Synavis_Y"));
 
-        FRDGTextureDesc DescU = FRDGTextureDesc::Create2D(FIntPoint((Width + 1) / 2, (Height + 1) / 2), PF_R8_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
+        FRDGTextureDesc DescU = FRDGTextureDesc::Create2D(FIntPoint((Width + 1) / 2, (Height + 1) / 2), PF_R32_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
         FRDGTextureRef RDGU = GraphBuilder.CreateTexture(DescU, TEXT("Synavis_U"));
 
-        FRDGTextureDesc DescV = FRDGTextureDesc::Create2D(FIntPoint((Width + 1) / 2, (Height + 1) / 2), PF_R8_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
+        FRDGTextureDesc DescV = FRDGTextureDesc::Create2D(FIntPoint((Width + 1) / 2, (Height + 1) / 2), PF_R32_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV);
         FRDGTextureRef RDGV = GraphBuilder.CreateTexture(DescV, TEXT("Synavis_V"));
 
         const auto* GlobalMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
@@ -247,5 +244,3 @@ bool EnqueueNV12ReadbackFromRenderTarget(UTextureRenderTarget2D* SrcRT, FRHIGPUT
     return true;
 }
 
-// Note: EncodeNV12ReadbackAndSend is implemented in SynavisStreamer.cpp where libav and rtc headers
-// are available; this file only provides the EnqueueNV12ReadbackFromRenderTarget helper.
