@@ -431,13 +431,6 @@ protected:
 
   void TakeSignallingMessage(const FString& Message);
 
-  // Zero-copy variant: accept FRHIGPUTextureReadback readbacks for Y, U and V (I420 planar layout).
-  // The helper will wrap the readback pointers into AVBufferRefs that free/unlock the readbacks when FFmpeg is done.
-  // TargetTracks contains one or more tracks that should receive the encoded packets.
-  // Accept separate Y, U and V readbacks (I420). The helper will wrap
-  // the readback pointers into AVBufferRefs that free/unlock the readbacks when FFmpeg is done.
-  void EncodeNV12ReadbackAndSend(class FRHIGPUTextureReadback* ReadbackY, class FRHIGPUTextureReadback* ReadbackU, class FRHIGPUTextureReadback* ReadbackV, int Width, int Height, const TArray<int32>& TargetTracks);
-
   void OnDataChannelMessage(const std::variant<TArray<uint8>, std::string>& message);
 
   bool TryParseJSON(std::string message, FJsonObject& OutJsonObject);
