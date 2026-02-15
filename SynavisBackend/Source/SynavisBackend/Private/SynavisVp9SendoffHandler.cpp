@@ -20,8 +20,17 @@ extern "C" {
 #include <libavutil/mathematics.h>
 
 }
-
 THIRD_PARTY_INCLUDES_END
+
+// guard for system includes
+
+
+#include <atomic>
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "HAL/PlatformFilemanager.h"
+#include "HAL/PlatformFile.h"
+
 
 // LogHexVerbose as expected below:
 static void LogHexVerbose(const char* Data, int32 Size, const TCHAR* Prefix)
@@ -424,6 +433,296 @@ void USynavisVp9SendoffHandler::EnqueueReadbackNonBlocking(FRHIGPUTextureReadbac
             UE_LOG(LogTemp, VeryVerbose, TEXT("ENC readback V[0..15]=%s rowPitch=%d UVW=%d UVH=%d"), *DumpFirstBytes(static_cast<const uint8*>(VPtr), DumpBytes), VRowPitch, UVWidth, UVHeight);
         }
 
+        // One-time dump of the raw readback buffers (Y,U,V planes) before wrapping into AVBuffers.
+        static std::atomic<bool> bReadbackDumped(false);
+        if (!bReadbackDumped.load())
+        {
+            // Create tightly-packed 8-bit planar buffers from the readback. The RDG readback
+            // may be 32-bit-per-texel (PF_R32_UINT) so we extract the low 8 bits per texel.
+            int UVW = (Width + 1) / 2;
+            int UVH = (Height + 1) / 2;
+            TArray<uint8> PackedY; PackedY.SetNumUninitialized(Width * Height);
+            TArray<uint8> PackedU; PackedU.SetNumUninitialized(UVW * UVH);
+            TArray<uint8> PackedV; PackedV.SetNumUninitialized(UVW * UVH);
+
+            // Pack Y
+            if (YRowPitch == Width)
+            {
+                for (int y = 0; y < Height; ++y)
+                {
+                    const uint8* srcRow = static_cast<const uint8*>(YPtr) + (size_t)y * YRowPitch;
+                    FMemory::Memcpy(PackedY.GetData() + (size_t)y * Width, srcRow, Width);
+                }
+            }
+            else if (YRowPitch >= Width * 4)
+            {
+                const uint32_t* src32 = static_cast<const uint32_t*>(YPtr);
+                int stride = YRowPitch / 4;
+                for (int y = 0; y < Height; ++y)
+                {
+                    const uint32_t* row = src32 + (size_t)y * stride;
+                    for (int x = 0; x < Width; ++x) PackedY[y * Width + x] = static_cast<uint8>(row[x] & 0xFFu);
+                }
+            }
+            else
+            {
+                // Generic fallback: copy low byte of each texel by indexing bytes
+                for (int y = 0; y < Height; ++y)
+                {
+                    const uint8* row = static_cast<const uint8*>(YPtr) + (size_t)y * YRowPitch;
+                    for (int x = 0; x < Width; ++x) PackedY[y * Width + x] = row[x * (YRowPitch / Width)];
+                }
+            }
+
+            // Pack U
+            if (URowPitch == UVW)
+            {
+                for (int y = 0; y < UVH; ++y)
+                {
+                    const uint8* srcRow = static_cast<const uint8*>(UPtr) + (size_t)y * URowPitch;
+                    FMemory::Memcpy(PackedU.GetData() + (size_t)y * UVW, srcRow, UVW);
+                }
+            }
+            else if (URowPitch >= UVW * 4)
+            {
+                const uint32_t* src32 = static_cast<const uint32_t*>(UPtr);
+                int stride = URowPitch / 4;
+                for (int y = 0; y < UVH; ++y)
+                {
+                    const uint32_t* row = src32 + (size_t)y * stride;
+                    for (int x = 0; x < UVW; ++x) PackedU[y * UVW + x] = static_cast<uint8>(row[x] & 0xFFu);
+                }
+            }
+            else
+            {
+                for (int y = 0; y < UVH; ++y)
+                {
+                    const uint8* row = static_cast<const uint8*>(UPtr) + (size_t)y * URowPitch;
+                    for (int x = 0; x < UVW; ++x) PackedU[y * UVW + x] = row[x * (URowPitch / UVW)];
+                }
+            }
+
+            // Pack V
+            if (VRowPitch == UVW)
+            {
+                for (int y = 0; y < UVH; ++y)
+                {
+                    const uint8* srcRow = static_cast<const uint8*>(VPtr) + (size_t)y * VRowPitch;
+                    FMemory::Memcpy(PackedV.GetData() + (size_t)y * UVW, srcRow, UVW);
+                }
+            }
+            else if (VRowPitch >= UVW * 4)
+            {
+                const uint32_t* src32 = static_cast<const uint32_t*>(VPtr);
+                int stride = VRowPitch / 4;
+                for (int y = 0; y < UVH; ++y)
+                {
+                    const uint32_t* row = src32 + (size_t)y * stride;
+                    for (int x = 0; x < UVW; ++x) PackedV[y * UVW + x] = static_cast<uint8>(row[x] & 0xFFu);
+                }
+            }
+            else
+            {
+                for (int y = 0; y < UVH; ++y)
+                {
+                    const uint8* row = static_cast<const uint8*>(VPtr) + (size_t)y * VRowPitch;
+                    for (int x = 0; x < UVW; ++x) PackedV[y * UVW + x] = row[x * (VRowPitch / UVW)];
+                }
+            }
+
+            // Use packed planes for the dump
+            const uint8_t* srcPlanes[3] = { PackedY.GetData(), PackedU.GetData(), PackedV.GetData() };
+            int srcLines[3] = { Width, UVW, UVW };
+            int dumpSize = av_image_get_buffer_size(AV_PIX_FMT_YUV420P, Width, Height, 1);
+            if (dumpSize > 0)
+            {
+                TArray<uint8> DumpArray;
+                DumpArray.SetNumUninitialized(dumpSize);
+                int copied = av_image_copy_to_buffer(DumpArray.GetData(), dumpSize, srcPlanes, srcLines, AV_PIX_FMT_YUV420P, Width, Height, 1);
+                if (copied > 0)
+                {
+                    FString OutPath = FPaths::ProjectSavedDir() / TEXT("synavis_readback_raw.yuv");
+                    if (FFileHelper::SaveArrayToFile(DumpArray, *OutPath))
+                    {
+                        UE_LOG(LogTemp, Warning, TEXT("Wrote raw readback YUV to %s size=%d"), *OutPath, copied);
+                    }
+                    else
+                    {
+                        UE_LOG(LogTemp, Warning, TEXT("Failed to save readback dump file %s"), *OutPath);
+                    }
+                }
+                else
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("av_image_copy_to_buffer(readback) failed with %d"), copied);
+                }
+            }
+            else
+            {
+                UE_LOG(LogTemp, Warning, TEXT("av_image_get_buffer_size(readback) returned %d"), dumpSize);
+            }
+            bReadbackDumped.store(true);
+        }
+
+        // Additional one-time per-plane dumps and a reconstructed RGB PPM for easier visual debugging.
+        static std::atomic<bool> bPlaneDumps(false);
+        if (!bPlaneDumps.load())
+        {
+            // If RDG readback is 32-bit-per-texel, pack low bytes into temporary planes
+            int UVW = (Width + 1) / 2;
+            int UVH = (Height + 1) / 2;
+            TArray<uint8> PackedY; PackedY.SetNumUninitialized(Width * Height);
+            TArray<uint8> PackedU; PackedU.SetNumUninitialized(UVW * UVH);
+            TArray<uint8> PackedV; PackedV.SetNumUninitialized(UVW * UVH);
+            // Pack Y
+            if (YRowPitch == Width)
+            {
+                for (int y = 0; y < Height; ++y) FMemory::Memcpy(PackedY.GetData() + (size_t)y * Width, static_cast<const uint8*>(YPtr) + (size_t)y * YRowPitch, Width);
+            }
+            else if (YRowPitch >= Width * 4)
+            {
+                const uint32_t* src32 = static_cast<const uint32_t*>(YPtr);
+                int stride = YRowPitch / 4;
+                for (int y = 0; y < Height; ++y)
+                {
+                    const uint32_t* row = src32 + (size_t)y * stride;
+                    for (int x = 0; x < Width; ++x) PackedY[y * Width + x] = static_cast<uint8>(row[x] & 0xFFu);
+                }
+            }
+            else
+            {
+                for (int y = 0; y < Height; ++y)
+                {
+                    const uint8* row = static_cast<const uint8*>(YPtr) + (size_t)y * YRowPitch;
+                    for (int x = 0; x < Width; ++x) PackedY[y * Width + x] = row[x * (YRowPitch / Width)];
+                }
+            }
+            // Pack U
+            if (URowPitch == UVW)
+            {
+                for (int y = 0; y < UVH; ++y) FMemory::Memcpy(PackedU.GetData() + (size_t)y * UVW, static_cast<const uint8*>(UPtr) + (size_t)y * URowPitch, UVW);
+            }
+            else if (URowPitch >= UVW * 4)
+            {
+                const uint32_t* src32 = static_cast<const uint32_t*>(UPtr);
+                int stride = URowPitch / 4;
+                for (int y = 0; y < UVH; ++y)
+                {
+                    const uint32_t* row = src32 + (size_t)y * stride;
+                    for (int x = 0; x < UVW; ++x) PackedU[y * UVW + x] = static_cast<uint8>(row[x] & 0xFFu);
+                }
+            }
+            else
+            {
+                for (int y = 0; y < UVH; ++y)
+                {
+                    const uint8* row = static_cast<const uint8*>(UPtr) + (size_t)y * URowPitch;
+                    for (int x = 0; x < UVW; ++x) PackedU[y * UVW + x] = row[x * (URowPitch / UVW)];
+                }
+            }
+            // Pack V
+            if (VRowPitch == UVW)
+            {
+                for (int y = 0; y < UVH; ++y) FMemory::Memcpy(PackedV.GetData() + (size_t)y * UVW, static_cast<const uint8*>(VPtr) + (size_t)y * VRowPitch, UVW);
+            }
+            else if (VRowPitch >= UVW * 4)
+            {
+                const uint32_t* src32 = static_cast<const uint32_t*>(VPtr);
+                int stride = VRowPitch / 4;
+                for (int y = 0; y < UVH; ++y)
+                {
+                    const uint32_t* row = src32 + (size_t)y * stride;
+                    for (int x = 0; x < UVW; ++x) PackedV[y * UVW + x] = static_cast<uint8>(row[x] & 0xFFu);
+                }
+            }
+            else
+            {
+                for (int y = 0; y < UVH; ++y)
+                {
+                    const uint8* row = static_cast<const uint8*>(VPtr) + (size_t)y * VRowPitch;
+                    for (int x = 0; x < UVW; ++x) PackedV[y * UVW + x] = row[x * (VRowPitch / UVW)];
+                }
+            }
+
+            // Prepare UTF8 header helper
+            auto AppendUtf8 = [](TArray<uint8>& Arr, const FString& S){ FTCHARToUTF8 Conv(*S); Arr.Append(reinterpret_cast<const uint8*>(Conv.Get()), Conv.Length()); };
+
+            // Y plane PGM (P5)
+            {
+                FString YPath = FPaths::ProjectSavedDir() / TEXT("synavis_readback_Y.pgm");
+                FString Header = FString::Printf(TEXT("P5\n%d %d\n255\n"), Width, Height);
+                TArray<uint8> Out;
+                AppendUtf8(Out, Header);
+                // Append each row (copy only Width bytes per row) from packed plane
+                const uint8* srcY = PackedY.GetData();
+                for (int y = 0; y < Height; ++y)
+                {
+                    Out.Append(srcY + (size_t)y * Width, Width);
+                }
+                if (FFileHelper::SaveArrayToFile(Out, *YPath))
+                {
+                UE_LOG(LogTemp, Warning, TEXT("Wrote readback Y plane to %s"), *YPath);
+                }
+                else
+                {
+                  UE_LOG(LogTemp, Warning, TEXT("Failed to save Y plane dump %s"), *YPath);
+                }
+            }
+
+            {
+                FString UPath = FPaths::ProjectSavedDir() / TEXT("synavis_readback_U.pgm");
+                FString Header = FString::Printf(TEXT("P5\n%d %d\n255\n"), UVW, UVH);
+                TArray<uint8> Out;
+                AppendUtf8(Out, Header);
+                const uint8* srcU = PackedU.GetData();
+                for (int y = 0; y < UVH; ++y) Out.Append(srcU + (size_t)y * UVW, UVW);
+                FFileHelper::SaveArrayToFile(Out, *UPath);
+            }
+            {
+                FString VPath = FPaths::ProjectSavedDir() / TEXT("synavis_readback_V.pgm");
+                FString Header = FString::Printf(TEXT("P5\n%d %d\n255\n"), UVW, UVH);
+                TArray<uint8> Out;
+                AppendUtf8(Out, Header);
+                const uint8* srcV = PackedV.GetData();
+                for (int y = 0; y < UVH; ++y) Out.Append(srcV + (size_t)y * UVW, UVW);
+                FFileHelper::SaveArrayToFile(Out, *VPath);
+            }
+
+            // Reconstruct a simple RGB PPM (P6) using nearest-neighbor chroma upsample for quick visual check
+            {
+                FString RgbPath = FPaths::ProjectSavedDir() / TEXT("synavis_readback_recon.ppm");
+                FString Header = FString::Printf(TEXT("P6\n%d %d\n255\n"), Width, Height);
+                TArray<uint8> Out;
+                AppendUtf8(Out, Header);
+                const uint8* srcY = PackedY.GetData();
+                const uint8* srcU = PackedU.GetData();
+                const uint8* srcV = PackedV.GetData();
+                Out.Reserve(Header.Len() + Width * Height * 3);
+                for (int y = 0; y < Height; ++y)
+                {
+                    const uint8* rowY = srcY + (size_t)y * YRowPitch;
+                    const uint8* rowU = srcU + (size_t)(y/2) * URowPitch;
+                    const uint8* rowV = srcV + (size_t)(y/2) * VRowPitch;
+                    for (int x = 0; x < Width; ++x)
+                    {
+                        int Yv = rowY[x];
+                        int Uv = rowU[x/2];
+                        int Vv = rowV[x/2];
+                        // Convert YUV->RGB using full-range BT.601-ish matrix
+                        float Yf = static_cast<float>(Yv);
+                        float Uf = static_cast<float>(Uv) - 128.0f;
+                        float Vf = static_cast<float>(Vv) - 128.0f;
+                        int R = FMath::Clamp<int>(static_cast<int>(Yf + 1.402f * Vf + 0.5f), 0, 255);
+                        int G = FMath::Clamp<int>(static_cast<int>(Yf - 0.344136f * Uf - 0.714136f * Vf + 0.5f), 0, 255);
+                        int B = FMath::Clamp<int>(static_cast<int>(Yf + 1.772f * Uf + 0.5f), 0, 255);
+                        Out.Add(static_cast<uint8>(R)); Out.Add(static_cast<uint8>(G)); Out.Add(static_cast<uint8>(B));
+                    }
+                }
+                FFileHelper::SaveArrayToFile(Out, *RgbPath);
+            }
+
+            bPlaneDumps.store(true);
+        }
+
         struct ReadbackFreeCtx { FRHIGPUTextureReadback* RB; };
         ReadbackFreeCtx* ctxY = new ReadbackFreeCtx{ ReadbackY };
         ReadbackFreeCtx* ctxU = new ReadbackFreeCtx{ ReadbackU };
@@ -582,6 +881,42 @@ void USynavisVp9SendoffHandler::EnqueueReadbackNonBlocking(FRHIGPUTextureReadbac
         frame->linesize[1] = URowPitch;
         frame->linesize[2] = VRowPitch;
 
+        // One-time dump of the tightly-packed YUV420P image to disk for offline analysis.
+        // This writes a single raw .yuv file that can be played with:
+        // ffplay -f rawvideo -pixel_format yuv420p -video_size <W>x<H> synavis_frame_dump.yuv
+        static std::atomic<bool> bDumped(false);
+        if (!bDumped.load())
+        {
+            int bufSize = av_image_get_buffer_size(static_cast<AVPixelFormat>(frame->format), frame->width, frame->height, 1);
+            if (bufSize > 0)
+            {
+                TArray<uint8> DumpArray;
+                DumpArray.SetNumUninitialized(bufSize);
+                int copied = av_image_copy_to_buffer(DumpArray.GetData(), bufSize, frame->data, frame->linesize, static_cast<AVPixelFormat>(frame->format), frame->width, frame->height, 1);
+                if (copied > 0)
+                {
+                    FString OutPath = FPaths::ProjectSavedDir() / TEXT("synavis_frame_dump.yuv");
+                    if (FFileHelper::SaveArrayToFile(DumpArray, *OutPath))
+                    {
+                        UE_LOG(LogTemp, Warning, TEXT("Wrote raw YUV frame to %s size=%d"), *OutPath, copied);
+                    }
+                    else
+                    {
+                        UE_LOG(LogTemp, Warning, TEXT("Failed to save dump file %s"), *OutPath);
+                    }
+                }
+                else
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("av_image_copy_to_buffer failed with %d"), copied);
+                }
+            }
+            else
+            {
+                UE_LOG(LogTemp, Warning, TEXT("av_image_get_buffer_size returned %d"), bufSize);
+            }
+            bDumped.store(true);
+        }
+
         // Assign a monotonic PTS to help encoders that require/expect timestamps
         frame->pts = static_cast<int64_t>(++LibAVState->FrameCounter);
         UE_LOG(LogTemp, Verbose, TEXT("ENC send_frame pts=%lld fmt=%d w=%d h=%d"), (long long)frame->pts, frame->format, frame->width, frame->height);
@@ -627,6 +962,65 @@ void USynavisVp9SendoffHandler::EnqueueReadbackNonBlocking(FRHIGPUTextureReadbac
                     }
                     if (sz > 0 && sz <= 128) { LogHexVerbose(reinterpret_cast<const char*>(LibAVState->Packet->data), (int)sz, TEXT("VP9 Enqueue: pkt hex")); }
                     if (sz == 0) { av_packet_unref(LibAVState->Packet); UE_LOG(LogTemp, Verbose, TEXT("VP9 Enqueue: empty packet received, skip")); continue; }
+                    // Optionally write IVF file for offline decoding/inspection.
+                    static IFileHandle* IVFHandle = nullptr;
+                    static uint32 IVFFrameCount = 0;
+                    if (!IVFHandle)
+                    {
+                        FString IVFPath = FPaths::ProjectSavedDir() / TEXT("synavis_frame_dump.ivf");
+                        IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+                        // Create/overwrite
+                        IVFHandle = PlatformFile.OpenWrite(*IVFPath, /*bAppend=*/false);
+                        if (IVFHandle)
+                        {
+                            // Build IVF header
+                            uint8 header[32] = {0};
+                            // signature 'DKIF'
+                            header[0] = 'D'; header[1] = 'K'; header[2] = 'I'; header[3] = 'F';
+                            // version 0
+                            header[4] = 0; header[5] = 0;
+                            // header length = 32
+                            header[6] = 32; header[7] = 0;
+                            // fourcc 'VP90'
+                            header[8] = 'V'; header[9] = 'P'; header[10] = '9'; header[11] = '0';
+                            // width (16-bit little endian)
+                            header[12] = static_cast<uint8>(LibAVState->CodecCtx->width & 0xFF);
+                            header[13] = static_cast<uint8>((LibAVState->CodecCtx->width >> 8) & 0xFF);
+                            // height (16-bit little endian)
+                            header[14] = static_cast<uint8>(LibAVState->CodecCtx->height & 0xFF);
+                            header[15] = static_cast<uint8>((LibAVState->CodecCtx->height >> 8) & 0xFF);
+                            // framerate numerator/denominator (use 30/1 as default)
+                            uint32 frn = 30; uint32 frd = 1;
+                            header[16] = static_cast<uint8>(frn & 0xFF);
+                            header[17] = static_cast<uint8>((frn >> 8) & 0xFF);
+                            header[18] = static_cast<uint8>((frn >> 16) & 0xFF);
+                            header[19] = static_cast<uint8>((frn >> 24) & 0xFF);
+                            header[20] = static_cast<uint8>(frd & 0xFF);
+                            header[21] = static_cast<uint8>((frd >> 8) & 0xFF);
+                            header[22] = static_cast<uint8>((frd >> 16) & 0xFF);
+                            header[23] = static_cast<uint8>((frd >> 24) & 0xFF);
+                            // frame count left zero (can be patched later)
+                            for (int i = 24; i < 28; ++i) header[i] = 0;
+                            // reserved
+                            for (int i = 28; i < 32; ++i) header[i] = 0;
+                            IVFHandle->Write(header, 32);
+                            IVFFrameCount = 0;
+                        }
+                    }
+                    if (IVFHandle)
+                    {
+                        // Write frame header: 4-byte size (LE), 8-byte pts (LE)
+                        uint32_t fsize = static_cast<uint32_t>(LibAVState->Packet->size);
+                        uint64_t fpts = static_cast<uint64_t>(LibAVState->Packet->pts < 0 ? 0 : LibAVState->Packet->pts);
+                        uint8 szbuf[4] = { static_cast<uint8>(fsize & 0xFF), static_cast<uint8>((fsize>>8)&0xFF), static_cast<uint8>((fsize>>16)&0xFF), static_cast<uint8>((fsize>>24)&0xFF) };
+                        uint8 ptsbuf[8];
+                        for (int i = 0; i < 8; ++i) ptsbuf[i] = static_cast<uint8>((fpts >> (8*i)) & 0xFF);
+                        IVFHandle->Write(szbuf, 4);
+                        IVFHandle->Write(ptsbuf, 8);
+                        IVFHandle->Write(reinterpret_cast<const uint8*>(LibAVState->Packet->data), LibAVState->Packet->size);
+                        IVFFrameCount++;
+                    }
+
                     TArray<uint8> Vp9Buffer;
                     Vp9Buffer.Append(reinterpret_cast<uint8*>(LibAVState->Packet->data), LibAVState->Packet->size);
                     uint32_t rtpTs = ComputeRtpTimestamp(LibAVState, LibAVState->Packet->pts, LibAVState->CodecCtx->time_base);
