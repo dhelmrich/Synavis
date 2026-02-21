@@ -407,7 +407,7 @@ protected:
 
 
   // Pending GPU readback record for non-blocking zero-copy path
-  struct FPendingNV12Readback
+  struct FPendingI420Readback
   {
     FRHIGPUTextureReadback* ReadbackY = nullptr;
     // Separate U and V half-resolution readbacks (I420 layout)
@@ -421,7 +421,7 @@ protected:
   };
 
   // Pending readbacks queue; processed in TickComponent
-  TArray<FPendingNV12Readback> PendingReadbacks;
+  TArray<FPendingI420Readback> PendingReadbacks;
 
   // TSet of registered data handlers
   TSet<FSynavisHandler> RegisteredDataHandlers;

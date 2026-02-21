@@ -93,7 +93,7 @@ bool ConvertRenderTargetToI420_GPU(UTextureRenderTarget2D* SrcRT, TArray<uint8>&
     });
 
     // Hint for Option B (pixel-shader fullscreen pass):
-    // - Implement a pixel shader that writes Y to RT0 and packed UV to RT1 (NV12) if desired.
+    // - Implement a pixel shader that writes Y to RT0 and packed UV to RT1 (I420) if desired.
     // - Create two transient render targets via RDG with PF_R8 and PF_R8G8.
     // - Use AddDrawScreenPass or a full-screen draw call to render a quad using the pixel shader.
     // - Enqueue readbacks similarly with AddEnqueueCopyPass for each RT.
@@ -173,7 +173,7 @@ bool ConvertRenderTargetToI420_GPU(UTextureRenderTarget2D* SrcRT, TArray<uint8>&
 // Note: GPU conversion path requires a shader and RDG/RHI handling which is engine-version specific.
 // The stub above intentionally returns false to fall back to CPU conversion in the streamer.
 
-bool EnqueueNV12ReadbackFromRenderTarget(UTextureRenderTarget2D* SrcRT, FRHIGPUTextureReadback*& OutReadbackY, FRHIGPUTextureReadback*& OutReadbackU, FRHIGPUTextureReadback*& OutReadbackV)
+bool EnqueueI420ReadbackFromRenderTarget(UTextureRenderTarget2D* SrcRT, FRHIGPUTextureReadback*& OutReadbackY, FRHIGPUTextureReadback*& OutReadbackU, FRHIGPUTextureReadback*& OutReadbackV)
 {
     OutReadbackY = nullptr;
     OutReadbackU = nullptr;

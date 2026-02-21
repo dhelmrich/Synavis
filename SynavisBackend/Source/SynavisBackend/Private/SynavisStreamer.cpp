@@ -1136,7 +1136,7 @@ void USynavisStreamer::TickComponent(float DeltaTime, ELevelTick TickType, FActo
 
       for (int32 i = PendingReadbacks.Num() - 1; i >= 0; --i)
       {
-        FPendingNV12Readback& rec = PendingReadbacks[i];
+        FPendingI420Readback& rec = PendingReadbacks[i];
 
         // Validate readbacks
         if (!rec.ReadbackY || !rec.ReadbackU || !rec.ReadbackV)
@@ -1182,16 +1182,27 @@ void USynavisStreamer::TickComponent(float DeltaTime, ELevelTick TickType, FActo
         }
       }
 
+      for (auto i = PendingRGBReadbacks.Num() - 1; i >= 0; --i)
+      {
+        // check if the TFuture is ready
+        FPendingRGBReadback& rec = PendingRGBReadbacks[i];
+        if (rec.ReadbackFuture.IsReady())
+        {
+          UE_LOG(LogTemp, Verbose, TEXT("Synavis: Pending RGB readback ready, processing result (Width=%d Height=%d)"), rec.Width, rec.Height);
+          // Process the RGB readback result (e.g., encode and send)
+          TArray<FColor> PixelData = rec.ReadbackFuture.Get();
+        }
+      }
+
       // If no pending work and queue empty, we're done for this tick
       if (PendingReadbacks.Num() == 0)
-  
-              // Clear global pointer if this instance was registered
-              {
-                FScopeLock lock(&GGlobalStreamerMutex);
-                if (GGlobalStreamer == this) GGlobalStreamer = nullptr;
-              }
+      {
+        {
+          FScopeLock lock(&GGlobalStreamerMutex);
+          if (GGlobalStreamer == this) GGlobalStreamer = nullptr;
+        }
         break;
-
+      }
       // If we made progress this iteration, continue polling immediately; otherwise sleep briefly
       if (!DidWorkThisIteration)
       {
@@ -2976,27 +2987,44 @@ void USynavisStreamer::CaptureFrame()
     }
     else
     {
-      // TEMP: log info on first track in TracksToSend for diagnostics
-      UE_LOG(LogTemp, Verbose, TEXT("Synavis: First Track: %d, isOpen: %d, maxMessageSize: %d"), TracksToSend[0], rtcIsOpen(TracksToSend[0]) ? 1 : 0, rtcMaxMessageSize(TracksToSend[0]));
-      FRHIGPUTextureReadback* ReadbackY = nullptr;
-      FRHIGPUTextureReadback* ReadbackU = nullptr;
-      FRHIGPUTextureReadback* ReadbackV = nullptr;
-      if (EnqueueNV12ReadbackFromRenderTarget(HandlerRT, ReadbackY, ReadbackU, ReadbackV))
+      if (this->TextureConversionMode == ESynavisTextureConversionMode::GPU)
       {
-        FPendingNV12Readback rec;
-        rec.ReadbackY = ReadbackY;
-        rec.ReadbackU = ReadbackU;
-        rec.ReadbackV = ReadbackV;
-        rec.EnqueuedAt = FPlatformTime::Seconds();
-        rec.TargetTracks = TracksToSend;
-        rec.Width = Width;
-        rec.Height = Height;
-        PendingReadbacks.Add(rec);
-        UE_LOG(LogTemp, Verbose, TEXT("Synavis: Enqueued I420 readback for handler %d (W=%d H=%d) to %d tracks"), Handler.HandlerID, Width, Height, TracksToSend.Num());
+        // TEMP: log info on first track in TracksToSend for diagnostics
+        UE_LOG(LogTemp, Verbose, TEXT("Synavis: First Track: %d, isOpen: %d, maxMessageSize: %d"), TracksToSend[0], rtcIsOpen(TracksToSend[0]) ? 1 : 0, rtcMaxMessageSize(TracksToSend[0]));
+        FRHIGPUTextureReadback* ReadbackY = nullptr;
+        FRHIGPUTextureReadback* ReadbackU = nullptr;
+        FRHIGPUTextureReadback* ReadbackV = nullptr;
+        if (EnqueueI420ReadbackFromRenderTarget(HandlerRT, ReadbackY, ReadbackU, ReadbackV))
+        {
+          FPendingI420Readback rec;
+          rec.ReadbackY = ReadbackY;
+          rec.ReadbackU = ReadbackU;
+          rec.ReadbackV = ReadbackV;
+          rec.EnqueuedAt = FPlatformTime::Seconds();
+          rec.TargetTracks = TracksToSend;
+          rec.Width = Width;
+          rec.Height = Height;
+          PendingReadbacks.Add(rec);
+          UE_LOG(LogTemp, Verbose, TEXT("Synavis: Enqueued I420 readback for handler %d (W=%d H=%d) to %d tracks"), Handler.HandlerID, Width, Height, TracksToSend.Num());
+        }
+        else
+        {
+          UE_LOG(LogTemp, Warning, TEXT("Synavis: Failed to enqueue I420 readback for handler %d"), Handler.HandlerID);
+        }
       }
       else
       {
-        UE_LOG(LogTemp, Warning, TEXT("Synavis: Failed to enqueue NV12 readback for handler %d"), Handler.HandlerID);
+        // Readback is very similar: We still need to enqueue a readback from the GPU and add it to PendingReadbacks,
+        // because this is the only way to avoid game loop blocking
+        FPendingRGBReadback rec;
+        rec.TargetTracks = TracksToSend;
+        rec.Width = Width;
+        rec.Height = Height;
+        // create a future object and then enqueue the readback
+        rec.ReadbackFuture = EnqueueRGBReadbackFromRenderTarget(HandlerRT);
+        rec.EnqueuedAt = FPlatformTime::Seconds();
+        PendingRGBReadbacks.Add(rec);
+        UE_LOG(LogTemp, Verbose, TEXT("Synavis: Enqueued RGB readback for handler %d (W=%d H=%d) to %d tracks"), Handler.HandlerID, Width, Height, TracksToSend.Num());
       }
     }
   }
@@ -3288,6 +3316,40 @@ void USynavisStreamer::StartConnectionNegotiation()
   }
 }
 
-
-
-
+TFuture<TArray<uint8>> USynavisStreamer::EnqueueRGBReadbackFromRenderTarget(UTextureRenderTarget2D *RenderTarget)
+{
+  // create future
+  TPromise<TArray<uint8>> Promise;
+  TFuture<TArray<uint8>> Future = Promise.GetFuture();
+  // enqueue GPU readback
+  AsyncTask(ENamedThreads::GameThread, [this, RenderTarget, Promise = MoveTemp(Promise)]() mutable {
+    FTextureRenderTargetResource* RTResource = RenderTarget->GameThread_GetRenderTargetResource();
+    if (!RTResource)
+    {
+      UE_LOG(LogTemp, Warning, TEXT("Synavis: Failed to get render target resource for RGB readback"));
+      Promise.SetValue(TArray<uint8>());
+      return;
+    }
+    int Width = RenderTarget->SizeX;
+    int Height = RenderTarget->SizeY;
+    FRHIGPUTextureReadback* Readback = new FRHIGPUTextureReadback();
+    Readback->Enqueue(RTResource);
+    // Poll for completion on the game thread (could be optimized with a more event-driven approach)
+    while (!Readback->IsReady())
+    {
+      FPlatformProcess::Sleep(0.01f);
+    }
+    TArray<uint8> Data;
+    if (Readback->GetData(Data))
+    {
+      UE_LOG(LogTemp, Verbose, TEXT("Synavis: RGB readback completed, size=%d"), Data.Num());
+      Promise.SetValue(MoveTemp(Data));
+    }
+    else
+    {
+      UE_LOG(LogTemp, Warning, TEXT("Synavis: RGB readback failed to get data"));
+      Promise.SetValue(TArray<uint8>());
+    }
+    delete Readback;
+  });
+}

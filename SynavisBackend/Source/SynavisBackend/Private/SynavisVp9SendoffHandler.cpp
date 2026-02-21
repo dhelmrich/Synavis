@@ -784,13 +784,12 @@ void USynavisVp9SendoffHandler::EnqueueReadbackNonBlocking(FRHIGPUTextureReadbac
                 LibAVState->CodecCtx->bit_rate = (int64_t)EffectiveBitrateKbps * 1000;
                 LibAVState->CodecCtx->gop_size = (int)EffectiveKeyframeInterval;
             }
-            UE_LOG(LogTemp, Warning, TEXT("VP9 Enqueue: pre-open: codec=%S id=%d width=%d height=%d pix_fmt=%d (NV12=%d YUV420P=%d) RowPitch Y=%d U=%d V=%d"),
+            UE_LOG(LogTemp, Warning, TEXT("VP9 Enqueue: pre-open: codec=%S id=%d width=%d height=%d pix_fmt=%d (YUV420P=%d) RowPitch Y=%d U=%d V=%d"),
                 LibAVState->Codec ? LibAVState->Codec->name : (const char*)"?",
                 LibAVState->Codec ? (int)LibAVState->Codec->id : -1,
                 LibAVState->CodecCtx->width,
                 LibAVState->CodecCtx->height,
                 LibAVState->CodecCtx->pix_fmt,
-                AV_PIX_FMT_NV12,
                 AV_PIX_FMT_YUV420P,
                 YRowPitch, URowPitch, VRowPitch);
 
@@ -817,7 +816,7 @@ void USynavisVp9SendoffHandler::EnqueueReadbackNonBlocking(FRHIGPUTextureReadbac
                         LibAVState->CodecCtx->time_base.num, LibAVState->CodecCtx->time_base.den,
                         LibAVState->CodecCtx->framerate.num, LibAVState->CodecCtx->framerate.den,
                         LibAVState->CodecCtx->sample_aspect_ratio.num, LibAVState->CodecCtx->sample_aspect_ratio.den);
-                    UE_LOG(LogTemp, Error, TEXT("VP9 Enqueue: pix_fmt description hint: NV12=%d YUV420P=%d"), AV_PIX_FMT_NV12, AV_PIX_FMT_YUV420P);
+                    UE_LOG(LogTemp, Error, TEXT("VP9 Enqueue: pix_fmt description hint: YUV420P=%d"), AV_PIX_FMT_YUV420P);
                     UE_LOG(LogTemp, Error, TEXT("VP9 Enqueue: CodecCtx priv_data=%p priv_class=%p"), LibAVState->CodecCtx->priv_data, LibAVState->CodecCtx->av_class ? (void*)LibAVState->CodecCtx->av_class : nullptr);
                 }
                 avcodec_free_context(&LibAVState->CodecCtx);
@@ -1037,4 +1036,47 @@ void USynavisVp9SendoffHandler::EnqueueReadbackNonBlocking(FRHIGPUTextureReadbac
             av_frame_unref(frame);
         }
     });
+}
+
+// Non-blocking queue using FFMpeg to accept RGB frames
+void USynavisVp9SendoffHandler::EnqueueSoftwareNonBlocking(const TArrayView<const FColor>& RgbData, int Width, int Height, const TArray<int32>& TargetTracks, FLibAVEncoderState* LibAVState)
+{
+  Async(EAsyncExecution::Thread, [Data = std::move(RgbData), Width, Height, TargetTracks, LibAVState]()
+  {
+    // Convert RGB to YUV420P using libavutil's swscale for testing/debugging purposes.
+    // This is a non-optimized path just to verify the encoder can accept frames in the expected format.
+    // The RDG readback path should produce YUV420P directly to avoid this extra conversion.
+    struct SwsContextDeleter
+    {
+      void operator()(SwsContext* ctx) const
+      {
+        sws_freeContext(ctx);
+      }
+    };
+    TUniquePtr<SwsContext, SwsContextDeleter> SwsCtx(sws_getContext(Width, Height, AV_PIX_FMT_RGB24, Width, Height, AV_PIX_FMT_YUV420P, SWS_BILINEAR, nullptr, nullptr, nullptr));
+    if (!SwsCtx)
+    {
+      UE_LOG(LogTemp, Warning, TEXT("Failed to create SwsContext for RGB->YUV conversion")); return;
+    }
+    // Prepare source data pointers and strides
+    const uint8_t* SrcData[1] = { reinterpret_cast<const uint8_t*>(Data.GetData()) };
+    int SrcLinesize[1] = { Width * 3 }; // FColor is 4 bytes but we use only RGB
+    // Allocate destination buffers for YUV420P
+    int UVW = (Width + 1) / 2;
+    int UVH = (Height + 1) / 2;
+    TArray<uint8> YPlane; YPlane.SetNumUninitialized(Width * Height);
+    TArray<uint8> UPlane; UPlane.SetNumUninitialized(UVW * UVH);
+    TArray<uint8> VPlane; VPlane.SetNumUninitialized(UVW * UVH);
+    uint8_t* DstData[3] = { YPlane.GetData(), UPlane.GetData(), VPlane.GetData() };
+    int DstLinesize[3] = { Width, UVW, UVW };
+    int rc = sws_scale(SwsCtx.Get(), SrcData, SrcLinesize, 0, Height, DstData, DstLinesize);
+    if (rc <= 0)
+    {
+      UE_LOG(LogTemp, Warning, TEXT("sws_scale failed with return code %d"), rc);
+      return;
+    }
+    UE_LOG(LogTemp, Log, TEXT("RGB->YUV conversion successful: input %dx%d stride=%d output Y stride=%d U/V stride=%d"), Width, Height, SrcLinesize[0], DstLinesize[0], DstLinesize[1]);
+    // The rest of the encoding process is the same as in EnqueueRDGReadbackNonBlocking, so we can reuse that code by calling a helper function.
+    EnqueueYUV420PNonBlocking(YPlane, UPlane, VPlane, Width, Height, TargetTracks, LibAVState);
+  });
 }
