@@ -1191,6 +1191,8 @@ void USynavisStreamer::TickComponent(float DeltaTime, ELevelTick TickType, FActo
           UE_LOG(LogTemp, Verbose, TEXT("Synavis: Pending RGB readback ready, processing result (Width=%d Height=%d)"), rec.Width, rec.Height);
           // Process the RGB readback result (e.g., encode and send)
           TArray<FColor> PixelData = rec.ReadbackFuture.Get();
+          // hand off to SynavisVP9SendoffHandler for encoding/sending
+          this->SendoffHandler->EnqueueSoftwareNonBlocking(PixelData, rec.Width, rec.Height, rec.TargetTracks, this->SendoffHandler->GetOrCreateLibAVEncoderState());
         }
       }
 
@@ -1203,13 +1205,7 @@ void USynavisStreamer::TickComponent(float DeltaTime, ELevelTick TickType, FActo
         }
         break;
       }
-      // If we made progress this iteration, continue polling immediately; otherwise sleep briefly
-      if (!DidWorkThisIteration)
-      {
-        FPlatformProcess::Sleep(0.001f);
-      }
     }
-    // Any remaining PendingReadbacks (if deadline hit) will be processed in subsequent ticks or cleaned up via age/timeouts above.
   }
 }
 
@@ -3023,7 +3019,7 @@ void USynavisStreamer::CaptureFrame()
         // create a future object and then enqueue the readback
         rec.ReadbackFuture = EnqueueRGBReadbackFromRenderTarget(HandlerRT);
         rec.EnqueuedAt = FPlatformTime::Seconds();
-        PendingRGBReadbacks.Add(rec);
+        PendingRGBReadbacks.Add(MoveTemp(rec));
         UE_LOG(LogTemp, Verbose, TEXT("Synavis: Enqueued RGB readback for handler %d (W=%d H=%d) to %d tracks"), Handler.HandlerID, Width, Height, TracksToSend.Num());
       }
     }
@@ -3316,40 +3312,42 @@ void USynavisStreamer::StartConnectionNegotiation()
   }
 }
 
-TFuture<TArray<uint8>> USynavisStreamer::EnqueueRGBReadbackFromRenderTarget(UTextureRenderTarget2D *RenderTarget)
+TFuture<TArray<FColor>> USynavisStreamer::EnqueueRGBReadbackFromRenderTarget(UTextureRenderTarget2D* RenderTarget)
 {
-  // create future
-  TPromise<TArray<uint8>> Promise;
-  TFuture<TArray<uint8>> Future = Promise.GetFuture();
-  // enqueue GPU readback
-  AsyncTask(ENamedThreads::GameThread, [this, RenderTarget, Promise = MoveTemp(Promise)]() mutable {
-    FTextureRenderTargetResource* RTResource = RenderTarget->GameThread_GetRenderTargetResource();
+  TPromise<TArray<FColor>> Promise;
+  TFuture<TArray<FColor>> Future = Promise.GetFuture();
+  TWeakObjectPtr<UTextureRenderTarget2D> WeakRenderTarget(RenderTarget);
+
+  AsyncTask(ENamedThreads::GameThread, [WeakRenderTarget, Promise = MoveTemp(Promise)]() mutable {
+    TArray<FColor> PixelData;
+
+    UTextureRenderTarget2D* RT = WeakRenderTarget.Get();
+    if (!RT)
+    {
+      UE_LOG(LogTemp, Warning, TEXT("Synavis: RGB readback skipped because render target is no longer valid"));
+      Promise.SetValue(MoveTemp(PixelData));
+      return;
+    }
+
+    FTextureRenderTargetResource* RTResource = RT->GameThread_GetRenderTargetResource();
     if (!RTResource)
     {
       UE_LOG(LogTemp, Warning, TEXT("Synavis: Failed to get render target resource for RGB readback"));
-      Promise.SetValue(TArray<uint8>());
+      Promise.SetValue(MoveTemp(PixelData));
       return;
     }
-    int Width = RenderTarget->SizeX;
-    int Height = RenderTarget->SizeY;
-    FRHIGPUTextureReadback* Readback = new FRHIGPUTextureReadback();
-    Readback->Enqueue(RTResource);
-    // Poll for completion on the game thread (could be optimized with a more event-driven approach)
-    while (!Readback->IsReady())
+
+    FReadSurfaceDataFlags ReadFlags(RCM_UNorm);
+    ReadFlags.SetLinearToGamma(false);
+
+    if (!RTResource->ReadPixels(PixelData, ReadFlags))
     {
-      FPlatformProcess::Sleep(0.01f);
+      UE_LOG(LogTemp, Warning, TEXT("Synavis: RGB readback failed while reading pixels"));
+      PixelData.Reset();
     }
-    TArray<uint8> Data;
-    if (Readback->GetData(Data))
-    {
-      UE_LOG(LogTemp, Verbose, TEXT("Synavis: RGB readback completed, size=%d"), Data.Num());
-      Promise.SetValue(MoveTemp(Data));
-    }
-    else
-    {
-      UE_LOG(LogTemp, Warning, TEXT("Synavis: RGB readback failed to get data"));
-      Promise.SetValue(TArray<uint8>());
-    }
-    delete Readback;
+
+    Promise.SetValue(MoveTemp(PixelData));
   });
+
+  return Future;
 }

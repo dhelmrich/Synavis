@@ -12,6 +12,7 @@ struct AVFrame;
 struct AVPacket;
 struct AVCodec;
 struct AVRational;
+struct AVBufferRef;
 
 
 struct FEncodedVp9Frame
@@ -89,6 +90,8 @@ public:
                                     int Width, int Height,
                                     const TArray<int32>& TargetTracks,
                                     FLibAVEncoderState* LibAVState);
+    
+    void EnqueueSoftwareNonBlocking(const TArrayView<const FColor>& RgbData, int Width, int Height, const TArray<int32>& TargetTracks, FLibAVEncoderState* LibAVState);
 
     // Update the RTP payload type used for packetization. Can be called
     // at runtime when negotiated payload type differs from the default.
@@ -128,6 +131,16 @@ private:
     TMap<int32, uint32> TrackSsrcMap;
 
     void ProcessFrame(const FEncodedVp9Frame& Frame);
+    void EncodeAndSendYuv420Buffers(AVBufferRef* BufY,
+                                    AVBufferRef* BufU,
+                                    AVBufferRef* BufV,
+                                    int Width,
+                                    int Height,
+                                    int YRowPitch,
+                                    int URowPitch,
+                                    int VRowPitch,
+                                    const TArray<int32>& Tracks,
+                                    FLibAVEncoderState* LibAVState);
 
     friend class FVp9SendoffWorker;
 

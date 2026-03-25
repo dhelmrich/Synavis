@@ -624,7 +624,6 @@ void Synavis::WorkerThread::Run()
   while (Running)
   {
     TaskCondition.wait(lock, [this] {
-      //lbridge(Synavis::ELogVerbosity::Info) << "Task condition " << ((Tasks.size() > 0) || !Running) << std::endl;
       return (Tasks.size() > 0) || !Running;
       });
     if (!Running) return;

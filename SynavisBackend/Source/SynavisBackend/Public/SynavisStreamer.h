@@ -15,14 +15,8 @@ THIRD_PARTY_INCLUDES_START
 #include <atomic>
 
 #include "RHIGPUReadback.h"
-#if 0
-// Do NOT include the C++ libdatachannel headers from this public header to avoid
-// exposing C++ API types across DLL boundaries. All interaction with libdatachannel
-// in this module uses the C API (rtc.h) and integer ids. If you need the C++ API
-// in a .cpp file, include <rtc/rtc.hpp> there.
-#else
-namespace rtc { class PeerConnection; class DataChannel; class WebSocket; class Track; }
-#endif
+
+
 #if defined(LIBAV_AVAILABLE)
 extern "C" {
   struct AVCodecContext;
@@ -30,9 +24,6 @@ extern "C" {
   struct AVPacket;
   struct AVCodec;
 }
-#else
-// forward-declare to allow pointer members without bringing libav into every compile unit
-struct AVCodecContext; struct AVFrame; struct AVPacket; struct AVCodec;
 #endif
 
 // Forward-declare the shared encoder state (actual definition in SynavisVp9SendoffHandler.h)
@@ -80,6 +71,13 @@ enum class EPeerState : uint8
   ICE      UMETA(DisplayName = "ICE"),
   ChannelOpen      UMETA(DisplayName = "Channel Open"),
   AllOpen      UMETA(DisplayName = "All Open"),
+};
+
+UENUM(BlueprintType)
+enum class ESynavisTextureConversionMode : uint8
+{
+  GPU UMETA(DisplayName = "GPU Readback"),
+  CPU UMETA(DisplayName = "CPU LibSWScale"),
 };
 
 // Synavis Handler:
@@ -227,6 +225,9 @@ public:
 
   UPROPERTY()
   FSynavisData DataBroadcast;
+
+  UPROPERTY(VisibleAnywhere, Category = "Synavis")
+  ESynavisTextureConversionMode TextureConversionMode = ESynavisTextureConversionMode::CPU;
 
     // Centralized non-blocking sendoff handler (encodes+packetizes+sends on workers)
     UPROPERTY()
@@ -395,6 +396,9 @@ protected:
   // timer callback to capture frames
   void CaptureFrame();
 
+  // Enqueue an asynchronous RGB readback for CPU conversion path.
+  TFuture<TArray<FColor>> EnqueueRGBReadbackFromRenderTarget(UTextureRenderTarget2D* RenderTarget);
+
   UPROPERTY()
   ESynavisState ConnectionState = ESynavisState::Offline;
 
@@ -420,8 +424,22 @@ protected:
     int Height = 0;
   };
 
+  // Pending future-based CPU readback
+  struct FPendingRGBReadback
+  {
+    TFuture<TArray<FColor>> ReadbackFuture;
+    double EnqueuedAt = 0.0;
+    // optional track to send encoded data to
+    TArray<int32> TargetTracks;
+    int Width = 0;
+    int Height = 0;
+   };
+
+   TArray<FPendingRGBReadback> PendingRGBReadbacks;
+
   // Pending readbacks queue; processed in TickComponent
   TArray<FPendingI420Readback> PendingReadbacks;
+
 
   // TSet of registered data handlers
   TSet<FSynavisHandler> RegisteredDataHandlers;

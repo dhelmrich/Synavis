@@ -18,6 +18,7 @@ extern "C" {
 #include <libavutil/imgutils.h>
 #include <libavutil/buffer.h>
 #include <libavutil/mathematics.h>
+#include <libswscale/swscale.h>
 
 }
 THIRD_PARTY_INCLUDES_END
@@ -374,6 +375,290 @@ void USynavisVp9SendoffHandler::ProcessFrame(const FEncodedVp9Frame& Frame)
         }
     }
     PictureId++;
+}
+
+void USynavisVp9SendoffHandler::EncodeAndSendYuv420Buffers(AVBufferRef* BufY, AVBufferRef* BufU, AVBufferRef* BufV, int Width, int Height, int YRowPitch, int URowPitch, int VRowPitch, const TArray<int32>& Tracks, FLibAVEncoderState* LibAVState)
+{
+    if (!BufY || !BufU || !BufV || !LibAVState)
+    {
+        if (BufY) av_buffer_unref(&BufY);
+        if (BufU) av_buffer_unref(&BufU);
+        if (BufV) av_buffer_unref(&BufV);
+        return;
+    }
+
+    FScopeLock guard(&LibAVState->Mutex);
+    if (!LibAVState->CodecCtx)
+    {
+        if (!LibAVState->Codec)
+        {
+            av_buffer_unref(&BufY);
+            av_buffer_unref(&BufU);
+            av_buffer_unref(&BufV);
+            return;
+        }
+        LibAVState->CodecCtx = avcodec_alloc_context3(LibAVState->Codec);
+        if (!LibAVState->CodecCtx)
+        {
+            av_buffer_unref(&BufY);
+            av_buffer_unref(&BufU);
+            av_buffer_unref(&BufV);
+            return;
+        }
+        LibAVState->CodecCtx->width = Width;
+        LibAVState->CodecCtx->height = Height;
+        LibAVState->CodecCtx->pix_fmt = AV_PIX_FMT_YUV420P;
+        LibAVState->CodecCtx->time_base = AVRational{1, 30};
+        if (!LibAVState->Packet) LibAVState->Packet = av_packet_alloc();
+        if (LibAVState->CodecCtx && LibAVState->CodecCtx->priv_data)
+        {
+            int r1 = av_opt_set(LibAVState->CodecCtx->priv_data, "deadline", "realtime", 0);
+            LogAvError(r1, TEXT("VP9 Enqueue: av_opt_set(deadline)"));
+            int r2 = av_opt_set_int(LibAVState->CodecCtx->priv_data, "lag-in-frames", 0, 0);
+            LogAvError(r2, TEXT("VP9 Enqueue: av_opt_set_int(lag-in-frames)"));
+            int r3 = av_opt_set_int(LibAVState->CodecCtx->priv_data, "cpu-used", 8, 0);
+            LogAvError(r3, TEXT("VP9 Enqueue: av_opt_set_int(cpu-used)"));
+            int64_t EffectiveBitrateKbps = (this && this->TargetBitrateKbps > 0) ? this->TargetBitrateKbps : 512;
+            int64_t EffectiveKeyframeInterval = (this && this->KeyframeInterval > 0) ? this->KeyframeInterval : 128;
+            int r4 = av_opt_set_int(LibAVState->CodecCtx->priv_data, "rc_target_bitrate", (int)EffectiveBitrateKbps, 0);
+            LogAvError(r4, TEXT("VP9 Enqueue: av_opt_set_int(rc_target_bitrate)"));
+            int r5 = av_opt_set_int(LibAVState->CodecCtx->priv_data, "kf-max-dist", (int)EffectiveKeyframeInterval, 0);
+            LogAvError(r5, TEXT("VP9 Enqueue: av_opt_set_int(kf-max-dist)"));
+            LibAVState->CodecCtx->bit_rate = (int64_t)EffectiveBitrateKbps * 1000;
+            LibAVState->CodecCtx->gop_size = (int)EffectiveKeyframeInterval;
+        }
+        UE_LOG(LogTemp, Warning, TEXT("VP9 Enqueue: pre-open: codec=%S id=%d width=%d height=%d pix_fmt=%d (YUV420P=%d) RowPitch Y=%d U=%d V=%d"),
+            LibAVState->Codec ? LibAVState->Codec->name : (const char*)"?",
+            LibAVState->Codec ? (int)LibAVState->Codec->id : -1,
+            LibAVState->CodecCtx->width,
+            LibAVState->CodecCtx->height,
+            LibAVState->CodecCtx->pix_fmt,
+            AV_PIX_FMT_YUV420P,
+            YRowPitch, URowPitch, VRowPitch);
+
+        int openRc = avcodec_open2(LibAVState->CodecCtx, LibAVState->Codec, nullptr);
+        if (openRc < 0)
+        {
+            LogAvError(openRc, TEXT("VP9 Enqueue: avcodec_open2 failed"));
+            if (LibAVState->CodecCtx)
+            {
+                UE_LOG(LogTemp, Error, TEXT("VP9 Enqueue: CodecCtx dump before free: codec=%S id=%d width=%d height=%d pix_fmt=%d threads=%d bit_rate=%lld gop_size=%d max_b_frames=%d profile=%d level=%d"),
+                    LibAVState->Codec ? LibAVState->Codec->name : (const char*)"?",
+                    (int)LibAVState->CodecCtx->codec_id,
+                    LibAVState->CodecCtx->width,
+                    LibAVState->CodecCtx->height,
+                    LibAVState->CodecCtx->pix_fmt,
+                    LibAVState->CodecCtx->thread_count,
+                    (long long)LibAVState->CodecCtx->bit_rate,
+                    LibAVState->CodecCtx->gop_size,
+                    LibAVState->CodecCtx->max_b_frames,
+                    LibAVState->CodecCtx->profile,
+                    LibAVState->CodecCtx->level);
+                UE_LOG(LogTemp, Error, TEXT("VP9 Enqueue: time_base=%d/%d framerate=%d/%d sample_aspect_ratio=%d/%d"),
+                    LibAVState->CodecCtx->time_base.num, LibAVState->CodecCtx->time_base.den,
+                    LibAVState->CodecCtx->framerate.num, LibAVState->CodecCtx->framerate.den,
+                    LibAVState->CodecCtx->sample_aspect_ratio.num, LibAVState->CodecCtx->sample_aspect_ratio.den);
+                UE_LOG(LogTemp, Error, TEXT("VP9 Enqueue: pix_fmt description hint: YUV420P=%d"), AV_PIX_FMT_YUV420P);
+                UE_LOG(LogTemp, Error, TEXT("VP9 Enqueue: CodecCtx priv_data=%p priv_class=%p"), LibAVState->CodecCtx->priv_data, LibAVState->CodecCtx->av_class ? (void*)LibAVState->CodecCtx->av_class : nullptr);
+            }
+            avcodec_free_context(&LibAVState->CodecCtx);
+            av_buffer_unref(&BufY);
+            av_buffer_unref(&BufU);
+            av_buffer_unref(&BufV);
+            return;
+        }
+        UE_LOG(LogTemp, Log, TEXT("ENC init codec=%S w=%d h=%d pix_fmt=%d tb=%d/%d fr=%d/%d gop=%d max_b=%d"),
+            LibAVState->Codec ? LibAVState->Codec->name : "?", LibAVState->CodecCtx->width, LibAVState->CodecCtx->height, LibAVState->CodecCtx->pix_fmt,
+            LibAVState->CodecCtx->time_base.num, LibAVState->CodecCtx->time_base.den,
+            LibAVState->CodecCtx->framerate.num, LibAVState->CodecCtx->framerate.den,
+            LibAVState->CodecCtx->gop_size, LibAVState->CodecCtx->max_b_frames);
+        LibAVState->Width = Width;
+        LibAVState->Height = Height;
+    }
+
+    AVFrame* frame = LibAVState->Frame;
+    if (!frame)
+    {
+        LibAVState->Frame = av_frame_alloc();
+        frame = LibAVState->Frame;
+        if (!frame)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("VP9 Enqueue: av_frame_alloc failed"));
+            av_buffer_unref(&BufY);
+            av_buffer_unref(&BufU);
+            av_buffer_unref(&BufV);
+            return;
+        }
+    }
+    frame->format = AV_PIX_FMT_YUV420P;
+    frame->width = Width;
+    frame->height = Height;
+
+    AVBufferRef* refY = av_buffer_ref(BufY);
+    AVBufferRef* refU = av_buffer_ref(BufU);
+    AVBufferRef* refV = av_buffer_ref(BufV);
+    av_buffer_unref(&BufY);
+    av_buffer_unref(&BufU);
+    av_buffer_unref(&BufV);
+
+    if (!refY || !refU || !refV)
+    {
+        if (refY) av_buffer_unref(&refY);
+        if (refU) av_buffer_unref(&refU);
+        if (refV) av_buffer_unref(&refV);
+        av_frame_unref(frame);
+        return;
+    }
+
+    frame->buf[0] = refY;
+    frame->buf[1] = refU;
+    frame->buf[2] = refV;
+    frame->data[0] = refY->data;
+    frame->data[1] = refU->data;
+    frame->data[2] = refV->data;
+    frame->linesize[0] = YRowPitch;
+    frame->linesize[1] = URowPitch;
+    frame->linesize[2] = VRowPitch;
+
+    static std::atomic<bool> bDumped(false);
+    if (!bDumped.load())
+    {
+        int bufSize = av_image_get_buffer_size(static_cast<AVPixelFormat>(frame->format), frame->width, frame->height, 1);
+        if (bufSize > 0)
+        {
+            TArray<uint8> DumpArray;
+            DumpArray.SetNumUninitialized(bufSize);
+            int copied = av_image_copy_to_buffer(DumpArray.GetData(), bufSize, frame->data, frame->linesize, static_cast<AVPixelFormat>(frame->format), frame->width, frame->height, 1);
+            if (copied > 0)
+            {
+                FString OutPath = FPaths::ProjectSavedDir() / TEXT("synavis_frame_dump.yuv");
+                if (FFileHelper::SaveArrayToFile(DumpArray, *OutPath))
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("Wrote raw YUV frame to %s size=%d"), *OutPath, copied);
+                }
+                else
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("Failed to save dump file %s"), *OutPath);
+                }
+            }
+            else
+            {
+                UE_LOG(LogTemp, Warning, TEXT("av_image_copy_to_buffer failed with %d"), copied);
+            }
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("av_image_get_buffer_size returned %d"), bufSize);
+        }
+        bDumped.store(true);
+    }
+
+    frame->pts = static_cast<int64_t>(++LibAVState->FrameCounter);
+    UE_LOG(LogTemp, Verbose, TEXT("ENC send_frame pts=%lld fmt=%d w=%d h=%d"), (long long)frame->pts, frame->format, frame->width, frame->height);
+    int ret = avcodec_send_frame(LibAVState->CodecCtx, frame);
+    if (ret == AVERROR(EAGAIN)) { UE_LOG(LogTemp, Verbose, TEXT("ENC send_frame: EAGAIN, must drain packets")); av_frame_unref(frame); }
+    else if (ret == AVERROR_EOF) { UE_LOG(LogTemp, Warning, TEXT("ENC send_frame: EOF, encoder flushed")); av_frame_unref(frame); }
+    else if (ret < 0) { LogAvError(ret, TEXT("ENC send_frame error")); av_frame_unref(frame); return; }
+    else
+    {
+        UE_LOG(LogTemp, VeryVerbose, TEXT("ENC send_frame ok"));
+        UE_LOG(LogTemp, Verbose, TEXT("VP9 Enqueue: frame input width=%d height=%d linesize[0]=%d linesize[1]=%d linesize[2]=%d"),
+            frame->width, frame->height, frame->linesize[0], frame->linesize[1], frame->linesize[2]);
+        if (frame->data[0] && frame->linesize[0] > 0)
+        {
+            const int DumpBytes = FMath::Min(16, frame->linesize[0]);
+            UE_LOG(LogTemp, VeryVerbose, TEXT("ENC frame Y[0..15]=%s linesizeY=%d"), *DumpFirstBytes(frame->data[0], DumpBytes), frame->linesize[0]);
+        }
+
+        int packets = 0;
+        for (;;)
+        {
+            int r = avcodec_receive_packet(LibAVState->CodecCtx, LibAVState->Packet);
+            if (r == 0)
+            {
+                ++packets;
+                size_t sz = static_cast<size_t>(LibAVState->Packet->size);
+                UE_LOG(LogTemp, Verbose, TEXT("ENC got packet size=%d pts=%lld dts=%lld flags=%d"), (int)sz, (long long)LibAVState->Packet->pts, (long long)LibAVState->Packet->dts, LibAVState->Packet->flags);
+                if (sz > 0 && sz < 100)
+                {
+                    AVCodecContext* c = LibAVState->CodecCtx;
+                    UE_LOG(LogTemp, Verbose, TEXT("ENC small-pkt state: sz=%d codec=%S w=%d h=%d pix=%d tb=%d/%d fr=%d/%d gop=%d max_b=%d frameCounter=%llu lastPktPts=%lld rtpMult=%f"),
+                        (int)sz,
+                        c && c->codec ? c->codec->name : "?",
+                        c ? c->width : 0,
+                        c ? c->height : 0,
+                        c ? c->pix_fmt : -1,
+                        c ? c->time_base.num : 0, c ? c->time_base.den : 0,
+                        c ? c->framerate.num : 0, c ? c->framerate.den : 0,
+                        c ? c->gop_size : 0, c ? c->max_b_frames : 0,
+                        (unsigned long long)LibAVState->FrameCounter,
+                        (long long)LibAVState->LastPacketPts,
+                        LibAVState->RtpMultiplier);
+                }
+                if (sz > 0 && sz <= 128) { LogHexVerbose(reinterpret_cast<const char*>(LibAVState->Packet->data), (int)sz, TEXT("VP9 Enqueue: pkt hex")); }
+                if (sz == 0) { av_packet_unref(LibAVState->Packet); UE_LOG(LogTemp, Verbose, TEXT("VP9 Enqueue: empty packet received, skip")); continue; }
+                static IFileHandle* IVFHandle = nullptr;
+                static uint32 IVFFrameCount = 0;
+                if (!IVFHandle)
+                {
+                    FString IVFPath = FPaths::ProjectSavedDir() / TEXT("synavis_frame_dump.ivf");
+                    IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+                    IVFHandle = PlatformFile.OpenWrite(*IVFPath, false);
+                    if (IVFHandle)
+                    {
+                        uint8 header[32] = {0};
+                        header[0] = 'D'; header[1] = 'K'; header[2] = 'I'; header[3] = 'F';
+                        header[4] = 0; header[5] = 0;
+                        header[6] = 32; header[7] = 0;
+                        header[8] = 'V'; header[9] = 'P'; header[10] = '9'; header[11] = '0';
+                        header[12] = static_cast<uint8>(LibAVState->CodecCtx->width & 0xFF);
+                        header[13] = static_cast<uint8>((LibAVState->CodecCtx->width >> 8) & 0xFF);
+                        header[14] = static_cast<uint8>(LibAVState->CodecCtx->height & 0xFF);
+                        header[15] = static_cast<uint8>((LibAVState->CodecCtx->height >> 8) & 0xFF);
+                        uint32 frn = 30;
+                        uint32 frd = 1;
+                        header[16] = static_cast<uint8>(frn & 0xFF);
+                        header[17] = static_cast<uint8>((frn >> 8) & 0xFF);
+                        header[18] = static_cast<uint8>((frn >> 16) & 0xFF);
+                        header[19] = static_cast<uint8>((frn >> 24) & 0xFF);
+                        header[20] = static_cast<uint8>(frd & 0xFF);
+                        header[21] = static_cast<uint8>((frd >> 8) & 0xFF);
+                        header[22] = static_cast<uint8>((frd >> 16) & 0xFF);
+                        header[23] = static_cast<uint8>((frd >> 24) & 0xFF);
+                        for (int i = 24; i < 28; ++i) header[i] = 0;
+                        for (int i = 28; i < 32; ++i) header[i] = 0;
+                        IVFHandle->Write(header, 32);
+                        IVFFrameCount = 0;
+                    }
+                }
+                if (IVFHandle)
+                {
+                    uint32_t fsize = static_cast<uint32_t>(LibAVState->Packet->size);
+                    uint64_t fpts = static_cast<uint64_t>(LibAVState->Packet->pts < 0 ? 0 : LibAVState->Packet->pts);
+                    uint8 szbuf[4] = { static_cast<uint8>(fsize & 0xFF), static_cast<uint8>((fsize>>8)&0xFF), static_cast<uint8>((fsize>>16)&0xFF), static_cast<uint8>((fsize>>24)&0xFF) };
+                    uint8 ptsbuf[8];
+                    for (int i = 0; i < 8; ++i) ptsbuf[i] = static_cast<uint8>((fpts >> (8*i)) & 0xFF);
+                    IVFHandle->Write(szbuf, 4);
+                    IVFHandle->Write(ptsbuf, 8);
+                    IVFHandle->Write(reinterpret_cast<const uint8*>(LibAVState->Packet->data), LibAVState->Packet->size);
+                    IVFFrameCount++;
+                }
+
+                TArray<uint8> Vp9Buffer;
+                Vp9Buffer.Append(reinterpret_cast<uint8*>(LibAVState->Packet->data), LibAVState->Packet->size);
+                uint32_t rtpTs = ComputeRtpTimestamp(LibAVState, LibAVState->Packet->pts, LibAVState->CodecCtx->time_base);
+                UE_LOG(LogTemp, Verbose, TEXT("VP9 Enqueue: sending encoded frame %d bytes TS=%u"), Vp9Buffer.Num(), rtpTs);
+                this->SendFrame(MoveTemp(Vp9Buffer), rtpTs, 90000/30, Tracks);
+                av_packet_unref(LibAVState->Packet);
+                continue;
+            }
+            if (r == AVERROR(EAGAIN)) { UE_LOG(LogTemp, VeryVerbose, TEXT("ENC recv_packet: EAGAIN after %d packets"), packets); break; }
+            if (r == AVERROR_EOF) { UE_LOG(LogTemp, Warning, TEXT("ENC recv_packet: EOF after %d packets"), packets); UE_LOG(LogTemp, Log, TEXT("ENC flush complete, encoder drained")); break; }
+            { char ebuf[128] = {0}; av_strerror(r, ebuf, sizeof(ebuf)); UE_LOG(LogTemp, Error, TEXT("ENC recv_packet error: %S (%d) after %d packets"), ebuf, r, packets); break; }
+        }
+        if (packets == 0) UE_LOG(LogTemp, Verbose, TEXT("ENC frame pts=%lld produced no packets this cycle"), (long long)frame->pts);
+        av_frame_unref(frame);
+    }
 }
 
 // Non-blocking enqueue: runs encoding and sending on an async thread so game thread is not blocked.
@@ -741,307 +1026,16 @@ void USynavisVp9SendoffHandler::EnqueueReadbackNonBlocking(FRHIGPUTextureReadbac
             return;
         }
 
-        FScopeLock guard(&LibAVState->Mutex);
-        if (!LibAVState->CodecCtx)
-        {
-            if (!LibAVState->Codec)
-            {
-                av_buffer_unref(&bufY);
-                av_buffer_unref(&bufU);
-                av_buffer_unref(&bufV);
-                return;
-            }
-            LibAVState->CodecCtx = avcodec_alloc_context3(LibAVState->Codec);
-            if (!LibAVState->CodecCtx)
-            {
-                av_buffer_unref(&bufY);
-                av_buffer_unref(&bufU);
-                av_buffer_unref(&bufV);
-                return;
-            }
-            LibAVState->CodecCtx->width = Width;
-            LibAVState->CodecCtx->height = Height;
-            LibAVState->CodecCtx->pix_fmt = AV_PIX_FMT_YUV420P;
-            LibAVState->CodecCtx->time_base = AVRational{1, 30};
-            if (!LibAVState->Packet) LibAVState->Packet = av_packet_alloc();
-            // Apply libvpx tuning options for low-latency debugging (non-hot path)
-            if (LibAVState->CodecCtx && LibAVState->CodecCtx->priv_data)
-            {
-                int r1 = av_opt_set(LibAVState->CodecCtx->priv_data, "deadline", "realtime", 0);
-                LogAvError(r1, TEXT("VP9 Enqueue: av_opt_set(deadline)"));
-                int r2 = av_opt_set_int(LibAVState->CodecCtx->priv_data, "lag-in-frames", 0, 0);
-                LogAvError(r2, TEXT("VP9 Enqueue: av_opt_set_int(lag-in-frames)"));
-                int r3 = av_opt_set_int(LibAVState->CodecCtx->priv_data, "cpu-used", 8, 0);
-                LogAvError(r3, TEXT("VP9 Enqueue: av_opt_set_int(cpu-used)"));
-                // Use configured UPROPERTYs (kbps / frames) when present, otherwise fall back to sensible defaults
-                int64_t EffectiveBitrateKbps = (this && this->TargetBitrateKbps > 0) ? this->TargetBitrateKbps : 512;
-                int64_t EffectiveKeyframeInterval = (this && this->KeyframeInterval > 0) ? this->KeyframeInterval : 128;
-                int r4 = av_opt_set_int(LibAVState->CodecCtx->priv_data, "rc_target_bitrate", (int)EffectiveBitrateKbps, 0);
-                LogAvError(r4, TEXT("VP9 Enqueue: av_opt_set_int(rc_target_bitrate)"));
-                int r5 = av_opt_set_int(LibAVState->CodecCtx->priv_data, "kf-max-dist", (int)EffectiveKeyframeInterval, 0);
-                LogAvError(r5, TEXT("VP9 Enqueue: av_opt_set_int(kf-max-dist)"));
-                // Also set codec context fields as a fallback/default (bit_rate is in bits/sec)
-                LibAVState->CodecCtx->bit_rate = (int64_t)EffectiveBitrateKbps * 1000;
-                LibAVState->CodecCtx->gop_size = (int)EffectiveKeyframeInterval;
-            }
-            UE_LOG(LogTemp, Warning, TEXT("VP9 Enqueue: pre-open: codec=%S id=%d width=%d height=%d pix_fmt=%d (YUV420P=%d) RowPitch Y=%d U=%d V=%d"),
-                LibAVState->Codec ? LibAVState->Codec->name : (const char*)"?",
-                LibAVState->Codec ? (int)LibAVState->Codec->id : -1,
-                LibAVState->CodecCtx->width,
-                LibAVState->CodecCtx->height,
-                LibAVState->CodecCtx->pix_fmt,
-                AV_PIX_FMT_YUV420P,
-                YRowPitch, URowPitch, VRowPitch);
-
-            int openRc = avcodec_open2(LibAVState->CodecCtx, LibAVState->Codec, nullptr);
-            if (openRc < 0)
-            {
-                LogAvError(openRc, TEXT("VP9 Enqueue: avcodec_open2 failed"));
-                // Dump codec context fields to help diagnose invalid-argument failures
-                if (LibAVState->CodecCtx)
-                {
-                    UE_LOG(LogTemp, Error, TEXT("VP9 Enqueue: CodecCtx dump before free: codec=%S id=%d width=%d height=%d pix_fmt=%d threads=%d bit_rate=%lld gop_size=%d max_b_frames=%d profile=%d level=%d"),
-                        LibAVState->Codec ? LibAVState->Codec->name : (const char*)"?",
-                        (int)LibAVState->CodecCtx->codec_id,
-                        LibAVState->CodecCtx->width,
-                        LibAVState->CodecCtx->height,
-                        LibAVState->CodecCtx->pix_fmt,
-                        LibAVState->CodecCtx->thread_count,
-                        (long long)LibAVState->CodecCtx->bit_rate,
-                        LibAVState->CodecCtx->gop_size,
-                        LibAVState->CodecCtx->max_b_frames,
-                        LibAVState->CodecCtx->profile,
-                        LibAVState->CodecCtx->level);
-                    UE_LOG(LogTemp, Error, TEXT("VP9 Enqueue: time_base=%d/%d framerate=%d/%d sample_aspect_ratio=%d/%d"),
-                        LibAVState->CodecCtx->time_base.num, LibAVState->CodecCtx->time_base.den,
-                        LibAVState->CodecCtx->framerate.num, LibAVState->CodecCtx->framerate.den,
-                        LibAVState->CodecCtx->sample_aspect_ratio.num, LibAVState->CodecCtx->sample_aspect_ratio.den);
-                    UE_LOG(LogTemp, Error, TEXT("VP9 Enqueue: pix_fmt description hint: YUV420P=%d"), AV_PIX_FMT_YUV420P);
-                    UE_LOG(LogTemp, Error, TEXT("VP9 Enqueue: CodecCtx priv_data=%p priv_class=%p"), LibAVState->CodecCtx->priv_data, LibAVState->CodecCtx->av_class ? (void*)LibAVState->CodecCtx->av_class : nullptr);
-                }
-                avcodec_free_context(&LibAVState->CodecCtx);
-                av_buffer_unref(&bufY);
-                av_buffer_unref(&bufU);
-                av_buffer_unref(&bufV);
-                return;
-            }
-            UE_LOG(LogTemp, Log, TEXT("ENC init codec=%S w=%d h=%d pix_fmt=%d tb=%d/%d fr=%d/%d gop=%d max_b=%d"),
-                LibAVState->Codec ? LibAVState->Codec->name : "?", LibAVState->CodecCtx->width, LibAVState->CodecCtx->height, LibAVState->CodecCtx->pix_fmt,
-                LibAVState->CodecCtx->time_base.num, LibAVState->CodecCtx->time_base.den,
-                LibAVState->CodecCtx->framerate.num, LibAVState->CodecCtx->framerate.den,
-                LibAVState->CodecCtx->gop_size, LibAVState->CodecCtx->max_b_frames);
-            LibAVState->Width = Width;
-            LibAVState->Height = Height;
-        }
-
-        // Reuse the persistent AVFrame allocated in FLibAVEncoderState when possible.
-        // SynavisStreamer registers a video source and initializes LibAVState->Frame;
-        // allocate only if it's missing to avoid per-frame allocations.
-        AVFrame* frame = LibAVState->Frame;
-        if (!frame)
-        {
-            LibAVState->Frame = av_frame_alloc();
-            frame = LibAVState->Frame;
-            if (!frame)
-            {
-                UE_LOG(LogTemp, Warning, TEXT("VP9 Enqueue: av_frame_alloc failed"));
-                av_buffer_unref(&bufY);
-                av_buffer_unref(&bufU);
-                av_buffer_unref(&bufV);
-                return;
-            }
-        }
-        frame->format = AV_PIX_FMT_YUV420P;
-        frame->width = Width; frame->height = Height;
-
-        AVBufferRef* refY = av_buffer_ref(bufY);
-        AVBufferRef* refU = av_buffer_ref(bufU);
-        AVBufferRef* refV = av_buffer_ref(bufV);
-        av_buffer_unref(&bufY);
-        av_buffer_unref(&bufU);
-        av_buffer_unref(&bufV);
-
-        if (!refY || !refU || !refV)
-        {
-            if (refY) av_buffer_unref(&refY);
-            if (refU) av_buffer_unref(&refU);
-            if (refV) av_buffer_unref(&refV);
-            av_frame_free(&frame);
-            return;
-        }
-
-        frame->buf[0] = refY;
-        frame->buf[1] = refU;
-        frame->buf[2] = refV;
-        frame->data[0] = refY->data;
-        frame->data[1] = refU->data;
-        frame->data[2] = refV->data;
-        frame->linesize[0] = YRowPitch;
-        frame->linesize[1] = URowPitch;
-        frame->linesize[2] = VRowPitch;
-
-        // One-time dump of the tightly-packed YUV420P image to disk for offline analysis.
-        // This writes a single raw .yuv file that can be played with:
-        // ffplay -f rawvideo -pixel_format yuv420p -video_size <W>x<H> synavis_frame_dump.yuv
-        static std::atomic<bool> bDumped(false);
-        if (!bDumped.load())
-        {
-            int bufSize = av_image_get_buffer_size(static_cast<AVPixelFormat>(frame->format), frame->width, frame->height, 1);
-            if (bufSize > 0)
-            {
-                TArray<uint8> DumpArray;
-                DumpArray.SetNumUninitialized(bufSize);
-                int copied = av_image_copy_to_buffer(DumpArray.GetData(), bufSize, frame->data, frame->linesize, static_cast<AVPixelFormat>(frame->format), frame->width, frame->height, 1);
-                if (copied > 0)
-                {
-                    FString OutPath = FPaths::ProjectSavedDir() / TEXT("synavis_frame_dump.yuv");
-                    if (FFileHelper::SaveArrayToFile(DumpArray, *OutPath))
-                    {
-                        UE_LOG(LogTemp, Warning, TEXT("Wrote raw YUV frame to %s size=%d"), *OutPath, copied);
-                    }
-                    else
-                    {
-                        UE_LOG(LogTemp, Warning, TEXT("Failed to save dump file %s"), *OutPath);
-                    }
-                }
-                else
-                {
-                    UE_LOG(LogTemp, Warning, TEXT("av_image_copy_to_buffer failed with %d"), copied);
-                }
-            }
-            else
-            {
-                UE_LOG(LogTemp, Warning, TEXT("av_image_get_buffer_size returned %d"), bufSize);
-            }
-            bDumped.store(true);
-        }
-
-        // Assign a monotonic PTS to help encoders that require/expect timestamps
-        frame->pts = static_cast<int64_t>(++LibAVState->FrameCounter);
-        UE_LOG(LogTemp, Verbose, TEXT("ENC send_frame pts=%lld fmt=%d w=%d h=%d"), (long long)frame->pts, frame->format, frame->width, frame->height);
-        int ret = avcodec_send_frame(LibAVState->CodecCtx, frame);
-        if (ret == AVERROR(EAGAIN)) { UE_LOG(LogTemp, Verbose, TEXT("ENC send_frame: EAGAIN, must drain packets")); av_frame_unref(frame); }
-        else if (ret == AVERROR_EOF) { UE_LOG(LogTemp, Warning, TEXT("ENC send_frame: EOF, encoder flushed")); av_frame_unref(frame); }
-        else if (ret < 0) { LogAvError(ret, TEXT("ENC send_frame error")); av_frame_unref(frame); return; }
-        else
-        {
-            UE_LOG(LogTemp, VeryVerbose, TEXT("ENC send_frame ok"));
-            UE_LOG(LogTemp, Verbose, TEXT("VP9 Enqueue: frame input width=%d height=%d linesize[0]=%d linesize[1]=%d linesize[2]=%d"),
-                frame->width, frame->height, frame->linesize[0], frame->linesize[1], frame->linesize[2]);
-            if (frame->data[0] && frame->linesize[0] > 0)
-            {
-                const int DumpBytes = FMath::Min(16, frame->linesize[0]);
-                UE_LOG(LogTemp, VeryVerbose, TEXT("ENC frame Y[0..15]=%s linesizeY=%d"), *DumpFirstBytes(frame->data[0], DumpBytes), frame->linesize[0]);
-            }
-
-            int packets = 0;
-            for (;;)
-            {
-                int r = avcodec_receive_packet(LibAVState->CodecCtx, LibAVState->Packet);
-                if (r == 0)
-                {
-                    ++packets;
-                    size_t sz = static_cast<size_t>(LibAVState->Packet->size);
-                    UE_LOG(LogTemp, Verbose, TEXT("ENC got packet size=%d pts=%lld dts=%lld flags=%d"), (int)sz, (long long)LibAVState->Packet->pts, (long long)LibAVState->Packet->dts, LibAVState->Packet->flags);
-                    if (sz > 0 && sz < 100)
-                    {
-                        AVCodecContext* c = LibAVState->CodecCtx;
-                        UE_LOG(LogTemp, Verbose, TEXT("ENC small-pkt state: sz=%d codec=%S w=%d h=%d pix=%d tb=%d/%d fr=%d/%d gop=%d max_b=%d frameCounter=%llu lastPktPts=%lld rtpMult=%f"),
-                            (int)sz,
-                            c && c->codec ? c->codec->name : "?",
-                            c ? c->width : 0,
-                            c ? c->height : 0,
-                            c ? c->pix_fmt : -1,
-                            c ? c->time_base.num : 0, c ? c->time_base.den : 0,
-                            c ? c->framerate.num : 0, c ? c->framerate.den : 0,
-                            c ? c->gop_size : 0, c ? c->max_b_frames : 0,
-                            (unsigned long long)LibAVState->FrameCounter,
-                            (long long)LibAVState->LastPacketPts,
-                            LibAVState->RtpMultiplier);
-                    }
-                    if (sz > 0 && sz <= 128) { LogHexVerbose(reinterpret_cast<const char*>(LibAVState->Packet->data), (int)sz, TEXT("VP9 Enqueue: pkt hex")); }
-                    if (sz == 0) { av_packet_unref(LibAVState->Packet); UE_LOG(LogTemp, Verbose, TEXT("VP9 Enqueue: empty packet received, skip")); continue; }
-                    // Optionally write IVF file for offline decoding/inspection.
-                    static IFileHandle* IVFHandle = nullptr;
-                    static uint32 IVFFrameCount = 0;
-                    if (!IVFHandle)
-                    {
-                        FString IVFPath = FPaths::ProjectSavedDir() / TEXT("synavis_frame_dump.ivf");
-                        IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
-                        // Create/overwrite
-                        IVFHandle = PlatformFile.OpenWrite(*IVFPath, /*bAppend=*/false);
-                        if (IVFHandle)
-                        {
-                            // Build IVF header
-                            uint8 header[32] = {0};
-                            // signature 'DKIF'
-                            header[0] = 'D'; header[1] = 'K'; header[2] = 'I'; header[3] = 'F';
-                            // version 0
-                            header[4] = 0; header[5] = 0;
-                            // header length = 32
-                            header[6] = 32; header[7] = 0;
-                            // fourcc 'VP90'
-                            header[8] = 'V'; header[9] = 'P'; header[10] = '9'; header[11] = '0';
-                            // width (16-bit little endian)
-                            header[12] = static_cast<uint8>(LibAVState->CodecCtx->width & 0xFF);
-                            header[13] = static_cast<uint8>((LibAVState->CodecCtx->width >> 8) & 0xFF);
-                            // height (16-bit little endian)
-                            header[14] = static_cast<uint8>(LibAVState->CodecCtx->height & 0xFF);
-                            header[15] = static_cast<uint8>((LibAVState->CodecCtx->height >> 8) & 0xFF);
-                            // framerate numerator/denominator (use 30/1 as default)
-                            uint32 frn = 30; uint32 frd = 1;
-                            header[16] = static_cast<uint8>(frn & 0xFF);
-                            header[17] = static_cast<uint8>((frn >> 8) & 0xFF);
-                            header[18] = static_cast<uint8>((frn >> 16) & 0xFF);
-                            header[19] = static_cast<uint8>((frn >> 24) & 0xFF);
-                            header[20] = static_cast<uint8>(frd & 0xFF);
-                            header[21] = static_cast<uint8>((frd >> 8) & 0xFF);
-                            header[22] = static_cast<uint8>((frd >> 16) & 0xFF);
-                            header[23] = static_cast<uint8>((frd >> 24) & 0xFF);
-                            // frame count left zero (can be patched later)
-                            for (int i = 24; i < 28; ++i) header[i] = 0;
-                            // reserved
-                            for (int i = 28; i < 32; ++i) header[i] = 0;
-                            IVFHandle->Write(header, 32);
-                            IVFFrameCount = 0;
-                        }
-                    }
-                    if (IVFHandle)
-                    {
-                        // Write frame header: 4-byte size (LE), 8-byte pts (LE)
-                        uint32_t fsize = static_cast<uint32_t>(LibAVState->Packet->size);
-                        uint64_t fpts = static_cast<uint64_t>(LibAVState->Packet->pts < 0 ? 0 : LibAVState->Packet->pts);
-                        uint8 szbuf[4] = { static_cast<uint8>(fsize & 0xFF), static_cast<uint8>((fsize>>8)&0xFF), static_cast<uint8>((fsize>>16)&0xFF), static_cast<uint8>((fsize>>24)&0xFF) };
-                        uint8 ptsbuf[8];
-                        for (int i = 0; i < 8; ++i) ptsbuf[i] = static_cast<uint8>((fpts >> (8*i)) & 0xFF);
-                        IVFHandle->Write(szbuf, 4);
-                        IVFHandle->Write(ptsbuf, 8);
-                        IVFHandle->Write(reinterpret_cast<const uint8*>(LibAVState->Packet->data), LibAVState->Packet->size);
-                        IVFFrameCount++;
-                    }
-
-                    TArray<uint8> Vp9Buffer;
-                    Vp9Buffer.Append(reinterpret_cast<uint8*>(LibAVState->Packet->data), LibAVState->Packet->size);
-                    uint32_t rtpTs = ComputeRtpTimestamp(LibAVState, LibAVState->Packet->pts, LibAVState->CodecCtx->time_base);
-                    UE_LOG(LogTemp, Verbose, TEXT("VP9 Enqueue: sending encoded frame %d bytes TS=%u"), Vp9Buffer.Num(), rtpTs);
-                    this->SendFrame(MoveTemp(Vp9Buffer), rtpTs, 90000/30, Tracks);
-                    av_packet_unref(LibAVState->Packet);
-                    continue;
-                }
-                if (r == AVERROR(EAGAIN)) { UE_LOG(LogTemp, VeryVerbose, TEXT("ENC recv_packet: EAGAIN after %d packets"), packets); break; }
-                if (r == AVERROR_EOF) { UE_LOG(LogTemp, Warning, TEXT("ENC recv_packet: EOF after %d packets"), packets); UE_LOG(LogTemp, Log, TEXT("ENC flush complete, encoder drained")); break; }
-                { char ebuf[128] = {0}; av_strerror(r, ebuf, sizeof(ebuf)); UE_LOG(LogTemp, Error, TEXT("ENC recv_packet error: %S (%d) after %d packets"), ebuf, r, packets); break; }
-            }
-            if (packets == 0) UE_LOG(LogTemp, Verbose, TEXT("ENC frame pts=%lld produced no packets this cycle"), (long long)frame->pts);
-            av_frame_unref(frame);
-        }
+        this->EncodeAndSendYuv420Buffers(bufY, bufU, bufV, Width, Height, YRowPitch, URowPitch, VRowPitch, Tracks, LibAVState);
     });
 }
 
 // Non-blocking queue using FFMpeg to accept RGB frames
 void USynavisVp9SendoffHandler::EnqueueSoftwareNonBlocking(const TArrayView<const FColor>& RgbData, int Width, int Height, const TArray<int32>& TargetTracks, FLibAVEncoderState* LibAVState)
 {
-  Async(EAsyncExecution::Thread, [Data = std::move(RgbData), Width, Height, TargetTracks, LibAVState]()
+    TArray<FColor> OwnedRgb;
+    OwnedRgb.Append(RgbData.GetData(), RgbData.Num());
+        Async(EAsyncExecution::Thread, [OwnedRgb, Width, Height, TargetTracks, LibAVState, this]()
   {
     // Convert RGB to YUV420P using libavutil's swscale for testing/debugging purposes.
     // This is a non-optimized path just to verify the encoder can accept frames in the expected format.
@@ -1053,14 +1047,14 @@ void USynavisVp9SendoffHandler::EnqueueSoftwareNonBlocking(const TArrayView<cons
         sws_freeContext(ctx);
       }
     };
-    TUniquePtr<SwsContext, SwsContextDeleter> SwsCtx(sws_getContext(Width, Height, AV_PIX_FMT_RGB24, Width, Height, AV_PIX_FMT_YUV420P, SWS_BILINEAR, nullptr, nullptr, nullptr));
+    TUniquePtr<SwsContext, SwsContextDeleter> SwsCtx(sws_getContext(Width, Height, AV_PIX_FMT_BGRA, Width, Height, AV_PIX_FMT_YUV420P, SWS_BILINEAR, nullptr, nullptr, nullptr));
     if (!SwsCtx)
     {
       UE_LOG(LogTemp, Warning, TEXT("Failed to create SwsContext for RGB->YUV conversion")); return;
     }
     // Prepare source data pointers and strides
-    const uint8_t* SrcData[1] = { reinterpret_cast<const uint8_t*>(Data.GetData()) };
-    int SrcLinesize[1] = { Width * 3 }; // FColor is 4 bytes but we use only RGB
+    const uint8_t* SrcData[1] = { reinterpret_cast<const uint8_t*>(OwnedRgb.GetData()) };
+    int SrcLinesize[1] = { Width * 4 };
     // Allocate destination buffers for YUV420P
     int UVW = (Width + 1) / 2;
     int UVH = (Height + 1) / 2;
@@ -1076,7 +1070,21 @@ void USynavisVp9SendoffHandler::EnqueueSoftwareNonBlocking(const TArrayView<cons
       return;
     }
     UE_LOG(LogTemp, Log, TEXT("RGB->YUV conversion successful: input %dx%d stride=%d output Y stride=%d U/V stride=%d"), Width, Height, SrcLinesize[0], DstLinesize[0], DstLinesize[1]);
-    // The rest of the encoding process is the same as in EnqueueRDGReadbackNonBlocking, so we can reuse that code by calling a helper function.
-    EnqueueYUV420PNonBlocking(YPlane, UPlane, VPlane, Width, Height, TargetTracks, LibAVState);
+        AVBufferRef* BufY = av_buffer_alloc(YPlane.Num());
+        AVBufferRef* BufU = av_buffer_alloc(UPlane.Num());
+        AVBufferRef* BufV = av_buffer_alloc(VPlane.Num());
+        if (!BufY || !BufU || !BufV)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Failed to allocate AVBuffers for software YUV420P frame"));
+            if (BufY) av_buffer_unref(&BufY);
+            if (BufU) av_buffer_unref(&BufU);
+            if (BufV) av_buffer_unref(&BufV);
+            return;
+        }
+
+        FMemory::Memcpy(BufY->data, YPlane.GetData(), YPlane.Num());
+        FMemory::Memcpy(BufU->data, UPlane.GetData(), UPlane.Num());
+        FMemory::Memcpy(BufV->data, VPlane.GetData(), VPlane.Num());
+        this->EncodeAndSendYuv420Buffers(BufY, BufU, BufV, Width, Height, Width, UVW, UVW, TargetTracks, LibAVState);
   });
 }
