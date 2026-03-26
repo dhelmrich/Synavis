@@ -1,0 +1,30 @@
+{
+  "Backend": {
+    "Type": "Adios2"
+  },
+  "Adios2": {
+    "EngineType": "sst",
+    "FilenamePrefix": "synavis_output",
+    "IOName": "AdiosIO",
+    "VariableName": "SynavisData",
+    "Mode": "Write"
+  },
+  "SSTSettings": {
+    "Port": 0,
+    "NetworkInterface": "",
+    "Multicast": {
+      "Enabled": false,
+      "Address": "",
+      "Port": 0
+    }
+  },
+  "DataTransfer": {
+    "FrameEncoding": "raw",
+    "JSONMessages": true,
+    "Bidirectional": true
+  },
+  "Streaming": {
+    "AutoStart": false,
+    "BufferSizeMB": 1024
+  }
+}

@@ -48,16 +48,20 @@ while [[ $# -gt 0 ]]; do
       PYTHON_ONLY=true; shift;;
     --copy-libdatachannel)
       SKIP_COPY_LIBDATACHANNEL=false; shift;;
+    --install-adios2)
+      INSTALL_ADIOS2=true; shift;;
+    --adios2-root)
+      ADIOS2_ROOT="$2"; shift 2;;
     --clang) USE_CLANG=true; shift;;
     -h|--help)
-      echo "Usage: $0 [-d builddir] [-t buildtype] [-e deletebuild] [-j nproc] [-c activate_decoding] [-B basedir] [-v verbosity] [-p cplantbox_location] [-x vcpkg_toolchain] [--clang]"
+      echo "Usage: $0 [-d builddir] [-t buildtype] [-e deletebuild] [-j nproc] [-c activate_decoding] [-B basedir] [-v verbosity] [-p cplantbox_location] [-x vcpkg_toolchain] [--install-adios2] [--adios2-root] [--clang]"
       echo "  -d builddir       Specify the build directory name (default: build)"
       echo "  -t buildtype      Specify the build type (default: Release)"
       echo "  -e deletebuild    Delete the build directory after building (default: false, accepts optional true/false)"
       echo "  -j nproc          Specify the number of processes to use for building (default: nproc - 1)"
       echo "  -c activate_decoding  Activate decoding (default: false, accepts optional true/false)"
       echo "  -B basedir        Specify the base directory (default: current directory)"
-      echo "  -v verbosity      Enable verbose logging (default: false)"
+      echo "  -v verbosity      Enable verbose logging (default: false, pass 'true' to enable)"
       echo "  -p cplantbox_location  Specify the location of cplantbox (default: not set)"
       echo "  -x, --vcpkg       Path to vcpkg's buildsystems/vcpkg.cmake (project expects this in VCPKG_CMAKE_PATH)"
       echo "  --clang           Use clang as the C/C++ compiler"
@@ -113,6 +117,10 @@ LIBDATACHANNEL_BUILD_TESTS="-DLIBDATACHANNEL_BUILD_TESTS=Off"
 LIBDATACHANNEL_BUILD_EXAMPLES="-DLIBDATACHANNEL_BUILD_EXAMPLES=Off"
 LIBDATACHANNEL_SETTINGS="-DENABLE_DEBUG_LOGGING=On -DENABLE_LOCALHOST_ADDRESS=On -DENABLE_LOCAL_ADDRESS_TRANSLATION=On"
 
+# default build flags (non-verbose)
+BUILD_FLAGS="-j $nproc"
+BUILD_FLAGS_QUIET="--quiet"
+
 # basic stuff
 PYTHON_INCLUDE_DIRS=$(python3 -c "from distutils.sysconfig import get_python_inc; print(get_python_inc())")
 PYTHON_LIBRARY=$(python -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR'))")
@@ -126,7 +134,7 @@ if [ "$ACTIVATE_DECODING" = true ] ; then
 fi
 
 #cmake verbose option
-CMAKE_VERBOSE="-DCMAKE_VERBOSE_MAKEFILE=On"
+# CMAKE_VERBOSE="-DCMAKE_VERBOSE_MAKEFILE=On"
 
 # Build with apps (default On). If python-only is requested, turn apps off to speed up build.
 SYNAVIS_APPBUILD="-DBUILD_WITH_APPS=On"
@@ -140,6 +148,7 @@ CMAKE_VERBOSE_LOGGING=""
 if [ "$VERBOSITY" = true ] ; then
   echo "Enabling verbose logging"
   CMAKE_VERBOSE_LOGGING="-DCMAKE_VERBOSE_MAKEFILE=On"
+  BUILD_FLAGS_QUIET=""
 fi
 
 CPLANTBOX_DIR_OPTION=""
@@ -166,7 +175,63 @@ if [ -n "$VCPKG_TOOLCHAIN" ]; then
   VCPKG_TOOLCHAIN_OPTION="-DCMAKE_TOOLCHAIN_FILE=$VCPKG_TOOLCHAIN -DVCPKG_CMAKE_PATH=$VCPKG_TOOLCHAIN"
 fi
 
-# SKIP_COPY_LIBDATACHANNEL cmake option - default is On (skip). If the
+# Install ADIOS2 BEFORE configure if --install-adios2 is set and no ADIOS2_ROOT provided
+if [ "$INSTALL_ADIOS2" = true ] && [ -z "$ADIOS2_ROOT" ]; then
+  DEST_ADIOS2_DIR="$ABS_BUILDDIR/adios2_install"
+  mkdir -p "$DEST_ADIOS2_DIR/include"
+  mkdir -p "$DEST_ADIOS2_DIR/lib"
+  
+  # Try to install via vcpkg if available
+  # VCPKG_TOOLCHAIN is expected to be the vcpkg root directory
+  VCPKG_EXE=$(command -v vcpkg 2>/dev/null || true)
+  if [ -z "$VCPKG_EXE" ] && [ -n "$VCPKG_TOOLCHAIN" ] && [ -f "$VCPKG_TOOLCHAIN/vcpkg" ]; then
+    VCPKG_EXE="$VCPKG_TOOLCHAIN/vcpkg"
+  fi
+  
+  if [ -n "$VCPKG_EXE" ]; then
+    echo "vcpkg found at $VCPKG_EXE; installing adios2[mpi] via vcpkg"
+    "$VCPKG_EXE" install adios2[mpi] --recurse
+    VCPKG_ROOT=$(dirname "$(dirname "$VCPKG_EXE")")
+    # Find an installed triplet that contains adios2 headers
+    TRIPLET_DIR=""
+    for t in "$VCPKG_ROOT"/installed/*; do
+      if [ -d "$t/include" ] && ( [ -f "$t/include/adios2.h" ] || [ -d "$t/include/adios2" ] ); then
+        TRIPLET_DIR="$t"
+        break
+      fi
+    done
+    if [ -n "$TRIPLET_DIR" ]; then
+      echo "Copying ADIOS2 headers from $TRIPLET_DIR/include to $DEST_ADIOS2_DIR/include"
+      rsync -a --delete "$TRIPLET_DIR/include/" "$DEST_ADIOS2_DIR/include/"
+      if [ -d "$TRIPLET_DIR/lib" ]; then
+        echo "Copying ADIOS2 libs from $TRIPLET_DIR/lib to $DEST_ADIOS2_DIR/lib"
+        find "$TRIPLET_DIR/lib" -maxdepth 1 -type f \( -name 'libadios2.so*' -o -name 'libadios2.a' \) -exec cp -v --preserve=mode,timestamps {} "$DEST_ADIOS2_DIR/lib/" \;
+      fi
+      ADIOS2_ROOT="$DEST_ADIOS2_DIR"
+    else
+      echo "Could not locate adios2 files in vcpkg installed tree; please provide ADIOS2_ROOT or install ADIOS2 system-wide."
+      exit 1
+    fi
+  else
+    echo "vcpkg not found; cannot install ADIOS2 automatically. Please install ADIOS2 or provide --adios2-root."
+    exit 1
+  fi
+fi
+
+# ADIOS2 CMake options
+ADIOS2_ROOT_OPTION=""
+if [ -n "$ADIOS2_ROOT" ]; then
+  echo "Using ADIOS2 root: $ADIOS2_ROOT"
+  ADIOS2_ROOT_OPTION="-DADIOS2_ROOT=$ADIOS2_ROOT"
+fi
+
+if [ "$INSTALL_ADIOS2" = true ]; then
+  SKIP_INSTALL_ADIOS2_OPTION="-DSYNAVIS_SKIP_INSTALL_ADIOS2=Off"
+else
+  SKIP_INSTALL_ADIOS2_OPTION="-DSYNAVIS_SKIP_INSTALL_ADIOS2=On"
+fi
+
+# SKIP_COPY_LIBDATACHANEL cmake option - default is On (skip). If the
 # user passed --copy-libdatachannel we disable the skip (Off) so that
 # the deploy step can run.
 SKIP_COPY_OPTION="-DSKIP_COPY_LIBDATACHANNEL=On"
@@ -175,14 +240,14 @@ if [ "$SKIP_COPY_LIBDATACHANNEL" = false ]; then
 fi
 
 # configure
-cmake -H"$DIR" -B"$ABS_BUILDDIR" -DCMAKE_BUILD_TYPE=$BUILDTYPE -G "$GENERATOR" $LIBDATACHANNEL_VERBOSELOGGING $LIBDATACHANNEL_BUILD_TESTS $LIBDATACHANNEL_BUILD_EXAMPLES $LIBDATACHANNEL_SETTINGS $DECODING -DPYTHON_INCLUDE_DIR=$PYTHON_INCLUDE_DIRS -DPYTHON_LIBRARY=$PYTHON_LIBRARY $SYNAVIS_APPBUILD $CMAKE_VERBOSE_LOGGING $CPLANTBOX_DIR_OPTION $VCPKG_TOOLCHAIN_OPTION $CMAKEOPT $SKIP_COPY_OPTION
+cmake -H"$DIR" -B"$ABS_BUILDDIR" -DCMAKE_BUILD_TYPE=$BUILDTYPE -G "$GENERATOR" $LIBDATACHANNEL_BUILD_TESTS $LIBDATACHANNEL_BUILD_EXAMPLES $LIBDATACHANNEL_SETTINGS $DECODING -DPYTHON_INCLUDE_DIR=$PYTHON_INCLUDE_DIRS -DPYTHON_LIBRARY=$PYTHON_LIBRARY $SYNAVIS_APPBUILD $CMAKE_VERBOSE_LOGGING $CPLANTBOX_DIR_OPTION $VCPKG_TOOLCHAIN_OPTION $CMAKEOPT $SKIP_COPY_OPTION $ADIOS2_ROOT_OPTION $SKIP_INSTALL_ADIOS2_OPTION
 
 # build
 if [ "$PYTHON_ONLY" = true ] ; then
   # Build only the Python target to save time
-  cmake --build "$ABS_BUILDDIR" --target PySynavis -- -j $nproc
+  cmake --build "$ABS_BUILDDIR" --target PySynavis -- $BUILD_FLAGS $BUILD_FLAGS_QUIET
 else
-  cmake --build "$ABS_BUILDDIR" -- -j $nproc
+  cmake --build "$ABS_BUILDDIR" -- $BUILD_FLAGS $BUILD_FLAGS_QUIET
 fi
 
 # Deploy libdatachannel headers and libs into SynavisBackend plugin layout (Unix)
@@ -222,4 +287,23 @@ if [ "$SKIP_COPY_LIBDATACHANNEL" = false ]; then
   fi
 else
   echo "Skipping libdatachannel deploy (default). Use --copy-libdatachannel to enable."
+fi
+
+# Deploy ADIOS2 headers/libs into SynavisBackend plugin layout (Unix)
+DEST_ADIOS2_DIR="$DIR/SynavisBackend/Source/adios2"
+if [ "$INSTALL_ADIOS2" = true ] || [ -n "$ADIOS2_ROOT" ]; then
+  echo "Preparing SynavisBackend ADIOS2 layout at: $DEST_ADIOS2_DIR"
+  mkdir -p "$DEST_ADIOS2_DIR/include"
+  mkdir -p "$DEST_ADIOS2_DIR/lib"
+
+  if [ -n "$ADIOS2_ROOT" ] && [ -d "$ADIOS2_ROOT" ]; then
+    echo "Copying ADIOS2 headers from $ADIOS2_ROOT/include to $DEST_ADIOS2_DIR/include"
+    rsync -a --delete "$ADIOS2_ROOT/include/" "$DEST_ADIOS2_DIR/include/"
+    if [ -d "$ADIOS2_ROOT/lib" ]; then
+      echo "Copying ADIOS2 libs from $ADIOS2_ROOT/lib to $DEST_ADIOS2_DIR/lib"
+      find "$ADIOS2_ROOT/lib" -maxdepth 1 -type f \( -name 'libadios2.so*' -o -name 'libadios2.a' -o -name 'adios2.lib' -o -name 'adios2.dll' \) -exec cp -v --preserve=mode,timestamps {} "$DEST_ADIOS2_DIR/lib/" \;
+    fi
+  fi
+else
+  echo "Skipping ADIOS2 deploy. Use --install-adios2 or --adios2-root to enable." 
 fi
