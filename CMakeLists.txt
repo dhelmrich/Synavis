@@ -257,14 +257,17 @@ if(NOT TARGET pybind11_json)
     FetchContent_Declare(
         pybind11_json
         GIT_REPOSITORY https://github.com/pybind/pybind11_json.git
-        GIT_TAG        0.2.13
+        GIT_TAG        0.2.15
         GIT_SHALLOW True
     )
     message(STATUS " Declaring FetchContent for pybind11_json (may fetch from internet)")
-    FetchContent_GetProperties(pybind11_json)
-    if(NOT pybind11_json_POPULATED)
-      message(STATUS " Making pybind11_json available (fetching/building as needed)")
-      FetchContent_MakeAvailable(pybind11_json)
+    FetchContent_MakeAvailable(pybind11_json)
+    # pybind11_json is header-only; explicitly set include directory
+    get_property(pybind11_json_include_dir TARGET pybind11_json PROPERTY INTERFACE_INCLUDE_DIRECTORIES)
+    if(NOT pybind11_json_include_dir)
+      set_target_properties(pybind11_json PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_BINARY_DIR}/_deps/pybind11_json-src/include"
+      )
     endif()
   else()
     message(STATUS "Found pybind11_json v${pybind11_json_VERSION}: ${pybind11_json_INCLUDE_DIRS}")
@@ -278,6 +281,23 @@ add_subdirectory(externtest)
 if(BUILD_WITH_APPS)
   message(STATUS " Adding native_modules subdirectory (apps build enabled)")
   add_subdirectory(native_modules)
+endif()
+
+# ADIOS2 support: attempt to detect system ADIOS2 or use provided ADIOS2_ROOT
+option(SYNAVIS_ENABLE_ADIOS2_EXAMPLE "Build ADIOS2 example application" OFF)
+find_package(ADIOS2 CONFIG QUIET)
+if(ADIOS2_FOUND)
+  message(STATUS "ADIOS2: System (found by find_package) - ADIOS2_AVAILABLE=System")
+elseif(DEFINED ADIOS2_ROOT)
+  message(STATUS "ADIOS2: Local (ADIOS2_ROOT provided) - ADIOS2_AVAILABLE=Local")
+else()
+  message(STATUS "ADIOS2: Disabled - pass -DADIOS2_ROOT=<path> or install system ADIOS2")
+endif()
+
+# Add ADIOS example if requested or if ADIOS2 is available
+if(SYNAVIS_ENABLE_ADIOS2_EXAMPLE OR ADIOS2_FOUND OR DEFINED ADIOS2_ROOT)
+  message(STATUS "Adding ADIOS2 example subdirectory")
+  add_subdirectory(synavis/adios)
 endif()
 
 

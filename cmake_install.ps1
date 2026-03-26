@@ -20,6 +20,8 @@ param(
     [switch]$ExportLibraries = $false,
     [switch]$NoBuild = $false,
     [switch]$PythonOnly = $false,
+    [switch]$InstallAdios2 = $false,
+    [string]$Adios2Root = "",
     [switch]$Help
 )
 
@@ -178,6 +180,22 @@ $CMakeCmd = @(
     $CPlantBoxDirOption,
     $VcpkgToolchainOption
 ) -join " "
+
+# ADIOS2 options
+$Adios2RootOption = ""
+if ($Adios2Root -ne "") {
+    Write-Host "Using provided ADIOS2 root: $Adios2Root"
+    $Adios2RootOption = "-DADIOS2_ROOT=$Adios2Root"
+}
+
+if ($InstallAdios2) {
+    $SkipAdiosOption = "-DSYNAVIS_SKIP_INSTALL_ADIOS2=Off"
+} else {
+    $SkipAdiosOption = "-DSYNAVIS_SKIP_INSTALL_ADIOS2=On"
+}
+
+# Append ADIOS2 options to CMake command
+$CMakeCmd = $CMakeCmd + " " + $Adios2RootOption + " " + $SkipAdiosOption
 
 Write-Host "Running: $CMakeCmd"
 Invoke-Expression $CMakeCmd
@@ -369,6 +387,56 @@ if (-not $NoBuild) {
         }
         Write-Host "libdatachannel export (copy) completed."
     }
+
+        # ADIOS2 export/copy into SynavisBackend (when requested)
+        if ($InstallAdios2 -or $Adios2Root -ne "") {
+            Write-Host "Preparing SynavisBackend ADIOS2 layout..."
+            $SynavisBackendRoot = Join-Path $BaseDir "SynavisBackend"
+            $DestAdiosInclude = Join-Path $SynavisBackendRoot "Source\adios2\include"
+            $DestAdiosLib = Join-Path $SynavisBackendRoot "Source\adios2\lib"
+            if (!(Test-Path $DestAdiosInclude)) { New-Item -ItemType Directory -Path $DestAdiosInclude -Force | Out-Null }
+            if (!(Test-Path $DestAdiosLib)) { New-Item -ItemType Directory -Path $DestAdiosLib -Force | Out-Null }
+
+            if ($Adios2Root -ne "" -and (Test-Path $Adios2Root)) {
+                Write-Host "Copying ADIOS2 headers from $Adios2Root/include to $DestAdiosInclude"
+                Copy-Item -Path (Join-Path $Adios2Root "include\*") -Destination $DestAdiosInclude -Recurse -Force -ErrorAction SilentlyContinue
+                $srcLib = Join-Path $Adios2Root "lib"
+                if (Test-Path $srcLib) {
+                    Write-Host "Copying ADIOS2 libs from $srcLib to $DestAdiosLib"
+                    Get-ChildItem -Path $srcLib -Filter "*adios2*" -File -ErrorAction SilentlyContinue | ForEach-Object { Copy-Item $_.FullName -Destination $DestAdiosLib -Force -ErrorAction SilentlyContinue }
+                }
+            }
+            else {
+                # Try vcpkg installation if requested
+                $vcpkgCmd = Get-Command vcpkg -ErrorAction SilentlyContinue
+                if ($InstallAdios2 -and $vcpkgCmd) {
+                    Write-Host "Installing adios2[mpi] via vcpkg..."
+                    & vcpkg install adios2[mpi]
+                    $VcpkgRoot = Split-Path $vcpkgCmd.Source -Parent
+                    # find installed triplet that contains adios2 headers
+                    $installed = Join-Path $VcpkgRoot "installed"
+                    $found = $false
+                    Get-ChildItem -Path $installed -Directory | ForEach-Object {
+                        $inc = Join-Path $_.FullName "include"
+                        if (Test-Path (Join-Path $inc "adios2.h") -or Test-Path (Join-Path $inc "adios2")) {
+                            Write-Host "Copying ADIOS2 headers from $inc to $DestAdiosInclude"
+                            Copy-Item -Path (Join-Path $inc "*") -Destination $DestAdiosInclude -Recurse -Force -ErrorAction SilentlyContinue
+                            $libdir = Join-Path $_.FullName "lib"
+                            if (Test-Path $libdir) {
+                                Write-Host "Copying ADIOS2 libs from $libdir to $DestAdiosLib"
+                                Get-ChildItem -Path $libdir -Filter "*adios2*" -File -ErrorAction SilentlyContinue | ForEach-Object { Copy-Item $_.FullName -Destination $DestAdiosLib -Force -ErrorAction SilentlyContinue }
+                            }
+                            $found = $true
+                        }
+                    }
+                    if (-not $found) { Write-Warning "Could not locate adios2 in vcpkg installed tree; provide ADIOS2 root or install system-wide." }
+                }
+                else {
+                    Write-Host "Skipping ADIOS2 export: neither ADIOS2_ROOT provided nor vcpkg installation enabled."
+                }
+            }
+            Write-Host "ADIOS2 export/copy completed."
+        }
 
 
 } else {

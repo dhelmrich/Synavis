@@ -1,0 +1,15 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "1.0",
+  "FriendlyName": "Synavis Adios2 Backend",
+  "Description": "Adios2-based backend for Synavis - plugin skeleton (no ADIOS2 dependency yet).",
+  "Category": "Synavis",
+  "Modules": [
+    {
+      "Name": "Adios2Backend",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    }
+  ]
+}

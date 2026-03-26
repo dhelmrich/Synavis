@@ -14,7 +14,7 @@
 #include <pybind11/cast.h>
 #include <pybind11/iostream.h>
 #include <pybind11/stl_bind.h>
-#include <pybind11_json.hpp>
+#include <pybind11_json/pybind11_json.hpp>
 
 #include "DataConnector.hpp"
 #include "MediaReceiver.hpp"
@@ -228,6 +228,7 @@ namespace Synavis
       .export_values()
     ;
 
+#ifdef BUILD_WITH_DECODING
     // Expose decoded frame container so Python callbacks can accept it directly
     py::class_<Synavis::FrameContent>(m, "FrameContent")
       .def(py::init<>())
@@ -240,6 +241,8 @@ namespace Synavis
       .def_readwrite("Packed", &Synavis::FrameContent::Packed)
     ;
 
+    m.def("RegisterAvLogCallback", &Synavis::RegisterAvLogCallback, py::arg("useSynavisLogging") = false);
+#endif
     
     py::class_<rtc::PeerConnection> (m, "PeerConnection")
     ;
@@ -254,7 +257,9 @@ namespace Synavis
     m.def("VerboseMode", &VerboseMode, py::arg("useSynavisLogging") = false);
     m.def("SilentMode", &SilentMode);
     m.def("ExitWithMessage", &ExitWithMessage, py::arg("Message"), py::arg("Code"));
+#ifdef BUILD_WITH_DECODING
     m.def("RegisterAvLogCallback", &Synavis::RegisterAvLogCallback, py::arg("useSynavisLogging") = false);
+#endif
 
 
     py::class_<rtc::Configuration>(m, "PeerConnectionConfig")

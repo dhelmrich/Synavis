@@ -44,6 +44,7 @@ target_include_directories(${projectname}
   PUBLIC ${CMAKE_CURRENT_BINARY_DIR}
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/include
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/deps/json/single_include/nlohmann/
+  ${CMAKE_BINARY_DIR}/_deps/pybind11_json-src/include
 )
 target_include_directories(${PYPROJECT}
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
@@ -51,38 +52,22 @@ target_include_directories(${PYPROJECT}
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/include
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/deps/json/single_include/nlohmann/
   ${CMAKE_BINARY_DIR}/_deps/pybind11-src/include
+  ${CMAKE_BINARY_DIR}/_deps/pybind11_json-src/include
   # Python include dirs are provided by Python::Development target (linked below)
 )
 
-# If the buildtool (vcpkg/toolchain) already provides pybind11_json as a target,
-# avoid adding the vendored include path to prevent duplicate-import errors
-# (Windows + vcpkg often provides pybind11_json). Only add the vendored
-# include dir when the target is not present.
-if(TARGET pybind11_json::pybind11_json OR TARGET pybind11_json)
-  if(DEFINED pybind11_json_SOURCE_DIR)
-    message(STATUS "pybind11_json found (FetchContent-provided); linking and using FetchContent headers")
-  else()
-    message(STATUS "pybind11_json found (Toolchain-provided); linking against toolchain target")
-  endif()
-
-  if(TARGET pybind11_json::pybind11_json)
-    target_link_libraries(${PYPROJECT} PRIVATE pybind11_json::pybind11_json)
-  else()
-    target_link_libraries(${PYPROJECT} PRIVATE pybind11_json)
-  endif()
-
-  if(DEFINED pybind11_json_SOURCE_DIR)
-    target_include_directories(${PYPROJECT} PRIVATE ${pybind11_json_SOURCE_DIR}/include/pybind11_json/)
-  endif()
+# pybind11_json is a header-only library. If the buildtool (vcpkg/toolchain) provides it,
+# use that. Otherwise, the FetchContent below provides it.
+if(TARGET pybind11_json::pybind11_json)
+  message(STATUS "Using pybind11_json::pybind11_json target from toolchain/FetchContent")
+  target_link_libraries(${PYPROJECT} PRIVATE pybind11_json::pybind11_json)
+  target_include_directories(${projectname} PRIVATE $<TARGET_PROPERTY:pybind11_json::pybind11_json,INTERFACE_INCLUDE_DIRECTORIES>)
+elseif(TARGET pybind11_json)
+  message(STATUS "Using pybind11_json target from toolchain/FetchContent")
+  target_link_libraries(${PYPROJECT} PRIVATE pybind11_json)
+  target_include_directories(${projectname} PRIVATE $<TARGET_PROPERTY:pybind11_json,INTERFACE_INCLUDE_DIRECTORIES>)
 else()
-  message(STATUS "pybind11_json not found; using FetchContent-provided headers if available")
-  if(DEFINED pybind11_json_SOURCE_DIR)
-    target_include_directories(${PYPROJECT} PRIVATE ${pybind11_json_SOURCE_DIR}/include/pybind11_json/)
-  elseif(EXISTS ${CMAKE_BINARY_DIR}/_deps/pybind11_json-src/include/pybind11_json/)
-    target_include_directories(${PYPROJECT} PRIVATE ${CMAKE_BINARY_DIR}/_deps/pybind11_json-src/include/pybind11_json/)
-  else()
-    message(WARNING "pybind11_json headers not available; build may fail")
-  endif()
+  message(WARNING "pybind11_json target not found; include path must be set manually")
 endif()
 
 target_link_libraries(${projectname} PRIVATE datachannel-static nlohmann_json::nlohmann_json )
