@@ -11,6 +11,8 @@ add_library(adios_connector STATIC
 	${ADIOS_HEADERS}
 )
 
+set_target_properties(adios_connector PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 target_include_directories(adios_connector
 	PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
 	PUBLIC ${CMAKE_CURRENT_BINARY_DIR}
@@ -25,6 +27,9 @@ target_compile_definitions(adios_connector PUBLIC ADIOS2_AVAILABLE)
 # Use the ADIOS2 already found by the parent CMakeLists.txt
 # ADIOS2_INCLUDE_DIRS and ADIOS2_LIBRARIES are already available from the parent scope
 if(ADIOS2_FOUND)
+if(TARGET adios2::adios2)
+  target_link_libraries(adios_connector PUBLIC adios2::adios2)
+elseif(ADIOS2_FOUND)
   target_include_directories(adios_connector PUBLIC ${ADIOS2_INCLUDE_DIRS})
   target_link_libraries(adios_connector PUBLIC ${ADIOS2_LIBRARIES})
 endif()

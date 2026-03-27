@@ -42,11 +42,11 @@ public:
   // Implementations should return a stable handler id (positive) or 0 on failure.
   UFUNCTION(BlueprintCallable, Category = "Streaming|Data")
   virtual int RegisterDataSource(
-    const TArray<uint8>& /*DummyDataHandler*/,
-    const FString& /*DummyMsgHandler*/,
-    USceneCaptureComponent2D* /*SceneCapture*/ = nullptr,
-    bool /*DedicatedChannel*/ = false,
-    bool /*AcceptsInboundMessages*/ = true)
+    const TArray<uint8>& DummyDataHandler,
+    const FString& DummyMsgHandler,
+    USceneCaptureComponent2D* SceneCapture = nullptr,
+    bool DedicatedChannel = false,
+    bool AcceptsInboundMessages = true)
   {
     ensureMsgf(false, TEXT("RegisterDataSource (Blueprint) is not implemented in this interface"));
     return 0;
@@ -54,47 +54,47 @@ public:
 
   // C++ registration APIs used by SynavisDrone.cpp and other C++ callers
   virtual int32 RegisterDataSourceCpp(
-    const std::function<void(int32, const TArray<uint8>&)>& /*OnData*/,
-    const std::function<void(int32, const FString&)>& /*OnMessage*/,
-    USceneCaptureComponent2D* /*SceneCapture*/ = nullptr,
-    bool /*DedicatedChannel*/ = false,
-    bool /*AcceptsInboundMessages*/ = true)
+    const std::function<void(int32, const TArray<uint8>&)>& OnData,
+    const std::function<void(int32, const FString&)>& OnMessage,
+    USceneCaptureComponent2D* SceneCapture = nullptr,
+    bool DedicatedChannel = false,
+    bool AcceptsInboundMessages = true)
   {
     ensureMsgf(false, TEXT("RegisterDataSourceCpp not implemented"));
     return 0;
   }
 
-  virtual int32 RegisterVideoSourceCpp(USceneCaptureComponent2D* /*SceneCapture*/, bool /*DedicatedChannel*/ = false, bool /*AcceptsInboundMessages*/ = false)
+  virtual int32 RegisterVideoSourceCpp(USceneCaptureComponent2D* SceneCapture, bool DedicatedChannel = false, bool AcceptsInboundMessages = false)
   {
     ensureMsgf(false, TEXT("RegisterVideoSourceCpp not implemented"));
     return 0;
   }
 
   UFUNCTION(BlueprintCallable, Category = "Streaming|Data")
-  virtual int RegisterVideoSource(USceneCaptureComponent2D* /*SceneCapture*/, bool /*DedicatedChannel*/ = false, bool /*AcceptsInboundMessages*/ = false)
+  virtual int RegisterVideoSource(USceneCaptureComponent2D* SceneCapture, bool DedicatedChannel = false, bool AcceptsInboundMessages = false)
   {
     ensureMsgf(false, TEXT("RegisterVideoSource (Blueprint) not implemented"));
     return 0;
   }
 
-  virtual void UnregisterDataSource(int32 /*HandlerId*/) { ensureMsgf(false, TEXT("UnregisterDataSource not implemented")); }
+  virtual void UnregisterDataSource(int32 HandlerId) { ensureMsgf(false, TEXT("UnregisterDataSource not implemented")); }
 
   // Send data/text to a connection via the handler's channel. Return success.
-  virtual bool SendTextToConnection(int32 /*HandlerId*/, int32 /*ConnectionPlayerID*/, const FString& /*Text*/) { ensureMsgf(false, TEXT("SendTextToConnection not implemented")); return false; }
-  virtual bool SendBinaryToConnection(int32 /*HandlerId*/, int32 /*ConnectionPlayerID*/, const TArray<uint8>& /*Data*/) { ensureMsgf(false, TEXT("SendBinaryToConnection not implemented")); return false; }
+  virtual bool SendTextToConnection(int32 HandlerId, int32 ConnectionPlayerID, const FString& Text) { ensureMsgf(false, TEXT("SendTextToConnection not implemented")); return false; }
+  virtual bool SendBinaryToConnection(int32 HandlerId, int32 ConnectionPlayerID, const TArray<uint8>& Data) { ensureMsgf(false, TEXT("SendBinaryToConnection not implemented")); return false; }
 
-  virtual bool BroadcastText(int32 /*HandlerId*/, const FString& /*Text*/) { ensureMsgf(false, TEXT("BroadcastText not implemented")); return false; }
-  virtual bool BroadcastBinary(int32 /*HandlerId*/, const TArray<uint8>& /*Data*/) { ensureMsgf(false, TEXT("BroadcastBinary not implemented")); return false; }
+  virtual bool BroadcastText(int32 HandlerId, const FString& Text) { ensureMsgf(false, TEXT("BroadcastText not implemented")); return false; }
+  virtual bool BroadcastBinary(int32 HandlerId, const TArray<uint8>& Data) { ensureMsgf(false, TEXT("BroadcastBinary not implemented")); return false; }
 
-  virtual bool SendTextViaSystemChannel(const FString& /*Text*/) { ensureMsgf(false, TEXT("SendTextViaSystemChannel not implemented")); return false; }
-  virtual bool SendBinaryViaSystemChannel(const TArray<uint8>& /*Data*/) { ensureMsgf(false, TEXT("SendBinaryViaSystemChannel not implemented")); return false; }
+  virtual bool SendTextViaSystemChannel(const FString& Text) { ensureMsgf(false, TEXT("SendTextViaSystemChannel not implemented")); return false; }
+  virtual bool SendBinaryViaSystemChannel(const TArray<uint8>& Data) { ensureMsgf(false, TEXT("SendBinaryViaSystemChannel not implemented")); return false; }
 
   // Low-level frame send (raw/encoded bytes) - used by video path in SynavisUE
-  virtual void SendFrameBytes(const TArray<uint8>& /*Bytes*/, const FString& /*Name*/, const FString& /*Format*/, int32 /*TargetTrackId*/) { ensureMsgf(false, TEXT("SendFrameBytes not implemented")); }
+  virtual void SendFrameBytes(const TArray<uint8>& Bytes, const FString& Name, const FString& Format, int32 TargetTrackId) { ensureMsgf(false, TEXT("SendFrameBytes not implemented")); }
 
   // Connection lookup helpers (optional for backends)
   // Return nullptr if not implemented or not found. Backends can expose concrete types.
-  virtual void* FindConnectionByPlayerID(int32 /*PlayerID*/) { return nullptr; }
+  virtual void* FindConnectionByPlayerID(int32 PlayerID) { return nullptr; }
 
 protected:
   // Add any protected helpers or documented extension points here.

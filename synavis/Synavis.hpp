@@ -1,6 +1,9 @@
 #pragma once
 #ifndef WEBRTCBRIDGE_HPP
 #define WEBRTCBRIDGE_HPP
+
+#define NOMINMAX
+
 #include <json.hpp>
 #include <span>
 #include <variant>

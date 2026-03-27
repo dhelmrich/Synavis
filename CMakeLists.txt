@@ -275,7 +275,6 @@ if(NOT TARGET pybind11_json)
 endif()
 
 message(STATUS " Adding main project subdirectory: synavis")
-add_subdirectory(synavis)
 message(STATUS " Adding externtest subdirectory")
 add_subdirectory(externtest)
 if(BUILD_WITH_APPS)
@@ -285,7 +284,7 @@ endif()
 
 # ADIOS2 support: attempt to detect system ADIOS2 or use provided ADIOS2_ROOT
 option(SYNAVIS_ENABLE_ADIOS2_EXAMPLE "Build ADIOS2 example application" OFF)
-find_package(ADIOS2 CONFIG QUIET)
+find_package(adios2 CONFIG QUIET)
 if(ADIOS2_FOUND)
   message(STATUS "ADIOS2: System (found by find_package) - ADIOS2_AVAILABLE=System")
 elseif(DEFINED ADIOS2_ROOT)
@@ -295,10 +294,13 @@ else()
 endif()
 
 # Add ADIOS example if requested or if ADIOS2 is available
+# Must be added before synavis so adios_connector exists when PySynavis builds
 if(SYNAVIS_ENABLE_ADIOS2_EXAMPLE OR ADIOS2_FOUND OR DEFINED ADIOS2_ROOT)
   message(STATUS "Adding ADIOS2 example subdirectory")
   add_subdirectory(synavis/adios)
 endif()
+
+add_subdirectory(synavis)
 
 
 

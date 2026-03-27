@@ -388,12 +388,12 @@ if (-not $NoBuild) {
         Write-Host "libdatachannel export (copy) completed."
     }
 
-        # ADIOS2 export/copy into SynavisBackend (when requested)
+        # ADIOS2 export/copy into Adios2Backend (when requested)
         if ($InstallAdios2 -or $Adios2Root -ne "") {
-            Write-Host "Preparing SynavisBackend ADIOS2 layout..."
-            $SynavisBackendRoot = Join-Path $BaseDir "SynavisBackend"
-            $DestAdiosInclude = Join-Path $SynavisBackendRoot "Source\adios2\include"
-            $DestAdiosLib = Join-Path $SynavisBackendRoot "Source\adios2\lib"
+            Write-Host "Preparing Adios2Backend ADIOS2 layout..."
+            $Adios2BackendRoot = Join-Path $BaseDir "Adios2Backend"
+            $DestAdiosInclude = Join-Path $Adios2BackendRoot "Source\adios2\include"
+            $DestAdiosLib = Join-Path $Adios2BackendRoot "Source\adios2\lib"
             if (!(Test-Path $DestAdiosInclude)) { New-Item -ItemType Directory -Path $DestAdiosInclude -Force | Out-Null }
             if (!(Test-Path $DestAdiosLib)) { New-Item -ItemType Directory -Path $DestAdiosLib -Force | Out-Null }
 
@@ -410,15 +410,13 @@ if (-not $NoBuild) {
                 # Try vcpkg installation if requested
                 $vcpkgCmd = Get-Command vcpkg -ErrorAction SilentlyContinue
                 if ($InstallAdios2 -and $vcpkgCmd) {
-                    Write-Host "Installing adios2[mpi] via vcpkg..."
-                    & vcpkg install adios2[mpi]
                     $VcpkgRoot = Split-Path $vcpkgCmd.Source -Parent
                     # find installed triplet that contains adios2 headers
                     $installed = Join-Path $VcpkgRoot "installed"
                     $found = $false
                     Get-ChildItem -Path $installed -Directory | ForEach-Object {
                         $inc = Join-Path $_.FullName "include"
-                        if (Test-Path (Join-Path $inc "adios2.h") -or Test-Path (Join-Path $inc "adios2")) {
+                        if ((Test-Path (Join-Path $inc "adios2.h")) -or (Test-Path (Join-Path $inc "adios2"))) {
                             Write-Host "Copying ADIOS2 headers from $inc to $DestAdiosInclude"
                             Copy-Item -Path (Join-Path $inc "*") -Destination $DestAdiosInclude -Recurse -Force -ErrorAction SilentlyContinue
                             $libdir = Join-Path $_.FullName "lib"

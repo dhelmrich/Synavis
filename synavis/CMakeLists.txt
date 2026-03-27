@@ -72,6 +72,13 @@ endif()
 
 target_link_libraries(${projectname} PRIVATE datachannel-static nlohmann_json::nlohmann_json )
 target_link_libraries(${PYPROJECT} PRIVATE ${projectname} datachannel-static nlohmann_json::nlohmann_json)
+
+if(ADIOS2_FOUND OR TARGET adios_connector)
+  target_compile_definitions(${PYPROJECT} PUBLIC ADIOS2_AVAILABLE)
+  if(TARGET adios_connector)
+    target_link_libraries(${PYPROJECT} PRIVATE adios_connector)
+  endif()
+endif()
 if(TARGET Python::Development)
   target_link_libraries(${PYPROJECT} PRIVATE Python::Development)
 else()

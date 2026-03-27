@@ -19,6 +19,10 @@
 #include "DataConnector.hpp"
 #include "MediaReceiver.hpp"
 
+#ifdef ADIOS2_AVAILABLE
+#include "adios/AdiosConnector.hpp"
+#endif
+
 #ifdef BUILD_WITH_DECODING
 #include "FrameDecodeAV.hpp"
 #endif
@@ -152,6 +156,15 @@ namespace Synavis
   {
 
   };
+
+#ifdef ADIOS2_AVAILABLE
+  template < typename T = AdiosConnector > class PyAdiosConnector : public T
+  {
+  public:
+    using T::T;
+    using binary = T::binary;
+  };
+#endif
 
   class SynavisLogger
   {
@@ -397,6 +410,59 @@ namespace Synavis
       .def("NumRemoteMedia", &MediaReceiver::NumRemoteMedia)
       .def("RemoteMediaDescription", &MediaReceiver::RemoteMediaDescription, py::arg("id"))
     ;
+
+#ifdef ADIOS2_AVAILABLE
+    py::class_<AdiosConnector, PyAdiosConnector<>, std::shared_ptr<AdiosConnector>>(m, "AdiosConnector")
+      .def(py::init<>())
+      .def("Initialize", &AdiosConnector::Initialize)
+      .def("StartStreaming", &AdiosConnector::StartStreaming)
+      .def("StopStreaming", &AdiosConnector::StopStreaming)
+      .def("StartReader", &AdiosConnector::StartReader)
+      .def("StopReader", &AdiosConnector::StopReader)
+      .def("ReadStep", &AdiosConnector::ReadStep)
+      .def("IsRunning", &AdiosConnector::IsRunning)
+      .def("GetState", &AdiosConnector::GetState)
+      .def("SetEngineType", &AdiosConnector::SetEngineType, py::arg("EngineType"))
+      .def("SetIOName", &AdiosConnector::SetIOName, py::arg("IOName"))
+      .def("SetVariableName", &AdiosConnector::SetVariableName, py::arg("VariableName"))
+      .def("SetMode", &AdiosConnector::SetMode, py::arg("Mode"))
+      .def("SetFilenamePrefix", &AdiosConnector::SetFilenamePrefix, py::arg("FilenamePrefix"))
+      .def("SendData", &AdiosConnector::SendData, py::arg("Data"))
+      .def("SendString", &AdiosConnector::SendString, py::arg("Message"))
+      .def("SendJSON", &AdiosConnector::SendJSON, py::arg("Message"))
+      .def("SendBuffer", &AdiosConnector::SendBuffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
+      .def("SendFloat64Buffer", &AdiosConnector::SendFloat64Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
+      .def("SendFloat32Buffer", &AdiosConnector::SendFloat32Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
+      .def("SendInt32Buffer", &AdiosConnector::SendInt32Buffer, py::arg("Buffer"), py::arg("Name"), py::arg("Format") = "raw")
+      .def("SetDataCallback", &AdiosConnector::SetDataCallback, py::arg("Callback"))
+      .def("SetMessageCallback", &AdiosConnector::SetMessageCallback, py::arg("Callback"))
+      .def("SetReadCallback", [](AdiosConnector &self, std::function<void(py::object, const std::string&)> callback) {
+        self.SetReadCallback([callback](const std::variant<AdiosConnector::binary, std::string>& data, const std::string& name) {
+          py::gil_scoped_acquire acquire;
+          try {
+            if (std::holds_alternative<AdiosConnector::binary>(data)) {
+              const auto& bin = std::get<AdiosConnector::binary>(data);
+              py::bytes py_data(reinterpret_cast<const char*>(bin.data()), bin.size());
+              callback(py_data, name);
+            } else {
+              const auto& str = std::get<std::string>(data);
+              callback(py::str(str), name);
+            }
+          } catch (const py::error_already_set &e) {
+            Synavis::Logger::Get()->LogStarter("PyBind")(ELogVerbosity::Error) << "SetReadCallback python exception: " << e.what() << std::endl;
+          }
+        });
+      }, py::arg("Callback"))
+      .def("SetOnConnectedCallback", &AdiosConnector::SetOnConnectedCallback, py::arg("Callback"))
+      .def("SetOnFailedCallback", &AdiosConnector::SetOnFailedCallback, py::arg("Callback"))
+      .def("SetOnClosedCallback", &AdiosConnector::SetOnClosedCallback, py::arg("Callback"))
+      .def("LockUntilConnected", &AdiosConnector::LockUntilConnected, py::arg("additional_wait") = 0)
+      .def("PrintConfiguration", &AdiosConnector::PrintConfiguration)
+      .def("AddVariable", &AdiosConnector::AddVariable, py::arg("Name"), py::arg("DataType"))
+      .def("WriteStep", &AdiosConnector::WriteStep)
+      .def("Flush", &AdiosConnector::Flush)
+    ;
+#endif
 
     py::enum_<rtc::PeerConnection::GatheringState>(m, "GatheringState")
       .value("New", rtc::PeerConnection::GatheringState::New)

@@ -13,12 +13,9 @@
 #include <atomic>
 #include <condition_variable>
 #include <queue>
+#include <adios2.h>
 #include "Synavis/export.hpp"
 #include "Synavis.hpp"
-
-#ifdef ADIOS2_AVAILABLE
-#include <adios2.h>
-#endif
 
 namespace Synavis
 {
@@ -75,15 +72,23 @@ public:
   bool WriteStep();
   void Flush();
 
+  // Reader functionality for bidirectional streaming
+  void StartReader();
+  void StopReader();
+  bool ReadStep();
+  void SetReadCallback(std::function<void(const std::variant<binary, std::string>&, const std::string&)> Callback);
+
 protected:
   // ADIOS2 engine and IO management
   void CreateEngine();
   void CloseEngine();
+  void CreateReaderEngine();
 
   // Thread management
   void StartWorkerThread();
   void StopWorkerThread();
   void WorkerLoop();
+  void ReaderLoop();
 
   // State
   std::atomic<EConnectionState> state_{EConnectionState::STARTUP};
@@ -97,7 +102,6 @@ protected:
   std::string filename_prefix_{"synavis_output"};
   adios2::Mode mode_{adios2::Mode::Write};
 
-#ifdef ADIOS2_AVAILABLE
   // ADIOS2 objects
   std::unique_ptr<adios2::ADIOS> adios_engine_;
   std::unique_ptr<adios2::IO> io_engine_;
@@ -108,11 +112,11 @@ protected:
   std::map<std::string, adios2::Variable<int32_t>> int32_variables_;
   std::map<std::string, adios2::Variable<std::string>> string_variables_;
   std::map<std::string, std::string> variable_types_;
-#endif
 
   // Callbacks
   std::optional<std::function<void(const binary&)>> DataReceptionCallback;
   std::optional<std::function<void(const std::string&)>> MessageReceptionCallback;
+  std::optional<std::function<void(const std::variant<binary, std::string>&, const std::string&)>> ReadCallback;
 
   std::optional<std::function<void(void)>> OnConnectedCallback;
   std::optional<std::function<void(void)>> OnFailedCallback;
@@ -120,9 +124,13 @@ protected:
 
   // Thread and synchronization
   std::thread worker_thread_;
+  std::thread reader_thread_;
   std::mutex queue_mutex_;
   std::condition_variable queue_cv_;
   std::atomic<bool> shutdown_requested_{false};
+  std::atomic<bool> reader_running_{false};
+  std::atomic<bool> reader_shutdown_{false};
+  std::unique_ptr<adios2::Engine> reader_engine_{nullptr};
 
   // Message queue for async processing
   struct QueuedMessage

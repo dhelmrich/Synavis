@@ -63,7 +63,7 @@ while [[ $# -gt 0 ]]; do
       echo "  -B basedir        Specify the base directory (default: current directory)"
       echo "  -v verbosity      Enable verbose logging (default: false, pass 'true' to enable)"
       echo "  -p cplantbox_location  Specify the location of cplantbox (default: not set)"
-      echo "  -x, --vcpkg       Path to vcpkg's buildsystems/vcpkg.cmake (project expects this in VCPKG_CMAKE_PATH)"
+      echo "  -x, --vcpkg       Path to vcpkg root directory (toolchain file auto-detected) or to vcpkg.cmake"
       echo "  --clang           Use clang as the C/C++ compiler"
       exit 0
       ;;
@@ -170,51 +170,22 @@ fi
 
 # Vcpkg toolchain option (optional)
 VCPKG_TOOLCHAIN_OPTION=""
+VCPKG_ROOT=""
 if [ -n "$VCPKG_TOOLCHAIN" ]; then
-  echo "Using vcpkg toolchain file: $VCPKG_TOOLCHAIN"
-  VCPKG_TOOLCHAIN_OPTION="-DCMAKE_TOOLCHAIN_FILE=$VCPKG_TOOLCHAIN -DVCPKG_CMAKE_PATH=$VCPKG_TOOLCHAIN"
-fi
-
-# Install ADIOS2 BEFORE configure if --install-adios2 is set and no ADIOS2_ROOT provided
-if [ "$INSTALL_ADIOS2" = true ] && [ -z "$ADIOS2_ROOT" ]; then
-  DEST_ADIOS2_DIR="$ABS_BUILDDIR/adios2_install"
-  mkdir -p "$DEST_ADIOS2_DIR/include"
-  mkdir -p "$DEST_ADIOS2_DIR/lib"
-  
-  # Try to install via vcpkg if available
-  # VCPKG_TOOLCHAIN is expected to be the vcpkg root directory
-  VCPKG_EXE=$(command -v vcpkg 2>/dev/null || true)
-  if [ -z "$VCPKG_EXE" ] && [ -n "$VCPKG_TOOLCHAIN" ] && [ -f "$VCPKG_TOOLCHAIN/vcpkg" ]; then
-    VCPKG_EXE="$VCPKG_TOOLCHAIN/vcpkg"
+  if [ -d "$VCPKG_TOOLCHAIN" ]; then
+    VCPKG_ROOT="$VCPKG_TOOLCHAIN"
+    VCPKG_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+  elif [ -f "$VCPKG_TOOLCHAIN" ]; then
+    VCPKG_TOOLCHAIN_FILE="$VCPKG_TOOLCHAIN"
+    VCPKG_ROOT=$(dirname "$(dirname "$(dirname "$VCPKG_TOOLCHAIN")")")
   fi
   
-  if [ -n "$VCPKG_EXE" ]; then
-    echo "vcpkg found at $VCPKG_EXE; installing adios2[mpi] via vcpkg"
-    "$VCPKG_EXE" install adios2[mpi] --recurse
-    VCPKG_ROOT=$(dirname "$(dirname "$VCPKG_EXE")")
-    # Find an installed triplet that contains adios2 headers
-    TRIPLET_DIR=""
-    for t in "$VCPKG_ROOT"/installed/*; do
-      if [ -d "$t/include" ] && ( [ -f "$t/include/adios2.h" ] || [ -d "$t/include/adios2" ] ); then
-        TRIPLET_DIR="$t"
-        break
-      fi
-    done
-    if [ -n "$TRIPLET_DIR" ]; then
-      echo "Copying ADIOS2 headers from $TRIPLET_DIR/include to $DEST_ADIOS2_DIR/include"
-      rsync -a --delete "$TRIPLET_DIR/include/" "$DEST_ADIOS2_DIR/include/"
-      if [ -d "$TRIPLET_DIR/lib" ]; then
-        echo "Copying ADIOS2 libs from $TRIPLET_DIR/lib to $DEST_ADIOS2_DIR/lib"
-        find "$TRIPLET_DIR/lib" -maxdepth 1 -type f \( -name 'libadios2.so*' -o -name 'libadios2.a' \) -exec cp -v --preserve=mode,timestamps {} "$DEST_ADIOS2_DIR/lib/" \;
-      fi
-      ADIOS2_ROOT="$DEST_ADIOS2_DIR"
-    else
-      echo "Could not locate adios2 files in vcpkg installed tree; please provide ADIOS2_ROOT or install ADIOS2 system-wide."
-      exit 1
-    fi
+  if [ -f "$VCPKG_TOOLCHAIN_FILE" ]; then
+    echo "Using vcpkg toolchain file: $VCPKG_TOOLCHAIN_FILE"
+    echo "Using vcpkg root: $VCPKG_ROOT"
+    VCPKG_TOOLCHAIN_OPTION="-DCMAKE_TOOLCHAIN_FILE=$VCPKG_TOOLCHAIN_FILE -DVCPKG_CMAKE_PATH=$VCPKG_TOOLCHAIN_FILE"
   else
-    echo "vcpkg not found; cannot install ADIOS2 automatically. Please install ADIOS2 or provide --adios2-root."
-    exit 1
+    echo "Warning: vcpkg toolchain file not found at: $VCPKG_TOOLCHAIN_FILE"
   fi
 fi
 
@@ -231,12 +202,15 @@ else
   SKIP_INSTALL_ADIOS2_OPTION="-DSYNAVIS_SKIP_INSTALL_ADIOS2=On"
 fi
 
-# SKIP_COPY_LIBDATACHANEL cmake option - default is On (skip). If the
-# user passed --copy-libdatachannel we disable the skip (Off) so that
-# the deploy step can run.
-SKIP_COPY_OPTION="-DSKIP_COPY_LIBDATACHANNEL=On"
-if [ "$SKIP_COPY_LIBDATACHANNEL" = false ]; then
-  SKIP_COPY_OPTION="-DSKIP_COPY_LIBDATACHANNEL=Off"
+# Install ADIOS2 via vcpkg if requested
+if [ "$INSTALL_ADIOS2" = true ] && [ -n "$VCPKG_ROOT" ]; then
+  VCPKG_EXE="$VCPKG_ROOT/vcpkg"
+  if [ -x "$VCPKG_EXE" ]; then
+    echo "Installing adios2[mpi] via vcpkg..."
+    "$VCPKG_EXE" install adios2[mpi]:x64-linux --recurse
+  else
+    echo "Warning: vcpkg executable not found at $VCPKG_EXE; skipping automatic install"
+  fi
 fi
 
 # configure
@@ -289,21 +263,28 @@ else
   echo "Skipping libdatachannel deploy (default). Use --copy-libdatachannel to enable."
 fi
 
-# Deploy ADIOS2 headers/libs into SynavisBackend plugin layout (Unix)
-DEST_ADIOS2_DIR="$DIR/SynavisBackend/Source/adios2"
-if [ "$INSTALL_ADIOS2" = true ] || [ -n "$ADIOS2_ROOT" ]; then
-  echo "Preparing SynavisBackend ADIOS2 layout at: $DEST_ADIOS2_DIR"
-  mkdir -p "$DEST_ADIOS2_DIR/include"
-  mkdir -p "$DEST_ADIOS2_DIR/lib"
-
-  if [ -n "$ADIOS2_ROOT" ] && [ -d "$ADIOS2_ROOT" ]; then
-    echo "Copying ADIOS2 headers from $ADIOS2_ROOT/include to $DEST_ADIOS2_DIR/include"
-    rsync -a --delete "$ADIOS2_ROOT/include/" "$DEST_ADIOS2_DIR/include/"
-    if [ -d "$ADIOS2_ROOT/lib" ]; then
-      echo "Copying ADIOS2 libs from $ADIOS2_ROOT/lib to $DEST_ADIOS2_DIR/lib"
-      find "$ADIOS2_ROOT/lib" -maxdepth 1 -type f \( -name 'libadios2.so*' -o -name 'libadios2.a' -o -name 'adios2.lib' -o -name 'adios2.dll' \) -exec cp -v --preserve=mode,timestamps {} "$DEST_ADIOS2_DIR/lib/" \;
-    fi
+DEST_ADIOS2_DIR="$DIR/Adios2Backend/Source/adios2"
+if [ "$INSTALL_ADIOS2" = true ]; then
+  if [ -n "$VCPKG_ROOT" ] && [ -d "$VCPKG_ROOT/installed" ]; then
+    echo "Searching vcpkg installed tree for ADIOS2 at: $VCPKG_ROOT/installed"
+    for t in "$VCPKG_ROOT"/installed/*; do
+      if [ -d "$t/include" ] && { [ -f "$t/include/adios2.h" ] || [ -d "$t/include/adios2" ]; }; then
+        echo "Found ADIOS2 in vcpkg triplet: $t"
+        echo "Preparing Adios2Backend ADIOS2 layout at: $DEST_ADIOS2_DIR"
+        mkdir -p "$DEST_ADIOS2_DIR/include"
+        mkdir -p "$DEST_ADIOS2_DIR/lib"
+        echo "Copying ADIOS2 headers from $t/include to $DEST_ADIOS2_DIR/include"
+        rsync -a --delete "$t/include/" "$DEST_ADIOS2_DIR/include/" 2>/dev/null || cp -rv "$t/include/" "$DEST_ADIOS2_DIR/include/"
+        if [ -d "$t/lib" ]; then
+          echo "Copying ADIOS2 libs from $t/lib to $DEST_ADIOS2_DIR/lib"
+          find "$t/lib" -maxdepth 1 -type f \( -name 'libadios2.so*' -o -name 'libadios2.a' \) -exec cp -v --preserve=mode,timestamps {} "$DEST_ADIOS2_DIR/lib/" \; 2>/dev/null || true
+        fi
+        break
+      fi
+    done
+  else
+    echo "Skipping ADIOS2 deploy: vcpkg not found or ADIOS2 not installed."
   fi
 else
-  echo "Skipping ADIOS2 deploy. Use --install-adios2 or --adios2-root to enable." 
+  echo "Skipping ADIOS2 deploy. Use --install-adios2 to enable." 
 fi

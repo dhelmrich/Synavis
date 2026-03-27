@@ -2119,7 +2119,7 @@ void ASynavisDrone::InitializeSynavisRegistration()
     UE_LOG(LogTemp, Log, TEXT("SynavisDrone: Registered data handler %d with SynavisStreamer"), RegisteredHandlerId);
 
     // Register SceneCam as source-only (no inbound callbacks) to avoid unnecessary callback allocation
-    RegisteredHandlerIdScene = SynavisStreamerRef->RegisterVideoSourceCpp(SceneCam, false /*DedicatedChannel*/, false /*AcceptsInboundMessages*/);
+    RegisteredHandlerIdScene = SynavisStreamerRef->RegisterVideoSourceCpp(SceneCam, false DedicatedChannel, false AcceptsInboundMessages);
     if (RegisteredHandlerIdScene > 0)
     {
       UE_LOG(LogTemp, Log, TEXT("SynavisDrone: Registered source-only video handler %d for SceneCam"), RegisteredHandlerIdScene);
