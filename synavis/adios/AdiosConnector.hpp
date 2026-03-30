@@ -14,13 +14,13 @@
 #include <condition_variable>
 #include <queue>
 #include <adios2.h>
-#include "Synavis/export.hpp"
+#include "adios_export.hpp"
 #include "Synavis.hpp"
 
 namespace Synavis
 {
 
-class SYNAVIS_EXPORT AdiosConnector : public std::enable_shared_from_this<AdiosConnector>
+class ADIOS_CONNECTOR_EXPORT AdiosConnector : public std::enable_shared_from_this<AdiosConnector>
 {
 public:
   using json = nlohmann::json;
@@ -36,12 +36,18 @@ public:
   bool IsRunning() const;
   EConnectionState GetState() const;
 
-  // Configuration
-  void SetEngineType(const std::string& EngineType);
-  void SetIOName(const std::string& IOName);
-  void SetVariableName(const std::string& VariableName);
-  void SetMode(::adios2::Mode mode);
-  void SetFilenamePrefix(const std::string& FilenamePrefix);
+   // Configuration
+   void SetEngineType(const std::string& EngineType);
+   void SetIOName(const std::string& IOName);
+   void SetVariableName(const std::string& VariableName);
+   void SetMode(::adios2::Mode mode);
+   void SetFilenamePrefix(const std::string& FilenamePrefix);
+
+   // Network configuration
+   void SetPort(int Port);
+   void SetNetworkInterface(const std::string& Interface);
+   int GetPort() const { return network_port_; }
+   std::string GetNetworkInterface() const { return network_interface_; }
 
   // Sending data - mirrors DataConnector interface
   virtual void SendData(const binary& Data);
@@ -95,12 +101,16 @@ protected:
   std::atomic<bool> running_{false};
   std::atomic<bool> streaming_{false};
 
-  // Configuration
-  std::string engine_type_{"bpfile"};
-  std::string io_name_{"AdiosIO"};
-  std::string variable_name_{"SynavisData"};
-  std::string filename_prefix_{"synavis_output"};
-  adios2::Mode mode_{adios2::Mode::Write};
+   // Configuration
+   std::string engine_type_{"sst"};
+   std::string io_name_{"AdiosIO"};
+   std::string variable_name_{"SynavisData"};
+   std::string filename_prefix_{"synavis_output"};
+   adios2::Mode mode_{adios2::Mode::Write};
+
+   // Network configuration (for SST engine)
+   std::string network_interface_{"localhost"};
+   int network_port_{9001};
 
   // ADIOS2 objects
   std::unique_ptr<adios2::ADIOS> adios_engine_;

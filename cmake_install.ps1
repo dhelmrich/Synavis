@@ -197,6 +197,17 @@ if ($InstallAdios2) {
 # Append ADIOS2 options to CMake command
 $CMakeCmd = $CMakeCmd + " " + $Adios2RootOption + " " + $SkipAdiosOption
 
+# Install ADIOS2 via vcpkg if requested (before CMake configure)
+if ($InstallAdios2) {
+    $vcpkgCmd = Get-Command vcpkg -ErrorAction SilentlyContinue
+    if ($vcpkgCmd) {
+        Write-Host "Installing adios2[mpi] via vcpkg..."
+        & vcpkg install adios2[mpi]
+    } else {
+        Write-Warning "vcpkg not found. Cannot install adios2 via vcpkg."
+    }
+}
+
 Write-Host "Running: $CMakeCmd"
 Invoke-Expression $CMakeCmd
 

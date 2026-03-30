@@ -7,9 +7,11 @@ namespace Synavis
 
   static const Logger::LoggerInstance ladios = Logger::Get()->LogStarter("AdiosConnector");
 
-  AdiosConnector::AdiosConnector()
-  {
-  }
+   AdiosConnector::AdiosConnector()
+   {
+     network_interface_ = "localhost";
+     network_port_ = 9001;
+   }
 
   AdiosConnector::~AdiosConnector()
   {
@@ -97,10 +99,20 @@ namespace Synavis
     mode_ = mode;
   }
 
-  void AdiosConnector::SetFilenamePrefix(const std::string& FilenamePrefix)
-  {
-    filename_prefix_ = FilenamePrefix;
-  }
+   void AdiosConnector::SetFilenamePrefix(const std::string& FilenamePrefix)
+   {
+     filename_prefix_ = FilenamePrefix;
+   }
+
+   void AdiosConnector::SetPort(int Port)
+   {
+     network_port_ = Port;
+   }
+
+   void AdiosConnector::SetNetworkInterface(const std::string& Interface)
+   {
+     network_interface_ = Interface;
+   }
 
   void AdiosConnector::SendData(const binary& Data)
   {
@@ -292,23 +304,32 @@ namespace Synavis
     }
   }
 
-  void AdiosConnector::PrintConfiguration() const
-  {
-    ladios(ELogVerbosity::Info) << "ADIOS2 Configuration:" << std::endl;
-    ladios(ELogVerbosity::Info) << "  Engine Type: " << engine_type_ << std::endl;
-    ladios(ELogVerbosity::Info) << "  IO Name: " << io_name_ << std::endl;
-    ladios(ELogVerbosity::Info) << "  Variable Name: " << variable_name_ << std::endl;
-    ladios(ELogVerbosity::Info) << "  Filename Prefix: " << filename_prefix_ << std::endl;
-    ladios(ELogVerbosity::Info) << "  Mode: " << static_cast<int>(mode_) << std::endl;
-  }
+   void AdiosConnector::PrintConfiguration() const
+   {
+     ladios(ELogVerbosity::Info) << "ADIOS2 Configuration:" << std::endl;
+     ladios(ELogVerbosity::Info) << "  Engine Type: " << engine_type_ << std::endl;
+     ladios(ELogVerbosity::Info) << "  IO Name: " << io_name_ << std::endl;
+     ladios(ELogVerbosity::Info) << "  Variable Name: " << variable_name_ << std::endl;
+     ladios(ELogVerbosity::Info) << "  Filename Prefix: " << filename_prefix_ << std::endl;
+     ladios(ELogVerbosity::Info) << "  Mode: " << static_cast<int>(mode_) << std::endl;
+     ladios(ELogVerbosity::Info) << "  Network Interface: " << network_interface_ << std::endl;
+     ladios(ELogVerbosity::Info) << "  Network Port: " << network_port_ << std::endl;
+   }
 
-  void AdiosConnector::CreateEngine()
-  {
-    if (!adios_engine_ || !io_engine_)
-      return;
-    
-    // Create filename based on prefix
-    std::string filename = filename_prefix_ + "." + engine_type_;
+   void AdiosConnector::CreateEngine()
+   {
+     if (!adios_engine_ || !io_engine_)
+       return;
+     
+     // For SST engine, configure network settings
+     if (engine_type_ == "sst")
+     {
+       io_engine_->SetParameter("NetworkInterface", network_interface_);
+       io_engine_->SetParameter("Port", std::to_string(network_port_));
+     }
+     
+     // Create filename based on prefix
+     std::string filename = filename_prefix_ + "." + engine_type_;
     
     // Open engine in the specified mode
     current_engine_ = std::make_unique<adios2::Engine>(io_engine_->Open(filename, mode_));
