@@ -70,8 +70,8 @@ else()
   message(WARNING "pybind11_json target not found; include path must be set manually")
 endif()
 
-target_link_libraries(${projectname} PRIVATE datachannel-static nlohmann_json::nlohmann_json )
-target_link_libraries(${PYPROJECT} PRIVATE ${projectname} datachannel-static nlohmann_json::nlohmann_json)
+target_link_libraries(${projectname} PRIVATE datachannel nlohmann_json::nlohmann_json )
+target_link_libraries(${PYPROJECT} PRIVATE ${projectname} datachannel nlohmann_json::nlohmann_json)
 
 if(ADIOS2_FOUND OR TARGET adios_connector)
   target_compile_definitions(${PYPROJECT} PUBLIC ADIOS2_AVAILABLE)
@@ -85,8 +85,52 @@ else()
   message(STATUS "Python::Development target not available; assuming pybind11 provided the necessary linkage")
 endif()
 
-# Ensure the built extension is placed in the normal library output directory
-set_target_properties(${PYPROJECT} PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/)
+# Output directories for library and extension
+set(_lib_output_dir "${CMAKE_CURRENT_BINARY_DIR}/Release")
+set_target_properties(${PYPROJECT} PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${_lib_output_dir})
+
+# On Windows, copy dependent DLLs to the same directory as PySynavis.pyd for proper module loading.
+# This ensures that when Python imports PySynavis, Windows can locate all transitive dependencies.
+# Dependencies include:
+#   - datachannel.dll (from libdatachannel-build)
+#   - adios_connector.dll and ADIOS2 DLLs (from synavis/adios)
+if(WIN32)
+  # Define paths to dependency DLL directories
+  set(_datachannel_dll_dir "${CMAKE_BINARY_DIR}/_deps/libdatachannel-build/Release")
+  set(_adios_dll_dir "${CMAKE_CURRENT_BINARY_DIR}/adios/Release")
+  
+  # Copy datachannel.dll
+  add_custom_command(TARGET ${PYPROJECT} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${_datachannel_dll_dir}/datachannel.dll"
+      "${_lib_output_dir}/"
+    COMMENT "Copying datachannel.dll to ${_lib_output_dir}/"
+  )
+  
+  # Copy adios_connector.dll if adios subdirectory was built
+  if(EXISTS "${_adios_dll_dir}")
+    add_custom_command(TARGET ${PYPROJECT} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${_adios_dll_dir}/adios_connector.dll"
+        "${_lib_output_dir}/"
+      COMMENT "Copying adios_connector.dll to ${_lib_output_dir}/"
+    )
+    
+    # Also copy ADIOS2 runtime DLLs (adios2_core.dll, adios2_cxx11.dll) if they exist
+    add_custom_command(TARGET ${PYPROJECT} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${_adios_dll_dir}/adios2_core.dll"
+        "${_lib_output_dir}/"
+      COMMENT "Copying adios2_core.dll to ${_lib_output_dir}/"
+    )
+    add_custom_command(TARGET ${PYPROJECT} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${_adios_dll_dir}/adios2_cxx11.dll"
+        "${_lib_output_dir}/"
+      COMMENT "Copying adios2_cxx11.dll to ${_lib_output_dir}/"
+    )
+  endif()
+endif()
 
 # Do not install targets directly into the absolute build directory. That
 # creates absolute DESTINATION paths in the generated cmake_install.cmake which

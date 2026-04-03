@@ -26,6 +26,7 @@ namespace Synavis
     
     // Initialize ADIOS2
     adios_engine_ = std::make_unique<adios2::ADIOS>();
+    io_engine_ = std::make_unique<adios2::IO>(adios_engine_->DeclareIO(io_name_));
     ladios(ELogVerbosity::Info) << "ADIOS2 initialized" << std::endl;
   }
 

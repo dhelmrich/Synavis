@@ -84,7 +84,7 @@ $LibDataChannelBuildExamples = "-DLIBDATACHANNEL_BUILD_EXAMPLES=Off"
 $LibDataChannelSettings = "-DENABLE_DEBUG_LOGGING=On -DENABLE_LOCALHOST_ADDRESS=On -DENABLE_LOCAL_ADDRESS_TRANSLATION=On"
 
 # Python include dir and library using libdir.py
-$PythonIncludeDir = & python -c "from distutils.sysconfig import get_python_inc; print(get_python_inc())"
+$PythonIncludeDir = & python -c "import sysconfig; print(sysconfig.get_path('include'))"
 $PythonLibrary = & python libdir.py
 if ($null -eq $PythonLibrary -or $PythonLibrary -eq "" -or $PythonLibrary -eq "None") {
         Write-Error "Could not determine Python library path using libdir.py."
@@ -103,6 +103,7 @@ Write-Host "Python executable: $PythonExecutable"
 
 # Pass explicit Python executable to CMake to prefer the current environment's interpreter
 $PythonExeOption = "-DPython3_EXECUTABLE=`"$PythonExecutable`" -DPython_EXECUTABLE=`"$PythonExecutable`""
+$PythonCacheOptions = "-DPYTHON_INCLUDE_DIR=$PythonIncludeDir -DPYTHON_LIBRARY=$PythonLibrary"
 
 # Vcpkg toolchain option
 $VcpkgToolchainOption = ""
@@ -159,7 +160,9 @@ if ($MSVCVersion -ne "") {
     $env:CMAKE_GENERATOR_TOOLSET = $MSVCVersion
 }
 
-$PythonLibString = if ($PythonLibrary -ne "") { "-DPYTHON_LIBRARY=$PythonLibrary" } else { "" }
+# Python cache options to ensure pybind11 uses the correct Python
+# Use CACHE FORCE to ensure these values persist through vcpkg's toolchain
+$PythonCacheOptions = "-DPYTHON_INCLUDE_DIR:PATH=$PythonIncludeDir -DPYTHON_LIBRARY:PATH=$PythonLibrary -DPython3_EXECUTABLE:FILEPATH=$PythonExecutable -DPython_EXECUTABLE:FILEPATH=$PythonExecutable -DPython3_INCLUDE_DIR:PATH=$PythonIncludeDir -DPython3_LIBRARY:PATH=$PythonLibrary"
 
 $CMakeCmd = @(
     "cmake",
@@ -172,8 +175,7 @@ $CMakeCmd = @(
     $LibDataChannelBuildExamples,
     $LibDataChannelSettings,
     $Decoding,
-    "-DPYTHON_INCLUDE_DIR=$PythonIncludeDir",
-    $PythonLibString,
+    $PythonCacheOptions,
     $PythonExeOption,
     $SynavisAppBuild,
     $CMakeVerboseLogging,

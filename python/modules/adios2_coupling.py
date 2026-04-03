@@ -33,6 +33,11 @@ import matplotlib.pyplot as plt
 
 plt.ion()
 
+# Plotting state (must be global for matplotlib)
+_plt_fig = None
+_plt_ax = None
+_plt_img = None
+
 olddir = os.getcwd()
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
@@ -148,6 +153,12 @@ m.SetFilenamePrefix("synavis_output")
 m.SetNetworkInterface("localhost")
 m.SetPort(9001)
 m.StartStreaming()
+
+# Add the variable that UE will send (must match Adios2State.cpp line 63)
+m.AddVariable("data", "uint8_t")
+
+m.SetReadCallback(frame_callback)
+m.StartReader()
 m.SetDataCallback(data_callback)
 m.SetMessageCallback(message_callback)
 m.SetOnConnectedCallback(lambda: pylog.log("ADIOS2 SST streaming started"))
@@ -156,8 +167,19 @@ m.LockUntilConnected(2000)
 
 pylog.log("ADIOS2 SST streaming initialized.")
 
-pylog.log("ADIOS2 Coupling: Raw RGB frames expected from UE5 Adios2Streamer")
+pylog.log("ADIOS2 Coupling: JSON commands and data exchange ready")
 
+# Send initial JSON configuration/command to UE side
+# This mirrors the pattern from extraction.py lines 331, 350-365
+initial_commands = [
+    {"type": "query"},
+    {"type": "command", "name": "start"},
+]
+
+for cmd in initial_commands:
+    pylog.log(f"Sending JSON command: {cmd}")
+    m.SendJSON(cmd)
+    time.sleep(0.2)
 
 while True:
     try:

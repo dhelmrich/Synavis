@@ -1,15 +1,38 @@
 {
-  "FileVersion": 3,
-  "Version": 1,
-  "VersionName": "1.0",
-  "FriendlyName": "Synavis Adios2 Backend",
-  "Description": "Adios2-based backend for Synavis - plugin skeleton (no ADIOS2 dependency yet).",
-  "Category": "Synavis",
-  "Modules": [
-    {
-      "Name": "Adios2Backend",
-      "Type": "Runtime",
-      "LoadingPhase": "Default"
-    }
-  ]
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Synavis Adios2 Backend",
+	"Description": "ADIOS2 high-performance data streaming backend for Synavis. Enables cluster-deployed data acquisition with BPFile, SST, or DataServer engines.",
+	"Category": "Synavis|Backend",
+	"Modules": [
+		{
+			"Name": "Adios2Backend",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "SynavisUE",
+			"Enabled": true
+		}
+	],
+	"Icons": [
+		{
+			"Name": "favicon",
+			"Width": 64,
+			"Height": 64,
+			"Path": "favicon.ico"
+		}
+	],
+	"CreatedBy": "",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": true,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": false,
+	"Installed": false
 }
