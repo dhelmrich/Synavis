@@ -1,6 +1,9 @@
 #ifdef ADIOS2_AVAILABLE
 #include "AdiosConnector.hpp"
 #include <adios2.h>
+#include <filesystem>
+#include <stdexcept>
+#include <chrono>
 
 namespace Synavis
 {
@@ -11,24 +14,48 @@ namespace Synavis
    {
      network_interface_ = "localhost";
      network_port_ = 9001;
+     reader_cleanup_done_ = false;
+     connection_retries_ = 10;
+     connection_retry_delay_ms_ = 500;
    }
 
-  AdiosConnector::~AdiosConnector()
+AdiosConnector::~AdiosConnector()
+{
+  StopStreaming();
+  
+  // Only stop reader if not already cleaned up
+  if (!reader_cleanup_done_)
   {
-    StopStreaming();
     StopReader();
   }
+}
 
-  void AdiosConnector::Initialize()
+void AdiosConnector::Initialize()
+{
+  running_ = true;
+  state_ = EConnectionState::STARTUP;
+  
+  adios_engine_ = std::make_unique<adios2::ADIOS>();
+  
+  io_engine_ = std::make_unique<adios2::IO>(adios_engine_->DeclareIO(io_name_));
+  
+  if (engine_type_ == "sst")
   {
-    running_ = true;
-    state_ = EConnectionState::STARTUP;
-    
-    // Initialize ADIOS2
-    adios_engine_ = std::make_unique<adios2::ADIOS>();
-    io_engine_ = std::make_unique<adios2::IO>(adios_engine_->DeclareIO(io_name_));
-    ladios(ELogVerbosity::Info) << "ADIOS2 initialized" << std::endl;
+    io_engine_->SetParameter("TimeoutSec", "10");
+    io_engine_->SetParameter("RendezvousNumRank", "1");
+    io_engine_->SetParameter("ManagesNetworkStack", "true");
   }
+  
+  io_engine_reader_ = std::make_unique<adios2::IO>(adios_engine_->DeclareIO(io_name_ + "_Reader"));
+  
+  if (engine_type_ == "sst")
+  {
+    io_engine_reader_->SetParameter("TimeoutSec", "10");
+    io_engine_reader_->SetParameter("RendezvousNumRank", "1");
+  }
+  
+  ladios(ELogVerbosity::Info) << "ADIOS2 initialized" << std::endl;
+}
 
   void AdiosConnector::StartStreaming()
   {
@@ -36,15 +63,11 @@ namespace Synavis
       return;
     
     streaming_ = true;
-    state_ = EConnectionState::CONNECTED;
     
     CreateEngine();
     StartWorkerThread();
     
     ladios(ELogVerbosity::Info) << "ADIOS2 streaming started" << std::endl;
-    
-    if (OnConnectedCallback.has_value())
-      OnConnectedCallback.value()();
   }
 
   void AdiosConnector::StopStreaming()
@@ -83,6 +106,7 @@ namespace Synavis
   void AdiosConnector::SetEngineType(const std::string& EngineType)
   {
     engine_type_ = EngineType;
+    std::transform(engine_type_.begin(), engine_type_.end(), engine_type_.begin(), ::tolower);
   }
 
   void AdiosConnector::SetIOName(const std::string& IOName)
@@ -110,12 +134,22 @@ namespace Synavis
      network_port_ = Port;
    }
 
-   void AdiosConnector::SetNetworkInterface(const std::string& Interface)
-   {
-     network_interface_ = Interface;
-   }
+    void AdiosConnector::SetNetworkInterface(const std::string& Interface)
+    {
+      network_interface_ = Interface;
+    }
+    
+    void AdiosConnector::SetConnectionRetries(int retries)
+    {
+      connection_retries_ = retries;
+    }
+    
+    void AdiosConnector::SetConnectionRetryDelayMs(int delay_ms)
+    {
+      connection_retry_delay_ms_ = delay_ms;
+    }
 
-  void AdiosConnector::SendData(const binary& Data)
+   void AdiosConnector::SendData(const binary& Data)
   {
     if (!streaming_ || !current_engine_)
       return;
@@ -297,12 +331,27 @@ namespace Synavis
 
   void AdiosConnector::LockUntilConnected(unsigned additional_wait)
   {
-    (void)additional_wait;
-    // ADIOS2 doesn't need blocking connect - just wait for streaming state
-    while (streaming_ && state_ != EConnectionState::CONNECTED)
+    ladios(ELogVerbosity::Info) << "Waiting for connection (timeout=" << additional_wait << "ms)..." << std::endl;
+    
+    unsigned elapsed = 0;
+    const unsigned check_interval = 50;
+    
+    while (state_ != EConnectionState::CONNECTED && state_ != EConnectionState::FAILED)
     {
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      std::this_thread::sleep_for(std::chrono::milliseconds(check_interval));
+      elapsed += check_interval;
+      
+      if (additional_wait > 0 && elapsed >= additional_wait)
+      {
+        ladios(ELogVerbosity::Warning) << "LockUntilConnected timeout after " << elapsed << "ms, state=" << static_cast<int>(state_.load()) << std::endl;
+        break;
+      }
     }
+    
+    ladios(ELogVerbosity::Info) << "Connection status: state=" << static_cast<int>(state_.load()) << ", elapsed=" << elapsed << "ms" << std::endl;
+    
+    if (state_ == EConnectionState::CONNECTED && additional_wait > 0)
+      std::this_thread::sleep_for(std::chrono::milliseconds(additional_wait));
   }
 
    void AdiosConnector::PrintConfiguration() const
@@ -317,26 +366,90 @@ namespace Synavis
      ladios(ELogVerbosity::Info) << "  Network Port: " << network_port_ << std::endl;
    }
 
-   void AdiosConnector::CreateEngine()
-   {
-     if (!adios_engine_ || !io_engine_)
-       return;
-     
-     // For SST engine, configure network settings
-     if (engine_type_ == "sst")
-     {
-       io_engine_->SetParameter("NetworkInterface", network_interface_);
-       io_engine_->SetParameter("Port", std::to_string(network_port_));
+      void AdiosConnector::CreateEngine()
+      {
+        if (!adios_engine_ || !io_engine_)
+          return;
+        
+        if (engine_type_ == "sst")
+        {
+          io_engine_->SetParameter("NetworkInterface", network_interface_);
+          io_engine_->SetParameter("Port", std::to_string(network_port_));
+          io_engine_->SetParameter("RendezvousReaderCount", "0");
+        }
+       
+       for (const auto& [name, type] : variable_types_)
+       {
+         if (type == "uint8_t")
+         {
+           binary_variables_[name] = io_engine_->DefineVariable<uint8_t>(name);
+           binary_variables_reader_[name] = io_engine_reader_->DefineVariable<uint8_t>(name);
+         }
+         else if (type == "float64" || type == "double")
+         {
+           float64_variables_[name] = io_engine_->DefineVariable<double>(name);
+           float64_variables_reader_[name] = io_engine_reader_->DefineVariable<double>(name);
+         }
+         else if (type == "float32" || type == "float")
+         {
+           float32_variables_[name] = io_engine_->DefineVariable<float>(name);
+           float32_variables_reader_[name] = io_engine_reader_->DefineVariable<float>(name);
+         }
+         else if (type == "int32" || type == "int")
+         {
+           int32_variables_[name] = io_engine_->DefineVariable<int32_t>(name);
+           int32_variables_reader_[name] = io_engine_reader_->DefineVariable<int32_t>(name);
+         }
+         else if (type == "string")
+         {
+           string_variables_[name] = io_engine_->DefineVariable<std::string>(name);
+           string_variables_reader_[name] = io_engine_reader_->DefineVariable<std::string>(name);
+         }
+         ladios(ELogVerbosity::Info) << "Defined variable '" << name << "' with type '" << type << "'" << std::endl;
+       }
+       
+        std::string filename = filename_prefix_;
+       
+       ladios(ELogVerbosity::Info) << "Attempting to open engine with retry logic (retries=" << connection_retries_ 
+                                    << ", delay_ms=" << connection_retry_delay_ms_ << ")" << std::endl;
+       
+       bool engine_opened = false;
+       for (int attempt = 1; attempt <= connection_retries_; ++attempt)
+       {
+         try
+         {
+           current_engine_ = std::make_unique<adios2::Engine>(io_engine_->Open(filename, mode_));
+           engine_opened = true;
+           ladios(ELogVerbosity::Info) << "ADIOS2 engine opened successfully on attempt " << attempt << std::endl;
+           break;
+         }
+         catch (const std::exception& e)
+         {
+           ladios(ELogVerbosity::Warning) << "Engine open attempt " << attempt << " failed: " << e.what() << std::endl;
+           
+           if (attempt < connection_retries_)
+           {
+             std::this_thread::sleep_for(std::chrono::milliseconds(connection_retry_delay_ms_));
+           }
+         }
+       }
+       
+       if (!engine_opened)
+       {
+         ladios(ELogVerbosity::Error) << "Failed to open ADIOS2 engine after " << connection_retries_ << " attempts" << std::endl;
+         state_ = EConnectionState::FAILED;
+         if (OnFailedCallback.has_value())
+           OnFailedCallback.value()();
+         return;
+       }
+       
+       ladios(ELogVerbosity::Info) << "ADIOS2 engine opened with filename: " << filename << std::endl;
+       
+       state_ = EConnectionState::CONNECTED;
+       
+       if (OnConnectedCallback.has_value())
+         OnConnectedCallback.value()();
      }
-     
-     // Create filename based on prefix
-     std::string filename = filename_prefix_ + "." + engine_type_;
-    
-    // Open engine in the specified mode
-    current_engine_ = std::make_unique<adios2::Engine>(io_engine_->Open(filename, mode_));
-    
-    ladios(ELogVerbosity::Info) << "ADIOS2 engine opened with filename: " << filename << std::endl;
-  }
 
   void AdiosConnector::CloseEngine()
   {
@@ -350,15 +463,19 @@ namespace Synavis
 
   void AdiosConnector::CreateReaderEngine()
   {
-    if (!adios_engine_ || !io_engine_)
+    if (!adios_engine_ || !io_engine_reader_)
       return;
-    
-    // Create filename based on prefix for reading
-    std::string filename = filename_prefix_ + "." + engine_type_;
-    
-    // Open reader engine in read mode
-    reader_engine_ = std::make_unique<adios2::Engine>(io_engine_->Open(filename, adios2::Mode::Read));
-    
+  
+    if (engine_type_ == "sst")
+    {
+      io_engine_reader_->SetParameter("TimeoutSec", "10");
+      io_engine_reader_->SetParameter("RendezvousNumRank", "1");
+    }
+  
+    std::string filename = filename_prefix_;
+  
+    reader_engine_ = std::make_unique<adios2::Engine>(io_engine_reader_->Open(filename, adios2::Mode::Read));
+  
     ladios(ELogVerbosity::Info) << "ADIOS2 reader engine opened with filename: " << filename << std::endl;
   }
 
@@ -378,7 +495,6 @@ namespace Synavis
     if (!current_engine_ || !streaming_)
       return false;
     
-    // Begin new step
     auto status = current_engine_->BeginStep();
     if (status != adios2::StepStatus::OK)
     {
@@ -411,7 +527,8 @@ namespace Synavis
           binary_variables_[msg.name] = io_engine_->DefineVariable<uint8_t>(msg.name);
         }
         
-        current_engine_->Put(binary_variables_[msg.name], msg.data.data(), adios2::Mode::Sync);
+        std::vector<uint8_t> data(msg.data.begin(), msg.data.end());
+        current_engine_->Put(binary_variables_[msg.name], data.data(), adios2::Mode::Sync);
       }
       else if (msg.type == "float64")
       {
@@ -465,7 +582,6 @@ namespace Synavis
       step_messages.pop();
     }
     
-    // End the step
     current_engine_->EndStep();
     
     return true;
@@ -475,7 +591,6 @@ namespace Synavis
   {
     if (current_engine_)
     {
-      // Perform any pending operations
       current_engine_->PerformPuts();
     }
   }
@@ -535,10 +650,7 @@ namespace Synavis
     
     if (reader_engine_)
     {
-      try {
-        reader_engine_->Close();
-      } catch (...) {
-      }
+      reader_engine_->Close();
       reader_engine_.reset();
     }
     
@@ -548,6 +660,7 @@ namespace Synavis
     }
     
     reader_running_ = false;
+    reader_cleanup_done_ = true;
     ladios(ELogVerbosity::Info) << "ADIOS2 reader stopped" << std::endl;
   }
 
@@ -569,44 +682,42 @@ namespace Synavis
     return false;
   }
 
-  void AdiosConnector::ReaderLoop()
-  {
-    while (!reader_shutdown_ && reader_running_)
-    {
-      if (ReadStep())
-      {
-        if (ReadCallback.has_value())
-        {
-          for (const auto& [name, var] : string_variables_)
-          {
-            try {
+   void AdiosConnector::ReaderLoop()
+   {
+     while (!reader_shutdown_ && reader_running_)
+     {
+       if (ReadStep())
+       {
+         if (ReadCallback.has_value())
+         {
+            for (const auto& [name, var] : string_variables_reader_)
+            {
+              if (!reader_engine_)
+                continue;
               std::string value;
               auto var_copy = var;
               var_copy.SetSelection({{0}, {1}});
               reader_engine_->Get(var_copy, value);
               ReadCallback.value()(value, name);
-            } catch (...) {
             }
-          }
-          
-          for (const auto& [name, var] : binary_variables_)
-          {
-            try {
+           
+            for (const auto& [name, var] : binary_variables_reader_)
+            {
+              if (!reader_engine_)
+                continue;
               auto var_copy = var;
               var_copy.SetSelection({{0}, {1}});
               size_t count = var_copy.Count()[0];
               std::vector<uint8_t> data(count);
               reader_engine_->Get(var_copy, data.data());
               ReadCallback.value()(data, name);
-            } catch (...) {
             }
+           
+            reader_engine_->EndStep();
           }
-          
-          reader_engine_->EndStep();
         }
-      }
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-  }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+     }
+   }
 }
 #endif

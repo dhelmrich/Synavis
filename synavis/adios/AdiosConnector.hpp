@@ -13,6 +13,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <queue>
+#include <filesystem>
 #include <adios2.h>
 #include "adios_export.hpp"
 #include "Synavis.hpp"
@@ -41,13 +42,19 @@ public:
    void SetIOName(const std::string& IOName);
    void SetVariableName(const std::string& VariableName);
    void SetMode(::adios2::Mode mode);
-   void SetFilenamePrefix(const std::string& FilenamePrefix);
+    void SetFilenamePrefix(const std::string& FilenamePrefix);
 
-   // Network configuration
-   void SetPort(int Port);
-   void SetNetworkInterface(const std::string& Interface);
-   int GetPort() const { return network_port_; }
-   std::string GetNetworkInterface() const { return network_interface_; }
+    // Network configuration
+    void SetPort(int Port);
+    void SetNetworkInterface(const std::string& Interface);
+    int GetPort() const { return network_port_; }
+    std::string GetNetworkInterface() const { return network_interface_; }
+    
+    // Connection retry configuration
+    void SetConnectionRetries(int retries);
+    void SetConnectionRetryDelayMs(int delay_ms);
+    int GetConnectionRetries() const { return connection_retries_; }
+    int GetConnectionRetryDelayMs() const { return connection_retry_delay_ms_; }
 
   // Sending data - mirrors DataConnector interface
   virtual void SendData(const binary& Data);
@@ -102,15 +109,19 @@ protected:
   std::atomic<bool> streaming_{false};
 
    // Configuration
-   std::string engine_type_{"sst"};
-   std::string io_name_{"AdiosIO"};
-   std::string variable_name_{"SynavisData"};
-   std::string filename_prefix_{"synavis_output"};
-   adios2::Mode mode_{adios2::Mode::Write};
+    std::string engine_type_{"sst"};
+    std::string io_name_{"AdiosIO"};
+    std::string variable_name_{"SynavisData"};
+    std::string filename_prefix_{"synavis_output"};
+    adios2::Mode mode_{adios2::Mode::Write};
+    
+   // Connection retry settings (for SST engine startup timing)
+    int connection_retries_{10};
+    int connection_retry_delay_ms_{500};
 
    // Network configuration (for SST engine)
-   std::string network_interface_{"localhost"};
-   int network_port_{9001};
+    std::string network_interface_{"localhost"};
+    int network_port_{9001};
 
   // ADIOS2 objects
   std::unique_ptr<adios2::ADIOS> adios_engine_;
@@ -122,6 +133,15 @@ protected:
   std::map<std::string, adios2::Variable<int32_t>> int32_variables_;
   std::map<std::string, adios2::Variable<std::string>> string_variables_;
   std::map<std::string, std::string> variable_types_;
+  
+  // Reader-specific IO and engine
+  std::unique_ptr<adios2::IO> io_engine_reader_;
+  std::unique_ptr<adios2::Engine> reader_engine_;
+  std::map<std::string, adios2::Variable<uint8_t>> binary_variables_reader_;
+  std::map<std::string, adios2::Variable<double>> float64_variables_reader_;
+  std::map<std::string, adios2::Variable<float>> float32_variables_reader_;
+  std::map<std::string, adios2::Variable<int32_t>> int32_variables_reader_;
+  std::map<std::string, adios2::Variable<std::string>> string_variables_reader_;
 
   // Callbacks
   std::optional<std::function<void(const binary&)>> DataReceptionCallback;
@@ -140,7 +160,7 @@ protected:
   std::atomic<bool> shutdown_requested_{false};
   std::atomic<bool> reader_running_{false};
   std::atomic<bool> reader_shutdown_{false};
-  std::unique_ptr<adios2::Engine> reader_engine_{nullptr};
+  std::atomic<bool> reader_cleanup_done_{false};
 
   // Message queue for async processing
   struct QueuedMessage
