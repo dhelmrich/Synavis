@@ -27,3 +27,7 @@ target_include_directories(${Folder}
 
 target_link_libraries(${Folder} PRIVATE Synavis datachannel-static nlohmann_json::nlohmann_json datachannel-static)
 
+# Copy runtime DLLs
+include(${CMAKE_CURRENT_LIST_DIR}/../copy_dlls.cmake)
+CONFIGURE_DLL_COPY(${Folder} "${CMAKE_CURRENT_SOURCE_DIR}/..")
+

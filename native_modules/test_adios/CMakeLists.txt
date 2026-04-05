@@ -3,6 +3,13 @@
 # PROJECTNAME: ${PROJECTNAME_UPPER}
 # path: ${librarypath}
 
+# if adios2 is not available, skip this test
+find_package(ADIOS2 QUIET)
+if(NOT ADIOS2_FOUND)
+  message(STATUS "ADIOS2 not found, skipping ${Folder} test")
+  return()
+endif()
+
 get_filename_component(Folder ${CMAKE_CURRENT_LIST_DIR} NAME)
 string(REPLACE " " "_" Folder ${Folder})
 
@@ -25,7 +32,15 @@ target_include_directories(${Folder}
 
 )
 
-target_link_libraries(${Folder} PRIVATE Synavis datachannel-static nlohmann_json::nlohmann_json datachannel-static)
+target_link_libraries(${Folder} PRIVATE Synavis datachannel-static nlohmann_json::nlohmann_json datachannel-static adios_connector)
+
+if(TARGET adios2::adios2)
+  target_link_libraries(${Folder} PUBLIC adios2::adios2)
+# Fallback to variable-based approach (system install)
+elseif(ADIOS2_FOUND)
+  target_include_directories(${Folder} PUBLIC ${ADIOS2_INCLUDE_DIRS})
+  target_link_libraries(${Folder} PUBLIC ${ADIOS2_LIBRARIES})
+endif()
 
 # Copy runtime DLLs
 include(${CMAKE_CURRENT_LIST_DIR}/../copy_dlls.cmake)

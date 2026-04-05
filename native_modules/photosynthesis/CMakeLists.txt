@@ -166,3 +166,7 @@ target_link_libraries(${Folder}
   ${KLU_LIB}
 )
 
+# Copy runtime DLLs
+include(${CMAKE_CURRENT_LIST_DIR}/../copy_dlls.cmake)
+CONFIGURE_DLL_COPY(${Folder} "${CMAKE_CURRENT_SOURCE_DIR}/..")
+
