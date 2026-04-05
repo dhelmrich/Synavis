@@ -50,7 +50,7 @@ else:
 
 import PySynavis as syn
 
-syn.SetGlobalLogVerbosity(syn.LogVerbosity.LogWarning)
+syn.SetGlobalLogVerbosity(syn.LogVerbosity.LogVerbose)
 pylog = syn.Logger()
 pylog.setidentity("Adios2Coupling")
 pylog.rotateLogFile("adios2_coupling.log")
@@ -156,6 +156,8 @@ m.StartStreaming()
 
 # Add the variable that UE will send (must match Adios2State.cpp line 63)
 m.AddVariable("data", "uint8_t")
+
+m.StartStreaming()
 
 m.SetReadCallback(frame_callback)
 m.StartReader()
