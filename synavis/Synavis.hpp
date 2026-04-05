@@ -320,6 +320,7 @@ namespace Synavis
     VIDEO,
     CLOSED,
     RTCERROR,
+    FAILED,
   };
 
   enum class SYNAVIS_EXPORT EBridgeConnectionType
