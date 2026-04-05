@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Components/ActorComponent.h"
 #include "SynavisCommunicationInterface.h"
 #include "Adios2Streamer.generated.h"
 
@@ -47,9 +48,16 @@ public:
   UFUNCTION(BlueprintCallable, Category="ADIOS2|Signaling")
   FString GetSignalingConfig() const;
 
+  void CaptureFrame();
+
+  virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+
 protected:
   TSharedPtr<class FAdios2State> AdiosState;
 
   std::function<void(int32, const TArray<uint8>&)> DataCallback;
   std::function<void(int32, const FString&)> MessageCallback;
+
+  USceneCaptureComponent2D* SceneCapture = nullptr;
+  bool bNeedsRenderThreadSync = false;
 };

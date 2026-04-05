@@ -1,11 +1,15 @@
 #include "Adios2Streamer.h"
 #include "Adios2State.h"
 #include "Engine/World.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "Components/SceneCaptureComponent2D.h"
+#include "Async/Async.h"
 #include "Misc/OutputDeviceNull.h"
 
 UAdios2Streamer::UAdios2Streamer()
 {
   AdiosState = MakeShared<FAdios2State>();
+  PrimaryComponentTick.bCanEverTick = true;
 }
 
 UAdios2Streamer::~UAdios2Streamer()
@@ -41,7 +45,7 @@ void UAdios2Streamer::StopStreaming()
 int32 UAdios2Streamer::RegisterDataSourceCpp(
   const std::function<void(int32, const TArray<uint8>&)>& OnData,
   const std::function<void(int32, const FString&)>& OnMessage,
-  USceneCaptureComponent2D* SceneCapture,
+  USceneCaptureComponent2D* InSceneCapture,
   bool DedicatedChannel,
   bool AcceptsInboundMessages)
 {
@@ -50,6 +54,11 @@ int32 UAdios2Streamer::RegisterDataSourceCpp(
   static int32 NextHandler = 10000;
   int32 Assigned = NextHandler++;
   
+  this->SceneCapture = InSceneCapture;
+  bNeedsRenderThreadSync = true;
+  
+  UE_LOG(LogTemp, Log, TEXT("UAdios2Streamer: SceneCapture stored for handler=%d"), Assigned);
+
   return Assigned;
 }
 
@@ -131,3 +140,92 @@ void UAdios2Streamer::SetMessageCallback(const std::function<void(int32, const F
   MessageCallback = Callback;
   UE_LOG(LogTemp, Log, TEXT("UAdios2Streamer: Message callback set"))
 }
+
+void UAdios2Streamer::CaptureFrame()
+{
+  if (!SceneCapture || !SceneCapture->TextureTarget)
+  {
+    UE_LOG(LogTemp, Verbose, TEXT("UAdios2Streamer: No valid SceneCapture or TextureTarget to capture from"))
+    return;
+  }
+
+  UTextureRenderTarget2D* RenderTarget = SceneCapture->TextureTarget;
+  if (!RenderTarget)
+  {
+    UE_LOG(LogTemp, Warning, TEXT("UAdios2Streamer: RenderTarget is null"))
+    return;
+  }
+
+  UE_LOG(LogTemp, Verbose, TEXT("UAdios2Streamer: Capturing frame from SceneCapture (Width=%d Height=%d)"), RenderTarget->SizeX, RenderTarget->SizeY);
+
+  TPromise<TArray<FColor>> Promise;
+  TFuture<TArray<FColor>> Future = Promise.GetFuture();
+
+  AsyncTask(ENamedThreads::GameThread, [WeakRenderTarget = TWeakObjectPtr<UTextureRenderTarget2D>(RenderTarget), Promise = MoveTemp(Promise)]() mutable {
+    TArray<FColor> PixelData;
+
+    UTextureRenderTarget2D* RT = WeakRenderTarget.Get();
+    if (!RT)
+    {
+      UE_LOG(LogTemp, Warning, TEXT("UAdios2Streamer: RGB readback skipped because render target is no longer valid"));
+      Promise.SetValue(MoveTemp(PixelData));
+      return;
+    }
+
+    FTextureRenderTargetResource* RTResource = RT->GameThread_GetRenderTargetResource();
+    if (!RTResource)
+    {
+      UE_LOG(LogTemp, Warning, TEXT("UAdios2Streamer: Failed to get render target resource for RGB readback"));
+      Promise.SetValue(MoveTemp(PixelData));
+      return;
+    }
+
+    FReadSurfaceDataFlags ReadFlags(RCM_UNorm);
+    ReadFlags.SetLinearToGamma(false);
+
+    if (!RTResource->ReadPixels(PixelData, ReadFlags))
+    {
+      UE_LOG(LogTemp, Warning, TEXT("UAdios2Streamer: RGB readback failed while reading pixels"));
+      PixelData.Reset();
+    }
+
+    Promise.SetValue(MoveTemp(PixelData));
+  });
+
+  TArray<FColor> PixelColors = Future.Get();
+  
+  if (PixelColors.Num() == 0)
+  {
+    UE_LOG(LogTemp, Warning, TEXT("UAdios2Streamer: No pixel data captured"))
+    return;
+  }
+
+  TArray<uint8> FrameData;
+  FrameData.SetNum(PixelColors.Num() * 4);
+  
+  for (int32 i = 0; i < PixelColors.Num(); ++i)
+  {
+    FrameData[i * 4 + 0] = PixelColors[i].R;
+    FrameData[i * 4 + 1] = PixelColors[i].G;
+    FrameData[i * 4 + 2] = PixelColors[i].B;
+    FrameData[i * 4 + 3] = PixelColors[i].A;
+  }
+
+  UE_LOG(LogTemp, Log, TEXT("UAdios2Streamer: Frame captured, size=%d bytes"), FrameData.Num());
+
+  SendBinaryToConnection(10000, 0, FrameData);
+}
+
+void UAdios2Streamer::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+{
+  Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+  
+  if (!AdiosState || !AdiosState->IsRunning() || !SceneCapture)
+  {
+    return;
+  }
+  
+  CaptureFrame();
+}
+
+

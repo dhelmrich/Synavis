@@ -55,26 +55,32 @@ void FAdios2State::StartStreaming(const FString& EngineType, const FString& File
   const char* engineTypeCStr = TCHAR_TO_UTF8(*EngineTypeStr);
   const char* filenamePrefixCStr = TCHAR_TO_UTF8(*FilenamePrefixStr);
 
-  UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - setting engine type to %s"), engineTypeCStr)
-  adios2_set_engine(IOPtr, engineTypeCStr);
+  UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - setting engine type to %hs"), engineTypeCStr)
+  adios2_error engineResult = adios2_set_engine(IOPtr, engineTypeCStr);
+  UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - adios2_set_engine() returned error=%d"), engineResult)
 
   if (EngineTypeStr == TEXT("sst"))
   {
     const char* hostnameCStr = TCHAR_TO_UTF8(*Hostname);
-    UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - setting NetworkInterface=%s, Port=%d"), hostnameCStr, Port)
+    UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - setting NetworkInterface=%hs, Port=%d"), hostnameCStr, Port)
     adios2_set_parameter(IOPtr, "NetworkInterface", hostnameCStr);
     
     char portStr[16];
     sprintf_s(portStr, "%d", Port);
-    adios2_set_parameter(IOPtr, "Port", portStr);
+    adios2_error portResult = adios2_set_parameter(IOPtr, "Port", portStr);
+    UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - adios2_set_parameter(Port) returned error=%d"), portResult)
   }
 
   UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - defining variables"))
-  adios2_define_variable(IOPtr, "data", adios2_type_uint8_t, 0, NULL, NULL, NULL, adios2_constant_dims_false);
-  adios2_define_variable(IOPtr, "string", adios2_type_string, 0, NULL, NULL, NULL, adios2_constant_dims_false);
+  adios2_variable* dataVar = adios2_define_variable(IOPtr, "data", adios2_type_uint8_t, 0, NULL, NULL, NULL, adios2_constant_dims_false);
+  UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - adios2_define_variable(data) returned var=%p"), dataVar)
+  adios2_variable* stringVar = adios2_define_variable(IOPtr, "string", adios2_type_string, 0, NULL, NULL, NULL, adios2_constant_dims_false);
+  UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - adios2_define_variable(string) returned var=%p"), stringVar)
+  adios2_variable* jsonVar = adios2_define_variable(IOPtr, "json", adios2_type_string, 0, NULL, NULL, NULL, adios2_constant_dims_false);
+  UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - adios2_define_variable(json) returned var=%p"), jsonVar)
 
-  const char* engineNameCStr = TCHAR_TO_UTF8(*FString(FilenamePrefixStr + "." + EngineTypeStr));
-  UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - opening engine with name %s"), engineNameCStr)
+  const char* engineNameCStr = TCHAR_TO_UTF8(*FilenamePrefixStr);
+  UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - opening engine with name %hs"), engineNameCStr)
   EnginePtr = adios2_open(IOPtr, engineNameCStr, adios2_mode_write);
   UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - adios2_open() returned EnginePtr=%p"), EnginePtr)
   bRunning = true;
@@ -90,13 +96,16 @@ void FAdios2State::StopStreaming()
 
   if (EnginePtr)
   {
-    adios2_close(EnginePtr);
+    adios2_error closeResult = adios2_close(EnginePtr);
+    UE_LOG(LogTemp, Log, TEXT("FAdios2State::StopStreaming() - adios2_close() returned error=%d"), closeResult)
     EnginePtr = nullptr;
   }
 
   if (IOPtr)
   {
-    adios2_remove_io(nullptr, AdiosPtr, "AdiosIO");
+    adios2_bool removeResult = adios2_true;
+    adios2_error removeIoResult = adios2_remove_io(&removeResult, AdiosPtr, "AdiosIO");
+    UE_LOG(LogTemp, Log, TEXT("FAdios2State::StopStreaming() - adios2_remove_io() returned error=%d, result=%d"), removeIoResult, removeResult)
     IOPtr = nullptr;
   }
 
@@ -128,14 +137,18 @@ bool FAdios2State::SendData(const TArray<uint8>& Data)
   UE_LOG(LogTemp, Log, TEXT("FAdios2State::SendData() - calling adios2_begin_step"))
 
   adios2_step_status status;
-  if (adios2_begin_step(EnginePtr, adios2_step_mode_update, 0.0f, &status) != adios2_error_none)
+  adios2_error beginStepResult = adios2_begin_step(EnginePtr, adios2_step_mode_update, 0.0f, &status);
+  UE_LOG(LogTemp, Log, TEXT("FAdios2State::SendData() - adios2_begin_step returned error=%d, status=%d"), beginStepResult, status)
+  if (beginStepResult != adios2_error_none)
   {
     UE_LOG(LogTemp, Warning, TEXT("FAdios2State::SendData() - adios2_begin_step failed"))
     return false;
   }
   UE_LOG(LogTemp, Log, TEXT("FAdios2State::SendData() - adios2_begin_step succeeded, calling adios2_put_by_name"))
 
-  if (adios2_put_by_name(EnginePtr, variableNameCStr, Data.GetData(), adios2_mode_sync) != adios2_error_none)
+  adios2_error putResult = adios2_put_by_name(EnginePtr, variableNameCStr, Data.GetData(), adios2_mode_sync);
+  UE_LOG(LogTemp, Log, TEXT("FAdios2State::SendData() - adios2_put_by_name returned error=%d"), putResult)
+  if (putResult != adios2_error_none)
   {
     UE_LOG(LogTemp, Warning, TEXT("FAdios2State::SendData() - adios2_put_by_name failed"))
     adios2_end_step(EnginePtr);
@@ -143,11 +156,16 @@ bool FAdios2State::SendData(const TArray<uint8>& Data)
   }
   UE_LOG(LogTemp, Log, TEXT("FAdios2State::SendData() - adios2_put_by_name succeeded, calling adios2_end_step"))
 
-  if (adios2_end_step(EnginePtr) != adios2_error_none)
+  adios2_error endStepResult = adios2_end_step(EnginePtr);
+  UE_LOG(LogTemp, Log, TEXT("FAdios2State::SendData() - adios2_end_step returned error=%d"), endStepResult)
+  if (endStepResult != adios2_error_none)
   {
     UE_LOG(LogTemp, Warning, TEXT("FAdios2State::SendData() - adios2_end_step failed"))
     return false;
   }
+
+  adios2_error flushResult = adios2_flush(EnginePtr);
+  UE_LOG(LogTemp, Log, TEXT("FAdios2State::SendData() - adios2_flush returned error=%d"), flushResult)
 
   UE_LOG(LogTemp, Log, TEXT("FAdios2State::SendData() - completed successfully"))
   return true;
@@ -222,24 +240,33 @@ bool FAdios2State::SendJSON(const FString& JSON)
   const char* jsonCStr = TCHAR_TO_UTF8(*JSON);
 
   adios2_step_status status;
-  if (adios2_begin_step(EnginePtr, adios2_step_mode_update, 0.0f, &status) != adios2_error_none)
+  adios2_error beginStepResult = adios2_begin_step(EnginePtr, adios2_step_mode_update, 0.0f, &status);
+  UE_LOG(LogTemp, Log, TEXT("FAdios2State::SendJSON() - adios2_begin_step returned error=%d, status=%d"), beginStepResult, status)
+  if (beginStepResult != adios2_error_none)
   {
     UE_LOG(LogTemp, Warning, TEXT("FAdios2State::SendJSON() - adios2_begin_step failed"))
     return false;
   }
 
-  if (adios2_put_by_name(EnginePtr, variableNameCStr, jsonCStr, adios2_mode_sync) != adios2_error_none)
+  adios2_error putResult = adios2_put_by_name(EnginePtr, variableNameCStr, jsonCStr, adios2_mode_sync);
+  UE_LOG(LogTemp, Log, TEXT("FAdios2State::SendJSON() - adios2_put_by_name returned error=%d"), putResult)
+  if (putResult != adios2_error_none)
   {
     UE_LOG(LogTemp, Warning, TEXT("FAdios2State::SendJSON() - adios2_put_by_name failed"))
     adios2_end_step(EnginePtr);
     return false;
   }
 
-  if (adios2_end_step(EnginePtr) != adios2_error_none)
+  adios2_error endStepResult = adios2_end_step(EnginePtr);
+  UE_LOG(LogTemp, Log, TEXT("FAdios2State::SendJSON() - adios2_end_step returned error=%d"), endStepResult)
+  if (endStepResult != adios2_error_none)
   {
     UE_LOG(LogTemp, Warning, TEXT("FAdios2State::SendJSON() - adios2_end_step failed"))
     return false;
   }
+
+  adios2_error flushResult = adios2_flush(EnginePtr);
+  UE_LOG(LogTemp, Log, TEXT("FAdios2State::SendJSON() - adios2_flush returned error=%d"), flushResult)
 
   UE_LOG(LogTemp, Log, TEXT("FAdios2State::SendJSON() - completed successfully"))
   return true;
