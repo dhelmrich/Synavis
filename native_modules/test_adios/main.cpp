@@ -10,10 +10,14 @@
 
 static Synavis::Logger::LoggerInstance ltest = Synavis::Logger::Get()->LogStarter("AdiosTest");
 
-
-int main()
+int main(int argc, char** argv)
 {
+  Synavis::Logger::Get()->SetVerbosity(Synavis::ELogVerbosity::Verbose);
+  Synavis::Logger::Get()->SetupLogfileRotate("adios_test.log");
   ltest(Synavis::ELogVerbosity::Info) << "=== ADIOS2 Connection Test ===" << std::endl;
+  
+  Synavis::CommandLineParser parser(argc, argv);
+  bool useSST = parser.HasArgument("sst");
   
   auto connector = std::make_shared<Synavis::AdiosConnector>();
   
@@ -21,12 +25,22 @@ int main()
   connector->Initialize();
   
   ltest(Synavis::ELogVerbosity::Info) << "Setting configuration..." << std::endl;
-  connector->SetEngineType("SST");
+  if (useSST)
+  {
+    connector->SetTransportType(Synavis::EAdiosTransport::SST);
+  }
+  else
+  {
+    connector->SetTransportType(Synavis::EAdiosTransport::BPFile);
+  }
   connector->SetIOName("AdiosIO");
   connector->SetVariableName("SynavisData");
   connector->SetFilenamePrefix("synavis_output");
   connector->SetNetworkInterface("localhost");
   connector->SetPort(9001);
+  
+  ltest(Synavis::ELogVerbosity::Info) << "Applying configuration..." << std::endl;
+  connector->ApplyConfiguration();
   
   ltest(Synavis::ELogVerbosity::Info) << "Adding variable..." << std::endl;
   connector->AddVariable("data", "uint8_t");

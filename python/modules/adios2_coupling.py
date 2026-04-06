@@ -152,7 +152,6 @@ m.SetVariableName("SynavisData")
 m.SetFilenamePrefix("synavis_output")
 m.SetNetworkInterface("localhost")
 m.SetPort(9001)
-m.StartStreaming()
 
 # Add the variable that UE will send (must match Adios2State.cpp line 63)
 m.AddVariable("data", "uint8_t")
@@ -168,8 +167,6 @@ m.SetOnClosedCallback(lambda: syn.ExitWithMessage("ADIOS2 SST streaming stopped"
 m.LockUntilConnected(2000)
 
 pylog.log("ADIOS2 SST streaming initialized.")
-
-pylog.log("ADIOS2 Coupling: JSON commands and data exchange ready")
 
 # Send initial JSON configuration/command to UE side
 # This mirrors the pattern from extraction.py lines 331, 350-365

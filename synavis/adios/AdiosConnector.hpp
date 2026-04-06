@@ -21,6 +21,15 @@
 namespace Synavis
 {
 
+enum class EAdiosTransport
+{
+    SST,
+    BPFile,
+    DataServer,
+    File,
+    Null
+};
+
 class ADIOS_CONNECTOR_EXPORT AdiosConnector : public std::enable_shared_from_this<AdiosConnector>
 {
 public:
@@ -32,6 +41,7 @@ public:
 
   // Core lifecycle
   virtual void Initialize();
+  void ApplyConfiguration();
   virtual void StartStreaming();
   virtual void StopStreaming();
   bool IsRunning() const;
@@ -55,6 +65,9 @@ public:
     void SetConnectionRetryDelayMs(int delay_ms);
     int GetConnectionRetries() const { return connection_retries_; }
     int GetConnectionRetryDelayMs() const { return connection_retry_delay_ms_; }
+
+    EAdiosTransport GetTransportType() const { return transport_type_; }
+    void SetTransportType(EAdiosTransport TransportType) { transport_type_ = TransportType; }
 
   // Sending data - mirrors DataConnector interface
   virtual void SendData(const binary& Data);
@@ -107,17 +120,20 @@ protected:
   std::atomic<EConnectionState> state_{EConnectionState::STARTUP};
   std::atomic<bool> running_{false};
   std::atomic<bool> streaming_{false};
+  std::atomic<bool> writer_ready_{false};
 
-   // Configuration
-    std::string engine_type_{"sst"};
+    // Configuration
+     EAdiosTransport transport_type_{EAdiosTransport::BPFile};
     std::string io_name_{"AdiosIO"};
     std::string variable_name_{"SynavisData"};
     std::string filename_prefix_{"synavis_output"};
     adios2::Mode mode_{adios2::Mode::Write};
     
    // Connection retry settings (for SST engine startup timing)
-    int connection_retries_{10};
-    int connection_retry_delay_ms_{500};
+     int connection_retries_{10};
+     int connection_retry_delay_ms_{500};
+     int reader_startup_timeout_ms_{10000};
+     int reader_startup_check_interval_ms_{100};
 
    // Network configuration (for SST engine)
     std::string network_interface_{"localhost"};
@@ -125,7 +141,7 @@ protected:
 
   // ADIOS2 objects
   std::unique_ptr<adios2::ADIOS> adios_engine_;
-  std::unique_ptr<adios2::IO> io_engine_;
+  std::unique_ptr<adios2::IO> io_engine_writer_;
   std::unique_ptr<adios2::Engine> current_engine_;
   std::map<std::string, adios2::Variable<uint8_t>> binary_variables_;
   std::map<std::string, adios2::Variable<double>> float64_variables_;

@@ -45,6 +45,12 @@ public:
   UFUNCTION(BlueprintCallable, Category="ADIOS2|Network")
   void SetHostname(const FString& Hostname);
 
+  UFUNCTION(BlueprintCallable, Category="ADIOS2|Connection")
+  void SetConnectionRetries(int32 InRetries);
+  
+  UFUNCTION(BlueprintCallable, Category="ADIOS2|Connection")
+  void SetConnectionRetryDelayMs(int32 InDelayMs);
+
   UFUNCTION(BlueprintCallable, Category="ADIOS2|Signaling")
   FString GetSignalingConfig() const;
 
@@ -53,6 +59,12 @@ public:
   virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 protected:
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="ADIOS2|Connection")
+  int32 ConnectionRetries = 10;
+  
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="ADIOS2|Connection")
+  int32 ConnectionRetryDelayMs = 500;
+
   TSharedPtr<class FAdios2State> AdiosState;
 
   std::function<void(int32, const TArray<uint8>&)> DataCallback;

@@ -21,11 +21,13 @@ void UAdios2Streamer::StartStreaming()
 {
   if (AdiosState && !AdiosState->IsRunning())
   {
-    // Default configuration - now uses SST for cluster/localhost streaming
-    FString EngineType = TEXT("sst");
+    // Default configuration - now uses BPFile for cluster/localhost streaming
+    FString EngineType = TEXT("BP5");
     FString FilenamePrefix = TEXT("synavis_output");
     
     AdiosState->Initialize();
+    AdiosState->SetConnectionRetries(ConnectionRetries);
+    AdiosState->SetConnectionRetryDelayMs(ConnectionRetryDelayMs);
     AdiosState->StartStreaming(EngineType, FilenamePrefix);
     
     UE_LOG(LogTemp, Log, TEXT("UAdios2Streamer: StartStreaming - ADIOS2 initialized with engine=%s, prefix=%s, hostname=%s, port=%d"), 
@@ -111,6 +113,24 @@ void UAdios2Streamer::SetHostname(const FString& Hostname)
   {
     AdiosState->SetHostname(Hostname);
     UE_LOG(LogTemp, Log, TEXT("UAdios2Streamer: Hostname set to %s"), *Hostname);
+  }
+}
+
+void UAdios2Streamer::SetConnectionRetries(int32 InRetries)
+{
+  if (AdiosState)
+  {
+    AdiosState->SetConnectionRetries(InRetries);
+    UE_LOG(LogTemp, Log, TEXT("UAdios2Streamer: Connection retries set to %d"), InRetries);
+  }
+}
+
+void UAdios2Streamer::SetConnectionRetryDelayMs(int32 InDelayMs)
+{
+  if (AdiosState)
+  {
+    AdiosState->SetConnectionRetryDelayMs(InDelayMs);
+    UE_LOG(LogTemp, Log, TEXT("UAdios2Streamer: Connection retry delay set to %dms"), InDelayMs);
   }
 }
 
@@ -220,8 +240,15 @@ void UAdios2Streamer::TickComponent(float DeltaTime, ELevelTick TickType, FActor
 {
   Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
   
-  if (!AdiosState || !AdiosState->IsRunning() || !SceneCapture)
+  if (!AdiosState || !SceneCapture)
   {
+    UE_LOG(LogTemp, Warning, TEXT("UAdios2Streamer: Tick skipped because not running or no SceneCapture"));
+    return;
+  }
+  
+  if (!AdiosState->IsRunning() && !AdiosState->IsConnecting())
+  {
+    UE_LOG(LogTemp, Warning, TEXT("UAdios2Streamer: Tick skipped because not running or no SceneCapture"));
     return;
   }
   

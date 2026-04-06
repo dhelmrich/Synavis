@@ -10,6 +10,16 @@
 
 #include "Adios2Configuration.generated.h"
 
+UENUM(BlueprintType)
+enum class EAdiosTransport : uint8
+{
+    SST,
+    BPFile,
+    DataServer,
+    File,
+    Null
+};
+
 // ADIOS2 transport configuration
 USTRUCT(BlueprintType)
 struct ADIOS2BACKEND_API FAdios2TransportConfig
@@ -17,40 +27,39 @@ struct ADIOS2BACKEND_API FAdios2TransportConfig
   GENERATED_BODY()
 
 public:
-  // Transport type: "bpfile", "sst", "dataserver", etc.
-  UPROPERTY(BlueprintReadWrite, Category="ADIOS2|Transport")
-  FString EngineType;
+   EAdiosTransport TransportType;
 
-  // Output file prefix
-  UPROPERTY(BlueprintReadWrite, Category="ADIOS2|Transport")
-  FString FilenamePrefix;
+  FString GetEngineTypeString() const
+  {
+      switch (TransportType)
+      {
+          case EAdiosTransport::SST: return TEXT("SST");
+          case EAdiosTransport::BPFile: return TEXT("BP5");
+          case EAdiosTransport::DataServer: return TEXT("DataServer");
+          case EAdiosTransport::File: return TEXT("File");
+           case EAdiosTransport::Null: return TEXT("Null");
+           default: return TEXT("BPFile");
+      }
+  }
 
-  // Network configuration
-  UPROPERTY(BlueprintReadWrite, Category="ADIOS2|Transport")
-  FString Hostname;
+   UPROPERTY(BlueprintReadWrite, Category="ADIOS2|Transport")
+   FString FilenamePrefix;
 
-  UPROPERTY(BlueprintReadWrite, Category="ADIOS2|Transport")
-  int32 Port;
+   UPROPERTY(BlueprintReadWrite, Category="ADIOS2|Transport")
+   FString Hostname;
 
-  // SST-specific configuration
-  UPROPERTY(BlueprintReadWrite, Category="ADIOS2|Transport|SST")
-  FString SSTNetworkInterface;
+   UPROPERTY(BlueprintReadWrite, Category="ADIOS2|Transport")
+   int32 Port;
 
-  UPROPERTY(BlueprintReadWrite, Category="ADIOS2|Transport|SST")
-  int32 SSTReaderTimeout;
-
-  // Mode: "writer" (UE) or "reader" (external)
-  UPROPERTY(BlueprintReadWrite, Category="ADIOS2|Transport")
-  FString Mode;
+   UPROPERTY(BlueprintReadWrite, Category="ADIOS2|Transport")
+   FString Mode;
 
   FAdios2TransportConfig()
-    : EngineType(TEXT("sst"))
+    : TransportType(EAdiosTransport::BPFile)
     , FilenamePrefix(TEXT("synavis_output"))
     , Hostname(TEXT("localhost"))
-    , Port(9001)
-    , SSTNetworkInterface(TEXT(""))
-    , SSTReaderTimeout(30)
-    , Mode(TEXT("writer"))
+     , Port(9001)
+     , Mode(TEXT("writer"))
   {}
 };
 
