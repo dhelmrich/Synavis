@@ -36,9 +36,10 @@ if(BUILD_WITH_DECODING)
   target_include_directories(${Folder} PRIVATE ${FFMPEG_INCLUDE_DIRS})
   target_link_directories(${Folder} PRIVATE ${FFMPEG_LIBRARY_DIRS})
 
-endif()
+  # Copy runtime DLLs
+  include(${CMAKE_CURRENT_LIST_DIR}/../copy_dlls.cmake)
+  message(STATUS "Invoking CONFIGURE_DLL_COPY for ${Folder} in ${CMAKE_CURRENT_SOURCE_DIR}/..")
+  CONFIGURE_DLL_COPY(${Folder} "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
-# Copy runtime DLLs
-include(${CMAKE_CURRENT_LIST_DIR}/../copy_dlls.cmake)
-CONFIGURE_DLL_COPY(${Folder} "${CMAKE_CURRENT_SOURCE_DIR}/..")
+endif()
 
