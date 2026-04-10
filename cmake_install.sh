@@ -44,6 +44,7 @@ while [[ $# -gt 0 ]]; do
     -v) VERBOSITY="$2"; shift 2;;
     -p) CPLANTBOX_DIR="$2"; shift 2;;
     -x|--vcpkg) VCPKG_TOOLCHAIN="$2"; shift 2;;
+    -y|--vcpkg-root) VCPKG_ROOT_ONLY="$2"; shift 2;;
     --python-only)
       PYTHON_ONLY=true; shift;;
     --copy-libdatachannel)
@@ -54,7 +55,7 @@ while [[ $# -gt 0 ]]; do
       ADIOS2_ROOT="$2"; shift 2;;
     --clang) USE_CLANG=true; shift;;
     -h|--help)
-      echo "Usage: $0 [-d builddir] [-t buildtype] [-e deletebuild] [-j nproc] [-c activate_decoding] [-B basedir] [-v verbosity] [-p cplantbox_location] [-x vcpkg_toolchain] [--install-adios2] [--adios2-root] [--clang]"
+      echo "Usage: $0 [-d builddir] [-t buildtype] [-e deletebuild] [-j nproc] [-c activate_decoding] [-B basedir] [-v verbosity] [-p cplantbox_location] [-x vcpkg_toolchain] [-y vcpkg_root] [--install-adios2] [--adios2-root] [--clang]"
       echo "  -d builddir       Specify the build directory name (default: build)"
       echo "  -t buildtype      Specify the build type (default: Release)"
       echo "  -e deletebuild    Delete the build directory after building (default: false, accepts optional true/false)"
@@ -64,6 +65,7 @@ while [[ $# -gt 0 ]]; do
       echo "  -v verbosity      Enable verbose logging (default: false, pass 'true' to enable)"
       echo "  -p cplantbox_location  Specify the location of cplantbox (default: not set)"
       echo "  -x, --vcpkg       Path to vcpkg root directory (toolchain file auto-detected) or to vcpkg.cmake"
+      echo "  -y, --vcpkg-root  Path to vcpkg root directory (only sets VCPKG_ROOT, does not use toolchain)"
       echo "  --clang           Use clang as the C/C++ compiler"
       exit 0
       ;;
@@ -169,8 +171,11 @@ else
 fi
 
 # Vcpkg toolchain option (optional)
+# Note: To use standalone ADIOS2 with SST/BP5, DO NOT set CMAKE_TOOLCHAIN_FILE
+# Instead, use VCPKG_ROOT to point to vcpkg directory for finding other packages
 VCPKG_TOOLCHAIN_OPTION=""
 VCPKG_ROOT=""
+VCPKG_TOOLCHAIN_FILE=""
 if [ -n "$VCPKG_TOOLCHAIN" ]; then
   if [ -d "$VCPKG_TOOLCHAIN" ]; then
     VCPKG_ROOT="$VCPKG_TOOLCHAIN"
@@ -181,12 +186,22 @@ if [ -n "$VCPKG_TOOLCHAIN" ]; then
   fi
   
   if [ -f "$VCPKG_TOOLCHAIN_FILE" ]; then
-    echo "Using vcpkg toolchain file: $VCPKG_TOOLCHAIN_FILE"
-    echo "Using vcpkg root: $VCPKG_ROOT"
+    echo "WARNING: Using vcpkg toolchain file: $VCPKG_TOOLCHAIN_FILE"
+    echo "WARNING: This will disable standalone ADIOS2 with SST/BP5 support"
+    echo "WARNING: To use standalone ADIOS2, do NOT pass -x/--vcpkg option"
     VCPKG_TOOLCHAIN_OPTION="-DCMAKE_TOOLCHAIN_FILE=$VCPKG_TOOLCHAIN_FILE -DVCPKG_CMAKE_PATH=$VCPKG_TOOLCHAIN_FILE"
   else
     echo "Warning: vcpkg toolchain file not found at: $VCPKG_TOOLCHAIN_FILE"
   fi
+elif [ -n "$VCPKG_ROOT_ONLY" ]; then
+  # Set VCPKG_INSTALLED_DIR directly (point to installed/<triplet> directory)
+  # This allows finding packages without using vcpkg toolchain
+  VCPKG_INSTALLED_DIR="$VCPKG_ROOT_ONLY"
+  VCPKG_ROOT=$(dirname "$VCPKG_ROOT_ONLY")
+  VCPKG_TARGET_TRIPLET=$(basename "$VCPKG_ROOT_ONLY")
+  echo "Using vcpkg installed directory (without toolchain): $VCPKG_ROOT_ONLY"
+  echo "  VCPKG_ROOT: $VCPKG_ROOT"
+  echo "  VCPKG_TARGET_TRIPLET: $VCPKG_TARGET_TRIPLET"
 fi
 
 # ADIOS2 CMake options
@@ -194,6 +209,31 @@ ADIOS2_ROOT_OPTION=""
 if [ -n "$ADIOS2_ROOT" ]; then
   echo "Using ADIOS2 root: $ADIOS2_ROOT"
   ADIOS2_ROOT_OPTION="-DADIOS2_ROOT=$ADIOS2_ROOT"
+fi
+
+# Set CMAKE_PREFIX_PATH to find vcpkg packages AND standalone ADIOS2
+# This is the key: when NOT using vcpkg toolchain, we set CMAKE_PREFIX_PATH
+# to include both vcpkg's installed directory and the standalone ADIOS2 build
+VCPKG_ROOT_OPTION=""
+VCPKG_INSTALLED_DIR_OPTION=""
+CMAKE_PREFIX_PATH_OPTION=""
+if [ -n "$VCPKG_ROOT" ]; then
+  VCPKG_ROOT_OPTION="-DVCPKG_ROOT=$VCPKG_ROOT"
+fi
+if [ -n "$VCPKG_INSTALLED_DIR" ]; then
+  VCPKG_INSTALLED_DIR_OPTION="-DVCPKG_INSTALLED_DIR=$VCPKG_INSTALLED_DIR"
+fi
+if [ -n "$VCPKG_ROOT" ] && [ -d "$VCPKG_ROOT/installed/x64-linux" ]; then
+  if [ -n "$ADIOS2_ROOT" ] && [ -d "$ADIOS2_ROOT" ]; then
+    echo "Using CMAKE_PREFIX_PATH with vcpkg ($VCPKG_ROOT/installed/x64-linux) AND ADIOS2 ($ADIOS2_ROOT)"
+    CMAKE_PREFIX_PATH_OPTION="-DCMAKE_PREFIX_PATH=$VCPKG_ROOT/installed/x64-linux;$ADIOS2_ROOT"
+  else
+    echo "Using CMAKE_PREFIX_PATH with vcpkg ($VCPKG_ROOT/installed/x64-linux)"
+    CMAKE_PREFIX_PATH_OPTION="-DCMAKE_PREFIX_PATH=$VCPKG_ROOT/installed/x64-linux"
+  fi
+elif [ -n "$ADIOS2_ROOT" ] && [ -d "$ADIOS2_ROOT" ]; then
+  echo "Using CMAKE_PREFIX_PATH with ADIOS2 ($ADIOS2_ROOT)"
+  CMAKE_PREFIX_PATH_OPTION="-DCMAKE_PREFIX_PATH=$ADIOS2_ROOT"
 fi
 
 if [ "$INSTALL_ADIOS2" = true ]; then
@@ -214,7 +254,8 @@ if [ "$INSTALL_ADIOS2" = true ] && [ -n "$VCPKG_ROOT" ]; then
 fi
 
 # configure
-cmake -H"$DIR" -B"$ABS_BUILDDIR" -DCMAKE_BUILD_TYPE=$BUILDTYPE -G "$GENERATOR" $LIBDATACHANNEL_BUILD_TESTS $LIBDATACHANNEL_BUILD_EXAMPLES $LIBDATACHANNEL_SETTINGS $DECODING -DPYTHON_INCLUDE_DIR=$PYTHON_INCLUDE_DIRS -DPYTHON_LIBRARY=$PYTHON_LIBRARY $SYNAVIS_APPBUILD $CMAKE_VERBOSE_LOGGING $CPLANTBOX_DIR_OPTION $VCPKG_TOOLCHAIN_OPTION $CMAKEOPT $SKIP_COPY_OPTION $ADIOS2_ROOT_OPTION $SKIP_INSTALL_ADIOS2_OPTION
+# Note: CMAKE_PREFIX_PATH must come before toolchain file to be effective
+cmake -H"$DIR" -B"$ABS_BUILDDIR" -DCMAKE_BUILD_TYPE=$BUILDTYPE -G "$GENERATOR" $LIBDATACHANNEL_BUILD_TESTS $LIBDATACHANNEL_BUILD_EXAMPLES $LIBDATACHANEL_SETTINGS $DECODING -DPYTHON_INCLUDE_DIR=$PYTHON_INCLUDE_DIRS -DPYTHON_LIBRARY=$PYTHON_LIBRARY $SYNAVIS_APPBUILD $CMAKE_VERBOSE_LOGGING $CPLANTBOX_DIR_OPTION $CMAKE_PREFIX_PATH_OPTION $VCPKG_TOOLCHAIN_OPTION $CMAKEOPT $SKIP_COPY_OPTION $ADIOS2_ROOT_OPTION $SKIP_INSTALL_ADIOS2_OPTION $VCPKG_ROOT_OPTION $VCPKG_INSTALLED_DIR_OPTION
 
 # build
 if [ "$PYTHON_ONLY" = true ] ; then
