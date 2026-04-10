@@ -1,5 +1,9 @@
 # Function to copy DLLs for a target - call this after add_executable/add_library
 function(CONFIGURE_DLL_COPY target_name source_dir)
+  if(NOT WIN32)
+    return()
+  endif()
+
   # Use generator expression to get the actual runtime output directory
   set(output_dir "$<TARGET_FILE_DIR:${target_name}>")
   
