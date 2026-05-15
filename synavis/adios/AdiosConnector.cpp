@@ -15,11 +15,11 @@ namespace Synavis
     switch (Transport)
     {
       case EAdiosTransport::SST: return "SST";
-      case EAdiosTransport::BPFile: return "BP5";
+      case EAdiosTransport::BPFile: return "BP4";
       case EAdiosTransport::DataServer: return "DataServer";
       case EAdiosTransport::File: return "File";
       case EAdiosTransport::Null: return "Null";
-      default: return "BP5";
+      default: return "BP4";
     }
   }
 
@@ -63,6 +63,10 @@ namespace Synavis
     io_engine_writer_->SetEngine(engine_name.c_str());
 
     io_engine_writer_->SetParameter("TimeoutSec", "10");
+    io_engine_writer_->SetParameter("NumAggregators", "0");
+    io_engine_writer_->SetParameter("FlushStepsCount", "1");
+    io_engine_writer_->SetParameter("StatsLevel", "1");
+    io_engine_writer_->SetParameter("InitialBufferSize", "16Mb");
 
     if (transport_type_ == EAdiosTransport::SST)
     {
@@ -81,6 +85,10 @@ namespace Synavis
     io_engine_reader_->SetEngine(engine_name.c_str());
 
     io_engine_reader_->SetParameter("TimeoutSec", "10");
+    io_engine_reader_->SetParameter("NumAggregators", "0");
+    io_engine_reader_->SetParameter("FlushStepsCount", "1");
+    io_engine_reader_->SetParameter("StatsLevel", "1");
+    io_engine_reader_->SetParameter("InitialBufferSize", "16Mb");
 
     if (transport_type_ == EAdiosTransport::SST)
     {
@@ -150,6 +158,27 @@ namespace Synavis
     {
       transport_type_ = EAdiosTransport::SST;
     }
+    else if (EngineType == "BP4")
+    {
+      transport_type_ = EAdiosTransport::BPFile;
+    }
+    else if (EngineType == "DataServer")
+    {
+      transport_type_ = EAdiosTransport::DataServer;
+    }
+    else if (EngineType == "File")
+    {
+      transport_type_ = EAdiosTransport::File;
+    }
+    else if (EngineType == "Null")
+    {
+      transport_type_ = EAdiosTransport::Null;
+    }
+    else
+    {
+      transport_type_ = EAdiosTransport::BPFile;
+    }
+  }
     else if (EngineType == "BP5")
     {
       transport_type_ = EAdiosTransport::BPFile;
@@ -450,6 +479,14 @@ namespace Synavis
       io_engine_writer_->SetParameter("StagingDirectory", filename_prefix_ + ".staging");
       io_engine_writer_->SetParameter("DataDirectory", filename_prefix_ + ".data");
     }
+    else if (transport_type_ == EAdiosTransport::BPFile)
+    {
+      io_engine_writer_->SetParameter("NumAggregators", "0");
+      io_engine_writer_->SetParameter("FlushStepsCount", "1");
+      io_engine_writer_->SetParameter("StatsLevel", "1");
+      io_engine_writer_->SetParameter("InitialBufferSize", "16Mb");
+      io_engine_writer_->SetParameter("BufferGrowthFactor", "1.05");
+    }
 
     for (const auto& [name, type] : variable_types_)
     {
@@ -547,6 +584,10 @@ namespace Synavis
     io_engine_reader_->SetParameter("RendezvousReaderCount", "1");
     io_engine_reader_->SetParameter("InitialNumReaders", "1");
     io_engine_reader_->SetParameter("ManagesNetworkStack", "true");
+    io_engine_reader_->SetParameter("NumAggregators", "0");
+    io_engine_reader_->SetParameter("FlushStepsCount", "1");
+    io_engine_reader_->SetParameter("StatsLevel", "1");
+    io_engine_reader_->SetParameter("InitialBufferSize", "16Mb");
 
     if (transport_type_ == EAdiosTransport::SST)
     {
@@ -554,6 +595,10 @@ namespace Synavis
       io_engine_reader_->SetParameter("Port", std::to_string(network_port_));
       io_engine_reader_->SetParameter("StagingDirectory", filename_prefix_ + ".staging");
       io_engine_reader_->SetParameter("DataDirectory", filename_prefix_ + ".data");
+    }
+    else if (transport_type_ == EAdiosTransport::BPFile)
+    {
+      io_engine_reader_->SetParameter("StreamReader", "Off");
     }
 
     std::string reader_filename = filename_prefix_;
