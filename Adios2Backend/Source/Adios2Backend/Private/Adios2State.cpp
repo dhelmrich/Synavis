@@ -9,7 +9,7 @@ FAdios2State::FAdios2State()
     , ReaderEnginePtr(nullptr)
     , WriterEngineTypeStr(TEXT("BP5"))
     , WriterFilenamePrefixStr(TEXT("synavis_output"))
-    , WriterTransportType(EAdiosTransport::BPFile)
+    , WriterTransportType(EAdiosTransport::BP5)  // BP5 is the default for real-time streaming
   , bRunning(false)
   , bInitialized(false)
   , bIsConnecting(false)
@@ -55,21 +55,27 @@ void FAdios2State::StartStreaming(const FString& EngineType, const FString& File
 
     WriterFilenamePrefixStr = FilenamePrefix;
     
-    if (EngineType == TEXT("sst"))
+    // Parse engine type and set corresponding transport type
+    if (EngineType == TEXT("sst") || EngineType == TEXT("SST"))
     {
         WriterTransportType = EAdiosTransport::SST;
     }
-    else if (EngineType == TEXT("BP5"))
+    else if (EngineType == TEXT("BP4") || EngineType == TEXT("bp4"))
     {
-        WriterTransportType = EAdiosTransport::BPFile;
+        WriterTransportType = EAdiosTransport::BP4;
     }
-    else if (EngineType == TEXT("dataserver"))
+    else if (EngineType == TEXT("BP5") || EngineType == TEXT("bp5"))
+    {
+        WriterTransportType = EAdiosTransport::BP5;
+    }
+    else if (EngineType == TEXT("dataserver") || EngineType == TEXT("DataServer"))
     {
         WriterTransportType = EAdiosTransport::DataServer;
     }
     else
     {
-        WriterTransportType = EAdiosTransport::BPFile;
+        // Default to BP5 for real-time streaming
+        WriterTransportType = EAdiosTransport::BP5;
     }
 
     FString WriterFilenamePrefix = WriterFilenamePrefixStr;
@@ -101,8 +107,33 @@ void FAdios2State::StartStreaming(const FString& EngineType, const FString& File
       adios2_set_parameter(IOPtr, "RendezvousReaderCount", "1");
       adios2_set_parameter(IOPtr, "InitialNumReaders", "1");
       adios2_set_parameter(IOPtr, "ManagesNetworkStack", "true");
-  adios2_set_parameter(IOPtr, "StagingDirectory", TCHAR_TO_UTF8(*(WriterFilenamePrefixStr + TEXT(".staging"))));
-  adios2_set_parameter(IOPtr, "DataDirectory", TCHAR_TO_UTF8(*(WriterFilenamePrefixStr + TEXT(".data"))));
+      adios2_set_parameter(IOPtr, "StagingDirectory", TCHAR_TO_UTF8(*(WriterFilenamePrefixStr + TEXT(".staging"))));
+      adios2_set_parameter(IOPtr, "DataDirectory", TCHAR_TO_UTF8(*(WriterFilenamePrefixStr + TEXT(".data"))));
+    }
+    else if (WriterTransportType == EAdiosTransport::BP4)
+    {
+      // BP4-specific parameters for file-based asynchronous I/O
+      // BP4 uses a single file: synavis_output.bp
+      UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - configuring BP4 engine parameters"))
+      adios2_set_parameter(IOPtr, "NumAggregators", "0");
+      adios2_set_parameter(IOPtr, "FlushStepsCount", "1");
+      adios2_set_parameter(IOPtr, "StatsLevel", "1");
+      adios2_set_parameter(IOPtr, "InitialBufferSize", "16Mb");
+      adios2_set_parameter(IOPtr, "BufferGrowthFactor", "1.05");
+      // BP4 uses file-based mode (default)
+    }
+    else if (WriterTransportType == EAdiosTransport::BP5)
+    {
+      // BP5-specific parameters for memory-based real-time streaming
+      // BP5 can use folder structure or memory-based transfer
+      UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - configuring BP5 engine parameters"))
+      adios2_set_parameter(IOPtr, "NumAggregators", "0");
+      adios2_set_parameter(IOPtr, "FlushStepsCount", "1");
+      adios2_set_parameter(IOPtr, "StatsLevel", "1");
+      adios2_set_parameter(IOPtr, "InitialBufferSize", "16Mb");
+      adios2_set_parameter(IOPtr, "BufferGrowthFactor", "1.05");
+      adios2_set_parameter(IOPtr, "DirectIO", "true");  // Enable direct memory transfer
+      // BP5 can optionally use folder mode: adios2_set_parameter(IOPtr, "FolderMode", "true");
     }
 
   UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - defining variables"))

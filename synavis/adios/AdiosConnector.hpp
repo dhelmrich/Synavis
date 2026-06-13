@@ -24,7 +24,8 @@ namespace Synavis
 enum class EAdiosTransport
 {
     SST,
-    BPFile,
+    BP4,
+    BP5,
     DataServer,
     File,
     Null
@@ -123,7 +124,7 @@ protected:
   std::atomic<bool> writer_ready_{false};
 
     // Configuration
-     EAdiosTransport transport_type_{EAdiosTransport::BPFile};
+     EAdiosTransport transport_type_{EAdiosTransport::BP5};  // BP5 is the default for real-time streaming
     std::string io_name_{"AdiosIO"};
     std::string variable_name_{"SynavisData"};
     std::string filename_prefix_{"synavis_output"};

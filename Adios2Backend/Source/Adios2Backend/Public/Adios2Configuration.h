@@ -14,7 +14,8 @@ UENUM(BlueprintType)
 enum class EAdiosTransport : uint8
 {
     SST,
-    BPFile,
+    BP4,
+    BP5,
     DataServer,
     File,
     Null
@@ -34,11 +35,12 @@ public:
       switch (TransportType)
       {
           case EAdiosTransport::SST: return TEXT("SST");
-          case EAdiosTransport::BPFile: return TEXT("BP5");
+          case EAdiosTransport::BP4: return TEXT("BP4");
+          case EAdiosTransport::BP5: return TEXT("BP5");
           case EAdiosTransport::DataServer: return TEXT("DataServer");
           case EAdiosTransport::File: return TEXT("File");
-           case EAdiosTransport::Null: return TEXT("Null");
-           default: return TEXT("BPFile");
+          case EAdiosTransport::Null: return TEXT("Null");
+          default: return TEXT("BP5");  // BP5 is the default for real-time streaming
       }
   }
 
@@ -55,7 +57,7 @@ public:
    FString Mode;
 
   FAdios2TransportConfig()
-    : TransportType(EAdiosTransport::BPFile)
+    : TransportType(EAdiosTransport::BP5)  // BP5 is the default for real-time streaming
     , FilenamePrefix(TEXT("synavis_output"))
     , Hostname(TEXT("localhost"))
      , Port(9001)

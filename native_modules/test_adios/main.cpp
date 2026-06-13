@@ -31,7 +31,7 @@ int main(int argc, char** argv)
   }
   else
   {
-    connector->SetTransportType(Synavis::EAdiosTransport::BPFile);
+    connector->SetTransportType(Synavis::EAdiosTransport::BP5);  // Default to BP5 for real-time streaming
   }
   connector->SetIOName("AdiosIO");
   connector->SetVariableName("SynavisData");

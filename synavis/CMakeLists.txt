@@ -130,6 +130,30 @@ if(WIN32)
       COMMENT "Copying adios2_cxx11.dll to ${_lib_output_dir}/"
     )
   endif()
+  
+  # Install datachannel.dll to package directory
+  if(TARGET datachannel)
+    install(FILES "${_datachannel_dll_dir}/datachannel.dll"
+      DESTINATION ${PY_PACKAGE_NAME}
+    )
+  endif()
+  
+  # Install adios_connector.dll and ADIOS2 DLLs if adios subdirectory was built
+  if(EXISTS "${_adios_dll_dir}")
+    install(FILES "${_adios_dll_dir}/adios_connector.dll"
+      DESTINATION ${PY_PACKAGE_NAME}
+    )
+    
+    # Also install ADIOS2 runtime DLLs if they exist
+    install(FILES "${_adios_dll_dir}/adios2_core.dll"
+      DESTINATION ${PY_PACKAGE_NAME}
+      OPTIONAL
+    )
+    install(FILES "${_adios_dll_dir}/adios2_cxx11.dll"
+      DESTINATION ${PY_PACKAGE_NAME}
+      OPTIONAL
+    )
+  endif()
 endif()
 
 # Do not install targets directly into the absolute build directory. That

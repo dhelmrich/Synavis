@@ -1,16 +1,7 @@
 #pragma once
 #include "CoreMinimal.h"
 #include "adios2_c.h"
-
-UENUM(BlueprintType)
-enum class EAdiosTransport : uint8
-{
-    SST,
-    BPFile,
-    DataServer,
-    File,
-    Null
-};
+#include "Adios2Configuration.h"
 
 class FAdios2State
 {
@@ -42,6 +33,7 @@ public:
    int32 GetPort() const { return Port; }
   FString GetHostname() const { return Hostname; }
    FString GetEngineType() const { return WriterEngineTypeStr; }
+  FString GetFilenamePrefix() const { return WriterFilenamePrefixStr; }
 
   void SetTransportType(EAdiosTransport InType) { WriterTransportType = InType; }
   EAdiosTransport GetTransportType() const { return WriterTransportType; }
@@ -73,12 +65,13 @@ private:
   {
       switch (WriterTransportType)
       {
-           case EAdiosTransport::SST: return TEXT("SST");
-            case EAdiosTransport::BPFile: return TEXT("BP5");
-           case EAdiosTransport::DataServer: return TEXT("DataServer");
-           case EAdiosTransport::File: return TEXT("File");
-           case EAdiosTransport::Null: return TEXT("Null");
-            default: return TEXT("BP5");
+          case EAdiosTransport::SST: return TEXT("SST");
+          case EAdiosTransport::BP4: return TEXT("BP4");
+          case EAdiosTransport::BP5: return TEXT("BP5");
+          case EAdiosTransport::DataServer: return TEXT("DataServer");
+          case EAdiosTransport::File: return TEXT("File");
+          case EAdiosTransport::Null: return TEXT("Null");
+          default: return TEXT("BP5");  // BP5 is the default for real-time streaming
       }
   }
 };

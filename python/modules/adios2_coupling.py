@@ -4,22 +4,40 @@
 # Unlike the extraction.py example which handles various frame formats (YUV, RGB with stride, etc.),
 # ADIOS2 transmits raw RGB data directly from SceneCaptureComponent2D.
 #
-# ADIOS2 Configuration for Cluster Deployment:
-# ---------------------------------------------
-# ADIOS2 uses transport engines (bpfile, SST, DataServer, etc.) for high-performance data transfer.
-# For cluster deployments, use the 'sst' engine with appropriate configuration:
-#   - EngineType: "sst" (Shared Transport)
+# ADIOS2 Configuration for BP4 File-Based Coupling:
+# -------------------------------------------------
+# This example uses BP4 explicitly, which stores stream data in a .bp file set.
+# Python and UE must use the same IO name, variable name, and filename prefix.
+#   - EngineType: "BP4"
 #   - FilenamePrefix: Output file prefix (e.g., "synavis_output")
-#   - SST configuration in UE5 config files for cluster-specific settings
+#   - IOName: "AdiosIO"
+#   - Variable: "data" (uint8_t)
 #
-# Cluster Config Notes:
-# - Ensure ADIOS2 is compiled with MPI support for multi-node clusters
-# - For shared filesystem deployments, bpfile engine works with network mounts
-# - For high-throughput cluster deployments, use SST with appropriate transport settings
-# - Configure engine parameters via UE5 Adios2Streamer component or C++ API
+# BP4 Notes:
+# - BP4 is file-based and better suited to deterministic file output and replay.
+# - Network interface and port settings are not required for BP4.
+# - UE writer and Python reader must point to the same output prefix/path.
 #
 # See SynavisUEBlank\Plugins\Adios2Backend for UE5 integration details
 # See Synavis\synavis\adios\AdiosConnector for C++ implementation details
+#
+# Autodiscovery Modes:
+# -------------------
+# 1. LOCAL CONFIGURATION (simplest for testing):
+#    - No signaling server required
+#    - Use: m.SetNetworkInterface("localhost")
+#    - Use: m.SetPort(9001)
+#
+# 2. SIGNALING ASSISTED (auto-discovery):
+#    - Uses existing signaling_server.py
+#    - UE broadcasts ADIOS2 config via signaling channel
+#    - Python client receives and applies configuration
+#    - See adios2_signaling_client.py for full implementation
+
+# LOCAL CONFIGURATION EXAMPLE:
+# ---------------------------
+# m.SetNetworkInterface("localhost")
+# m.SetPort(9001)
 
 # synenv is located in
 
@@ -146,14 +164,15 @@ def frame_callback(frame, info=None):
 m = syn.AdiosConnector()
 
 m.Initialize()
-m.SetEngineType("SST")
+m.SetEngineType("BP4")  # BP4 for file-based coupling
 m.SetIOName("AdiosIO")
 m.SetVariableName("SynavisData")
 m.SetFilenamePrefix("synavis_output")
-m.SetNetworkInterface("localhost")
-m.SetPort(9001)
+
+# BP4 does not use network interface/port parameters.
 
 # Add the variable that UE will send (must match Adios2State.cpp line 63)
+# Variables must be defined BEFORE StartStreaming() so they're available when engine opens
 m.AddVariable("data", "uint8_t")
 
 m.StartStreaming()
@@ -162,11 +181,11 @@ m.SetReadCallback(frame_callback)
 m.StartReader()
 m.SetDataCallback(data_callback)
 m.SetMessageCallback(message_callback)
-m.SetOnConnectedCallback(lambda: pylog.log("ADIOS2 SST streaming started"))
-m.SetOnClosedCallback(lambda: syn.ExitWithMessage("ADIOS2 SST streaming stopped", 2))
+m.SetOnConnectedCallback(lambda: pylog.log("ADIOS2 BP4 streaming started"))
+m.SetOnClosedCallback(lambda: syn.ExitWithMessage("ADIOS2 BP4 streaming stopped", 2))
 m.LockUntilConnected(2000)
 
-pylog.log("ADIOS2 SST streaming initialized.")
+pylog.log("ADIOS2 BP4 streaming initialized.")
 
 # Send initial JSON configuration/command to UE side
 # This mirrors the pattern from extraction.py lines 331, 350-365
