@@ -1486,7 +1486,7 @@ void USynavisStreamer::StopStreaming()
 
 }
 
-void USynavisStreamer::StopStreaming(int32 ConnectionID)
+void USynavisStreamer::StopStreamingConnection(int32 ConnectionID)
 {
   FSynavisConnection* Conn = FindConnectionByPlayerID(ConnectionID);
   if (!Conn)
@@ -3350,4 +3350,77 @@ TFuture<TArray<FColor>> USynavisStreamer::EnqueueRGBReadbackFromRenderTarget(UTe
   });
 
   return Future;
+}
+
+bool USynavisStreamer::BroadcastText(int32 HandlerId, const FString& Text)
+{
+  bool Sent = false;
+  for (const auto& Pair : Connections)
+  {
+    int32 ConnectionPlayerID = Pair.Key;
+    if (SendTextToConnection(HandlerId, ConnectionPlayerID, Text))
+    {
+      Sent = true;
+    }
+  }
+  return Sent;
+}
+
+bool USynavisStreamer::BroadcastBinary(int32 HandlerId, const TArray<uint8>& Data)
+{
+  bool Sent = false;
+  for (const auto& Pair : Connections)
+  {
+    int32 ConnectionPlayerID = Pair.Key;
+    if (SendBinaryToConnection(HandlerId, ConnectionPlayerID, Data))
+    {
+      Sent = true;
+    }
+  }
+  return Sent;
+}
+
+bool USynavisStreamer::SendTextViaSystemChannel(const FString& Text)
+{
+  if (SystemDataChannel != 0 && rtcIsOpen(SystemDataChannel))
+  {
+    FTCHARToUTF8 Utf8(*Text);
+    int sendRes = rtcSendMessage(SystemDataChannel, Utf8.Get(), - (Utf8.Length() + 1));
+    if (sendRes == RTC_ERR_SUCCESS)
+    {
+      UE_LOG(LogTemp, Verbose, TEXT("Synavis: Sent text via system channel size=%d"), Utf8.Length());
+      return true;
+    }
+    else
+    {
+      UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcSendMessage returned %d when sending text via system channel"), sendRes);
+    }
+  }
+  else
+  {
+    UE_LOG(LogTemp, Warning, TEXT("Synavis: SystemDataChannel not open or invalid"));
+  }
+  return false;
+}
+
+bool USynavisStreamer::SendBinaryViaSystemChannel(const TArray<uint8>& Data)
+{
+  if (SystemDataChannel != 0 && rtcIsOpen(SystemDataChannel))
+  {
+    int sendRes = rtcSendMessage(SystemDataChannel, reinterpret_cast<const char*>(Data.GetData()), static_cast<int>(Data.Num()));
+    if (sendRes == RTC_ERR_SUCCESS)
+    {
+      UE_LOG(LogTemp, Verbose, TEXT("Synavis: Sent binary via system channel size=%d"), Data.Num());
+      return true;
+    }
+    else
+    {
+      UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcSendMessage returned %d when sending binary via system channel"), sendRes);
+    }
+  }
+  else
+  {
+    UE_LOG(LogTemp, Warning, TEXT("Synavis: SystemDataChannel not open or invalid"));
+  }
+  return false;
 }

@@ -35,6 +35,13 @@ enum class EBlueprintSignalling : uint8
   SwitchToBothCams,
 };
 UENUM(BlueprintType)
+enum class ECameraRegistrationOption : uint8
+{
+  RegisterSceneCam = 0 UMETA(DisplayName = "Scene Camera Only"),
+  RegisterInfoCam    UMETA(DisplayName = "Info Camera Only"),
+  RegisterBoth       UMETA(DisplayName = "Both Cameras"),
+};
+UENUM(BlueprintType)
 enum class EDataTypeIndicator : uint8
 {
   Float = 0,
@@ -128,7 +135,7 @@ struct FTransmissionTarget
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBlueprintSignallingCallback, EBlueprintSignalling, Signal);
 
-class USynavisStreamer;
+class USynavisCommunicationInterface;
 
 UCLASS(Config = Game)
 class SYNAVISUE_API ASynavisDrone : public AActor
@@ -229,6 +236,10 @@ public:
 
   UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "View")
     UTextureRenderTarget2D* UHDSceneTarget;
+
+  // Controls which camera(s) will be registered with the SynavisStreamer
+  UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "Network")
+    ECameraRegistrationOption CameraRegistration = ECameraRegistrationOption::RegisterBoth;
 
   UPROPERTY(EditAnywhere, Config, BlueprintReadWrite, Category = "View")
     float MaxVelocity = 10.f;
@@ -418,16 +429,16 @@ protected:
 
   uint8 Base64LookupTable[256];
 
-  // C++ registration: handler id returned by USynavisStreamer::RegisterDataSourceCpp
+  // C++ registration: handler id returned by USynavisCommunicationInterface::RegisterDataSourceCpp
   int32 RegisteredHandlerId = 0;
   // Optional second handler id for source-only registrations (e.g., SceneCam)
   int32 RegisteredHandlerIdScene = 0;
-  // Cached pointer to discovered streamer component
-  USynavisStreamer* SynavisStreamerRef = nullptr;
+  // Cached pointer to discovered streamer component (using interface for decoupling)
+  USynavisCommunicationInterface* SynavisStreamerRef = nullptr;
 
   // Allow level designers to explicitly assign the SynavisStreamer in the Details panel
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Network")
-  USynavisStreamer* SynavisStreamerAsset = nullptr;
+  USynavisCommunicationInterface* SynavisStreamerAsset = nullptr;
 
   FCollisionObjectQueryParams ActorFilter;
   FCollisionQueryParams CollisionFilter;

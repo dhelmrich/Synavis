@@ -32,11 +32,12 @@ struct FLibAVEncoderState;
 THIRD_PARTY_INCLUDES_END
 
 
+
+#include "SynavisCommunicationInterface.h"
 #include "SynavisStreamer.generated.h"
 
 class UTextureRenderTarget2D;
 class USceneCaptureComponent2D;
-class USynavisStreamer;
 class USynavisVp9SendoffHandler;
 
 DECLARE_DYNAMIC_DELEGATE_OneParam(FSynavisMessage, FString, Message);
@@ -202,7 +203,7 @@ struct DataChannelCtx
 
 
 UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
-class SYNAVISBACKEND_API USynavisStreamer : public UActorComponent
+class SYNAVISBACKEND_API USynavisStreamer : public USynavisCommunicationInterface
 {
   GENERATED_BODY()
 
@@ -320,13 +321,12 @@ public:
    * @param DedicatedChannel set to false by default but if true, will trigger the creation of a dedicated DataChannel for this handler
    * @return Handler ID that can be used to unregister later
    */
-  UFUNCTION(BlueprintCallable, Category = "Streaming|Data")
-  int RegisterDataSource(
-    FSynavisData DataHandler,
-    FSynavisMessage MsgHandler,
-    USceneCaptureComponent2D* SceneCapture = nullptr,
-    bool DedicatedChannel = false,
-    bool AcceptsInboundMessages = true);
+   int RegisterDataSource(
+     FSynavisData DataHandler,
+     FSynavisMessage MsgHandler,
+     USceneCaptureComponent2D* SceneCapture = nullptr,
+     bool DedicatedChannel = false,
+     bool AcceptsInboundMessages = true);
 
   // C++ registration API: register native callbacks without Blueprint indirection.
   // Returns a stable HandlerID (positive) or 0 on failure.
@@ -344,10 +344,9 @@ public:
     bool AcceptsInboundMessages = false);
 
   // Blueprint-friendly registration of a source-only video handler (no inbound callbacks).
-  UFUNCTION(BlueprintCallable, Category = "Streaming|Data")
-  int RegisterVideoSource(USceneCaptureComponent2D* SceneCapture,
-    bool DedicatedChannel = false,
-    bool AcceptsInboundMessages = false);
+   int RegisterVideoSource(USceneCaptureComponent2D* SceneCapture,
+     bool DedicatedChannel = false,
+     bool AcceptsInboundMessages = false);
 
   // Unregister a previously registered handler.
   void UnregisterDataSource(int32 HandlerId);
@@ -541,7 +540,7 @@ public:
 
   // Stop streaming for a specific connection (marks connection not to receive video).
   UFUNCTION(BlueprintCallable, Category = "Streaming")
-  void StopStreaming(int32 ConnectionID);
+  void StopStreamingConnection(int32 ConnectionID);
 
   uint64 NextUniqueIdentifier = 1;
 };

@@ -17,6 +17,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include <functional>
 #include "SynavisCommunicationInterface.generated.h"
 
 class USceneCaptureComponent2D;
@@ -42,8 +43,8 @@ public:
   // Implementations should return a stable handler id (positive) or 0 on failure.
   UFUNCTION(BlueprintCallable, Category = "Streaming|Data")
   virtual int RegisterDataSource(
-    const TArray<uint8>& DummyDataHandler,
-    const FString& DummyMsgHandler,
+    const TArray<uint8>& DataHandler,
+    const FString& MsgHandler,
     USceneCaptureComponent2D* SceneCapture = nullptr,
     bool DedicatedChannel = false,
     bool AcceptsInboundMessages = true)
@@ -53,6 +54,7 @@ public:
   }
 
   // C++ registration APIs used by SynavisDrone.cpp and other C++ callers
+  // Callbacks receive the Connection ID as first parameter for multi-connection support
   virtual int32 RegisterDataSourceCpp(
     const std::function<void(int32, const TArray<uint8>&)>& OnData,
     const std::function<void(int32, const FString&)>& OnMessage,
@@ -91,10 +93,6 @@ public:
 
   // Low-level frame send (raw/encoded bytes) - used by video path in SynavisUE
   virtual void SendFrameBytes(const TArray<uint8>& Bytes, const FString& Name, const FString& Format, int32 TargetTrackId) { ensureMsgf(false, TEXT("SendFrameBytes not implemented")); }
-
-  // Connection lookup helpers (optional for backends)
-  // Return nullptr if not implemented or not found. Backends can expose concrete types.
-  virtual void* FindConnectionByPlayerID(int32 PlayerID) { return nullptr; }
 
 protected:
   // Add any protected helpers or documented extension points here.

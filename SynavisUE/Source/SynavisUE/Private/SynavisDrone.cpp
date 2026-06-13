@@ -1,7 +1,7 @@
 // Copyright Dirk Norbert Helmrich, 2023
 
 #include "SynavisDrone.h"
-#include "SynavisStreamer.h"
+#include "SynavisCommunicationInterface.h"
 #include "EngineUtils.h"
 
 #include "ImageUtils.h"
@@ -2089,7 +2089,7 @@ void ASynavisDrone::InitializeSynavisRegistration()
     {
       AActor* Actor = *It;
       if (!Actor) continue;
-      USynavisStreamer* Comp = Actor->FindComponentByClass<USynavisStreamer>();
+      USynavisCommunicationInterface* Comp = Actor->FindComponentByClass<USynavisCommunicationInterface>();
       if (Comp)
       {
         SynavisStreamerRef = Comp;
@@ -2100,29 +2100,59 @@ void ASynavisDrone::InitializeSynavisRegistration()
 
   if (SynavisStreamerRef)
   {
-    // Register control handler (InfoCam) with inbound callbacks and dedicated channel requested
-    RegisteredHandlerId = SynavisStreamerRef->RegisterDataSourceCpp(
-      [this](int32 ConnId, const TArray<uint8>& Data)
-      {
-        if (Data.Num() > 0)
-        {
-          FString Msg = FString(UTF8_TO_TCHAR(reinterpret_cast<const char*>(Data.GetData())));
-          this->ParseInput(Msg);
-        }
-      },
-      [this](int32 ConnId, const FString& Msg)
-      {
-        this->ParseInput(Msg);
-      },
-      InfoCam,
-      true);
-    UE_LOG(LogTemp, Log, TEXT("SynavisDrone: Registered data handler %d with SynavisStreamer"), RegisteredHandlerId);
-
-    // Register SceneCam as source-only (no inbound callbacks) to avoid unnecessary callback allocation
-    RegisteredHandlerIdScene = SynavisStreamerRef->RegisterVideoSourceCpp(SceneCam, false DedicatedChannel, false AcceptsInboundMessages);
-    if (RegisteredHandlerIdScene > 0)
+    // Register handlers according to the CameraRegistration property
+    if (CameraRegistration == ECameraRegistrationOption::RegisterInfoCam || CameraRegistration == ECameraRegistrationOption::RegisterBoth)
     {
-      UE_LOG(LogTemp, Log, TEXT("SynavisDrone: Registered source-only video handler %d for SceneCam"), RegisteredHandlerIdScene);
+      // Register control handler (InfoCam) with inbound callbacks and request a dedicated channel
+      RegisteredHandlerId = SynavisStreamerRef->RegisterDataSourceCpp(
+        [this](int32 ConnId, const TArray<uint8>& Data)
+        {
+          if (Data.Num() > 0)
+          {
+            FString Msg = FString(UTF8_TO_TCHAR(reinterpret_cast<const char*>(Data.GetData())));
+            this->ParseInput(Msg);
+          }
+        },
+        [this](int32 ConnId, const FString& Msg)
+        {
+          this->ParseInput(Msg);
+        },
+        InfoCam,
+        true);
+      UE_LOG(LogTemp, Log, TEXT("SynavisDrone: Registered data handler %d with SynavisStreamer (InfoCam)"), RegisteredHandlerId);
+      OnBlueprintSignalling.Broadcast(EBlueprintSignalling::SwitchToInfoCam);
+    }
+
+    if (CameraRegistration == ECameraRegistrationOption::RegisterSceneCam)
+    {
+      // Register SceneCam as the data handler (with inbound callbacks) when the SceneCam is chosen
+      RegisteredHandlerId = SynavisStreamerRef->RegisterDataSourceCpp(
+        [this](int32 ConnId, const TArray<uint8>& Data)
+        {
+          if (Data.Num() > 0)
+          {
+            FString Msg = FString(UTF8_TO_TCHAR(reinterpret_cast<const char*>(Data.GetData())));
+            this->ParseInput(Msg);
+          }
+        },
+        [this](int32 ConnId, const FString& Msg)
+        {
+          this->ParseInput(Msg);
+        },
+        SceneCam,
+        true);
+      UE_LOG(LogTemp, Log, TEXT("SynavisDrone: Registered data handler %d with SynavisStreamer (SceneCam)"), RegisteredHandlerId);
+      OnBlueprintSignalling.Broadcast(EBlueprintSignalling::SwitchToSceneCam);
+    }
+    else if (CameraRegistration == ECameraRegistrationOption::RegisterBoth)
+    {
+      // When both cameras are requested: keep the data handler on InfoCam and register SceneCam as source-only
+      RegisteredHandlerIdScene = SynavisStreamerRef->RegisterVideoSourceCpp(SceneCam, false, false);
+      if (RegisteredHandlerIdScene > 0)
+      {
+        UE_LOG(LogTemp, Log, TEXT("SynavisDrone: Registered source-only video handler %d for SceneCam"), RegisteredHandlerIdScene);
+      }
+      OnBlueprintSignalling.Broadcast(EBlueprintSignalling::SwitchToSceneCam);
     }
   }
   else
@@ -2310,10 +2340,6 @@ void ASynavisDrone::Tick(float DeltaTime)
   }
   if (TransmissionTargets.Num() > 0)
   {
-    // rtp timestamp has only 32 bits
-
-
-
     FString Data = FString::Printf(TEXT("{\"type\":\"track\",\"time\":%d,\"data\":{"), Now);
 
     for (auto i = 0; i < TransmissionTargets.Num(); ++i)
