@@ -34,6 +34,20 @@ if (-not [System.IO.Path]::IsPathRooted($BaseDir)) {
     $BaseDir = Join-Path (Get-Location | Select-Object -ExpandProperty Path) $BaseDir
 }
 
+$LibDirPy = Join-Path $BaseDir "libdir.py"
+
+function Get-PythonCommand {
+    $candidateNames = @("python", "py")
+    foreach ($candidateName in $candidateNames) {
+        $candidate = Get-Command $candidateName -ErrorAction SilentlyContinue
+        if ($null -ne $candidate) {
+            return $candidate.Source
+        }
+    }
+
+    throw "Could not find a Python interpreter on PATH. Install Python or add it to PATH, then rerun cmake_install.ps1."
+}
+
 function Show-Help {
     Write-Host "Usage: .\cmake_install.ps1 [-BuildDir <dir>] [-BuildType <type>] [-DeleteBuild] [-Jobs <n>] [-ActivateDecoding] [-BaseDir <dir>] [-Verbose] [-CPlantBoxDir <dir>] [-UseClang] [-Help]"
     Write-Host "  -BuildDir         Specify the build directory name (default: build)"
@@ -51,7 +65,7 @@ function Show-Help {
     exit 0
 }
 
-if ($args -contains '-Help' -or $args -contains '--help') {
+if ($Help -or $args -contains '-Help' -or $args -contains '--help') {
     Show-Help
 }
 
@@ -83,25 +97,38 @@ $LibDataChannelBuildTests = "-DLIBDATACHANNEL_BUILD_TESTS=Off"
 $LibDataChannelBuildExamples = "-DLIBDATACHANNEL_BUILD_EXAMPLES=Off"
 $LibDataChannelSettings = "-DENABLE_DEBUG_LOGGING=On -DENABLE_LOCALHOST_ADDRESS=On -DENABLE_LOCAL_ADDRESS_TRANSLATION=On"
 
-# Python include dir and library using libdir.py
-$PythonIncludeDir = & python -c "import sysconfig; print(sysconfig.get_path('include'))"
-$PythonLibrary = & python libdir.py
-if ($null -eq $PythonLibrary -or $PythonLibrary -eq "" -or $PythonLibrary -eq "None") {
-        Write-Error "Could not determine Python library path using libdir.py."
-        exit 1
-}
-Write-Host "Python include dir: $PythonIncludeDir"
-Write-Host "Python library: $PythonLibrary"
+# Python include dir and library using the selected interpreter and repo-local libdir.py
+$PythonCommand = Get-PythonCommand
+Write-Host "Using Python command: $PythonCommand"
 
-# Determine the active Python executable so CMake's FindPython will use the same interpreter
-$PythonExecutable = & python -c "import sys; print(sys.executable)"
-if ($null -eq $PythonExecutable -or $PythonExecutable -eq "" -or $PythonExecutable -eq "None") {
-    Write-Error "Could not determine Python executable using 'python'."
+$PythonExecutable = & $PythonCommand -c "import sys; print(sys.executable)"
+if ($LASTEXITCODE -ne 0 -or $null -eq $PythonExecutable -or $PythonExecutable -eq "" -or $PythonExecutable -eq "None") {
+    Write-Error "Could not determine Python executable using '$PythonCommand'."
     exit 1
 }
+
+$PythonExecutable = $PythonExecutable.Trim()
+
+$PythonIncludeDir = & $PythonCommand -c "import sysconfig; print(sysconfig.get_path('include'))"
+if ($LASTEXITCODE -ne 0 -or $null -eq $PythonIncludeDir -or $PythonIncludeDir -eq "" -or $PythonIncludeDir -eq "None") {
+    Write-Error "Could not determine Python include directory using '$PythonCommand'."
+    exit 1
+}
+
+$PythonLibrary = & $PythonCommand $LibDirPy
+if ($LASTEXITCODE -ne 0 -or $null -eq $PythonLibrary -or $PythonLibrary -eq "" -or $PythonLibrary -eq "None") {
+    Write-Error "Could not determine Python library path using libdir.py at $LibDirPy."
+    exit 1
+}
+
+$PythonIncludeDir = $PythonIncludeDir.Trim()
+$PythonLibrary = $PythonLibrary.Trim()
+
+Write-Host "Python include dir: $PythonIncludeDir"
+Write-Host "Python library: $PythonLibrary"
 Write-Host "Python executable: $PythonExecutable"
 
-# Pass explicit Python executable to CMake to prefer the current environment's interpreter
+# Pass explicit Python executable to CMake to prefer the selected interpreter
 $PythonExeOption = "-DPython3_EXECUTABLE=`"$PythonExecutable`" -DPython_EXECUTABLE=`"$PythonExecutable`""
 $PythonCacheOptions = "-DPYTHON_INCLUDE_DIR=$PythonIncludeDir -DPYTHON_LIBRARY=$PythonLibrary"
 
@@ -176,7 +203,6 @@ $CMakeCmd = @(
     $LibDataChannelSettings,
     $Decoding,
     $PythonCacheOptions,
-    $PythonExeOption,
     $SynavisAppBuild,
     $CMakeVerboseLogging,
     $CPlantBoxDirOption,
@@ -204,7 +230,23 @@ if ($InstallAdios2) {
     $vcpkgCmd = Get-Command vcpkg -ErrorAction SilentlyContinue
     if ($vcpkgCmd) {
         Write-Host "Installing adios2[mpi] via vcpkg..."
-        & vcpkg install adios2[mpi]
+        # Explicitly install for x64-windows triplet to ensure consistency
+        $result = & vcpkg install adios2[mpi]:x64-windows
+        Write-Host $result
+        
+        # Verify installation succeeded
+        $vcpkgRoot = Split-Path $vcpkgCmd.Source -Parent
+        $installedDir = Join-Path $vcpkgRoot "installed\x64-windows"
+        if (Test-Path $installedDir) {
+            Write-Host "Verifying ADIOS2 installation in $installedDir"
+            $adios2Dlls = Get-ChildItem -Path $installedDir -Recurse -Filter "adios2*.dll" -ErrorAction SilentlyContinue
+            if ($adios2Dlls) {
+                Write-Host "Found $(($adios2Dlls).Count) ADIOS2 DLL(s):"
+                $adios2Dlls | ForEach-Object { Write-Host "  - $($_.Name) at $($_.FullName)" }
+            } else {
+                Write-Warning "ADIOS2 installation completed but no DLLs found. This may indicate a partial install or wrong triplet."
+            }
+        }
     } else {
         Write-Warning "vcpkg not found. Cannot install adios2 via vcpkg."
     }
@@ -212,6 +254,10 @@ if ($InstallAdios2) {
 
 Write-Host "Running: $CMakeCmd"
 Invoke-Expression $CMakeCmd
+$CMakeExitCode = $LASTEXITCODE
+if ($CMakeExitCode -ne 0) {
+    throw "CMake configuration failed with exit code $CMakeExitCode"
+}
 
 if (-not $NoBuild) {
   # Build
@@ -410,46 +456,99 @@ if (-not $NoBuild) {
             if (!(Test-Path $DestAdiosInclude)) { New-Item -ItemType Directory -Path $DestAdiosInclude -Force | Out-Null }
             if (!(Test-Path $DestAdiosLib)) { New-Item -ItemType Directory -Path $DestAdiosLib -Force | Out-Null }
 
-            if ($Adios2Root -ne "" -and (Test-Path $Adios2Root)) {
-                Write-Host "Copying ADIOS2 headers from $Adios2Root/include to $DestAdiosInclude"
-                Copy-Item -Path (Join-Path $Adios2Root "include\*") -Destination $DestAdiosInclude -Recurse -Force -ErrorAction SilentlyContinue
-                $srcLib = Join-Path $Adios2Root "lib"
-                if (Test-Path $srcLib) {
-                    Write-Host "Copying ADIOS2 libs from $srcLib to $DestAdiosLib"
-                    Get-ChildItem -Path $srcLib -Filter "*adios2*" -File -ErrorAction SilentlyContinue | ForEach-Object { Copy-Item $_.FullName -Destination $DestAdiosLib -Force -ErrorAction SilentlyContinue }
+            $CopiedAdios2Dlls = @{}
+
+            function Copy-Adios2DllsFromRoot {
+                param(
+                    [string]$SearchRoot
+                )
+
+                if ([string]::IsNullOrWhiteSpace($SearchRoot) -or -not (Test-Path $SearchRoot)) {
+                    return
                 }
-            }
-            else {
-                # Try vcpkg installation if requested
-                $vcpkgCmd = Get-Command vcpkg -ErrorAction SilentlyContinue
-                if ($InstallAdios2 -and $vcpkgCmd) {
-                    $VcpkgRoot = Split-Path $vcpkgCmd.Source -Parent
-                    # find installed triplet that contains adios2 headers
-                    $installed = Join-Path $VcpkgRoot "installed"
-                    $found = $false
-                    Get-ChildItem -Path $installed -Directory | ForEach-Object {
-                        $inc = Join-Path $_.FullName "include"
-                        if ((Test-Path (Join-Path $inc "adios2.h")) -or (Test-Path (Join-Path $inc "adios2"))) {
-                            Write-Host "Copying ADIOS2 headers from $inc to $DestAdiosInclude"
-                            Copy-Item -Path (Join-Path $inc "*") -Destination $DestAdiosInclude -Recurse -Force -ErrorAction SilentlyContinue
-                            $libdir = Join-Path $_.FullName "lib"
-                            if (Test-Path $libdir) {
-                                Write-Host "Copying ADIOS2 libs from $libdir to $DestAdiosLib"
-                                Get-ChildItem -Path $libdir -Filter "*adios2*" -File -ErrorAction SilentlyContinue | ForEach-Object { Copy-Item $_.FullName -Destination $DestAdiosLib -Force -ErrorAction SilentlyContinue }
-                            }
-                            $found = $true
-                        }
+
+                Get-ChildItem -Path $SearchRoot -Recurse -File -Filter "adios2*.dll" -ErrorAction SilentlyContinue | ForEach-Object {
+                    $normalizedName = $_.Name.ToLowerInvariant()
+                    if (-not $CopiedAdios2Dlls.ContainsKey($normalizedName)) {
+                        $CopiedAdios2Dlls[$normalizedName] = $true
+                        Write-Host "Copying ADIOS2 DLL $($_.FullName) -> $DestAdiosLib"
+                        Copy-Item -Path $_.FullName -Destination $DestAdiosLib -Force -ErrorAction SilentlyContinue
                     }
-                    if (-not $found) { Write-Warning "Could not locate adios2 in vcpkg installed tree; provide ADIOS2 root or install system-wide." }
-                }
-                else {
-                    Write-Host "Skipping ADIOS2 export: neither ADIOS2_ROOT provided nor vcpkg installation enabled."
                 }
             }
+
+            # Source ADIOS2 from provided root or vcpkg installation
+            $AdiosSourceRoot = ""
+            
+            if ($Adios2Root -ne "" -and (Test-Path $Adios2Root)) {
+                Write-Host "Using provided ADIOS2 root: $Adios2Root"
+                $AdiosSourceRoot = $Adios2Root
+            } elseif ($InstallAdios2) {
+                $vcpkgCmd = Get-Command vcpkg -ErrorAction SilentlyContinue
+                if ($vcpkgCmd) {
+                    $VcpkgRoot = Split-Path $vcpkgCmd.Source -Parent
+                    $vcpkgInstalled = Join-Path $VcpkgRoot "installed\x64-windows"
+                    if (Test-Path $vcpkgInstalled) {
+                        Write-Host "Using ADIOS2 from vcpkg: $vcpkgInstalled"
+                        $AdiosSourceRoot = $vcpkgInstalled
+                    } else {
+                        Write-Warning "ADIOS2 not found in vcpkg installed tree at $vcpkgInstalled"
+                    }
+                } else {
+                    Write-Warning "vcpkg not found. Cannot locate ADIOS2."
+                }
+            }
+            
+            # Copy from the determined source
+            if ($AdiosSourceRoot -ne "") {
+                # Copy headers
+                $AdiosIncludeRoot = Join-Path $AdiosSourceRoot "include"
+                if (Test-Path $AdiosIncludeRoot) {
+                    Write-Host "Copying ADIOS2 headers from $AdiosIncludeRoot to $DestAdiosInclude"
+                    Copy-Item -Path (Join-Path $AdiosIncludeRoot "*") -Destination $DestAdiosInclude -Recurse -Force -ErrorAction SilentlyContinue
+                }
+
+                # Copy DLLs from bin directory
+                $AdiosBinDir = Join-Path $AdiosSourceRoot "bin"
+                if (Test-Path $AdiosBinDir) {
+                    Write-Host "Searching for ADIOS2 DLLs in $AdiosBinDir"
+                    Copy-Adios2DllsFromRoot $AdiosBinDir
+                }
+
+                # Copy import libraries
+                $AdiosLibRoot = Join-Path $AdiosSourceRoot "lib"
+                if (Test-Path $AdiosLibRoot) {
+                    Write-Host "Copying ADIOS2 import libraries from $AdiosLibRoot to $DestAdiosLib"
+                    Get-ChildItem -Path $AdiosLibRoot -File -Filter "adios2*.lib" -ErrorAction SilentlyContinue | ForEach-Object {
+                        Copy-Item -Path $_.FullName -Destination $DestAdiosLib -Force -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+
+            # Verify all expected ADIOS2 DLLs are present
+            $expectedDlls = @("adios2_c.dll", "adios2_core.dll", "adios2_cxx11.dll")
+            $missingDlls = @()
+            
+            foreach ($dll in $expectedDlls) {
+                if (-not (Test-Path (Join-Path $DestAdiosLib $dll))) {
+                    $missingDlls += $dll
+                }
+            }
+            
+            if ($missingDlls.Count -gt 0) {
+                Write-Warning "The following ADIOS2 DLLs are missing from ${DestAdiosLib}:"
+                $missingDlls | ForEach-Object { Write-Warning "  - $_" }
+                Write-Warning ""
+                Write-Warning "This may indicate that the ADIOS2 build/configuration did not produce all expected shared libraries."
+                Write-Warning "To resolve this issue:"
+                Write-Warning "  1. Verify vcpkg installation: vcpkg list adios2:*"
+                Write-Warning "  2. Reinstall ADIOS2 with explicit triplet: vcpkg install adios2[mpi]:x64-windows --recurse"
+                Write-Warning "  3. Check vcpkg build logs in ${VcpkgRoot}\buildtrees\adios2"
+                Write-Warning "  4. Alternatively, provide ADIOS2_ROOT pointing to a valid ADIOS2 installation"
+            } else {
+                Write-Host "All expected ADIOS2 DLLs found: $($expectedDlls -join ', ')"
+            }
+
             Write-Host "ADIOS2 export/copy completed."
         }
-
-
-} else {
-  Write-Host "Skipping build step due to -NoBuild switch."
-}
+    }
