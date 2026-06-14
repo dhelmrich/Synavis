@@ -1,23 +1,26 @@
 #include "Adios2State.h"
 #include <adios2_c.h>
+#include "Async/Async.h"
 
 FAdios2State::FAdios2State()
   : AdiosPtr(nullptr)
   , IOPtr(nullptr)
-    , WriterEnginePtr(nullptr)
+  , WriterEnginePtr(nullptr)
   , IOPtrReader(nullptr)
-    , ReaderEnginePtr(nullptr)
-    , WriterEngineTypeStr(TEXT("BP5"))
-    , WriterFilenamePrefixStr(TEXT("synavis_output"))
-    , WriterTransportType(EAdiosTransport::BP5)  // BP5 is the default for real-time streaming
+  , ReaderEnginePtr(nullptr)
+  , WriterEngineTypeStr(TEXT("BP5"))
+  , WriterFilenamePrefixStr(TEXT("synavis_output"))
   , bRunning(false)
   , bInitialized(false)
-  , bIsConnecting(false)
   , bReaderRunning(false)
+  , ConnectionState(EAdiosConnectionState::Disconnected)
+  , ConnectionStartTime(0.0f)
+  , CurrentRetryAttempt(0)
   , Port(9001)
   , Hostname(TEXT("localhost"))
   , ConnectionRetries(10)
   , ConnectionRetryDelayMs(500)
+  , WriterTransportType(EAdiosTransport::BP5)  // BP5 is the default for real-time streaming
 {
 }
 
@@ -27,114 +30,118 @@ FAdios2State::~FAdios2State()
   StopReader();
 }
 
-void FAdios2State::Initialize()
+void FAdios2State::Initialize(const FString& EngineType, const FString& FilenamePrefix)
 {
-  if (bInitialized)
-    return;
-
   UE_LOG(LogTemp, Log, TEXT("FAdios2State::Initialize() - begin"))
-  AdiosPtr = adios2_init_serial();
-  bInitialized = true;
-  UE_LOG(LogTemp, Log, TEXT("FAdios2State::Initialize() - adios2_init_serial() completed, AdiosPtr=%p"), AdiosPtr)
+
+  if (!bInitialized)
+  {
+    AdiosPtr = adios2_init_serial();
+    bInitialized = true;
+    UE_LOG(LogTemp, Log, TEXT("FAdios2State::Initialize() - adios2_init_serial() completed, AdiosPtr=%p"), AdiosPtr)
+  }
+
+  ConnectionState = EAdiosConnectionState::Initializing;
+  WriterEngineTypeStr = EngineType;
+  WriterFilenamePrefixStr = FilenamePrefix;
+
+  // Parse engine type and set corresponding transport type.
+  if (EngineType == TEXT("sst") || EngineType == TEXT("SST"))
+  {
+    WriterTransportType = EAdiosTransport::SST;
+  }
+  else if (EngineType == TEXT("BP4") || EngineType == TEXT("bp4"))
+  {
+    WriterTransportType = EAdiosTransport::BP4;
+  }
+  else if (EngineType == TEXT("BP5") || EngineType == TEXT("bp5"))
+  {
+    WriterTransportType = EAdiosTransport::BP5;
+  }
+  else if (EngineType == TEXT("dataserver") || EngineType == TEXT("DataServer"))
+  {
+    WriterTransportType = EAdiosTransport::DataServer;
+  }
+  else
+  {
+    WriterTransportType = EAdiosTransport::BP5;
+  }
+
+  if (IOPtr)
+  {
+    adios2_bool removeResult = adios2_true;
+    adios2_remove_io(&removeResult, AdiosPtr, "AdiosIO");
+    IOPtr = nullptr;
+  }
+
+  UE_LOG(LogTemp, Log, TEXT("FAdios2State::Initialize() - declaring IO"))
+  IOPtr = adios2_declare_io(AdiosPtr, "AdiosIO");
+  UE_LOG(LogTemp, Log, TEXT("FAdios2State::Initialize() - adios2_declare_io() returned IOPtr=%p"), IOPtr)
+
+  if (!IOPtr)
+  {
+    ConnectionState = EAdiosConnectionState::Failed;
+    return;
+  }
+
+  FString EngineTypeString = GetTransportTypeString();
+  const char* engineTypeCStr = TCHAR_TO_UTF8(*EngineTypeString);
+
+  UE_LOG(LogTemp, Log, TEXT("FAdios2State::Initialize() - setting engine type to %hs"), engineTypeCStr)
+  adios2_error writer_engine_result = adios2_set_engine(IOPtr, engineTypeCStr);
+  UE_LOG(LogTemp, Log, TEXT("FAdios2State::Initialize() - adios2_set_engine() returned error=%d"), writer_engine_result)
+
+  if (WriterTransportType == EAdiosTransport::SST)
+  {
+    const char* hostnameCStr = TCHAR_TO_UTF8(*Hostname);
+    UE_LOG(LogTemp, Log, TEXT("FAdios2State::Initialize() - setting NetworkInterface=%hs, Port=%d"), hostnameCStr, Port)
+    adios2_set_parameter(IOPtr, "NetworkInterface", hostnameCStr);
+
+    char portStr[16];
+    sprintf_s(portStr, "%d", Port);
+    adios2_error portResult = adios2_set_parameter(IOPtr, "Port", portStr);
+    UE_LOG(LogTemp, Log, TEXT("FAdios2State::Initialize() - adios2_set_parameter(Port) returned error=%d"), portResult);
+
+    adios2_set_parameter(IOPtr, "TimeoutSec", "10");
+    adios2_set_parameter(IOPtr, "RendezvousReaderCount", "1");
+    adios2_set_parameter(IOPtr, "InitialNumReaders", "1");
+    adios2_set_parameter(IOPtr, "ManagesNetworkStack", "true");
+    adios2_set_parameter(IOPtr, "StagingDirectory", TCHAR_TO_UTF8(*(WriterFilenamePrefixStr + TEXT(".staging"))));
+    adios2_set_parameter(IOPtr, "DataDirectory", TCHAR_TO_UTF8(*(WriterFilenamePrefixStr + TEXT(".data"))));
+  }
+  else if (WriterTransportType == EAdiosTransport::BP4)
+  {
+    adios2_set_parameter(IOPtr, "NumAggregators", "0");
+    adios2_set_parameter(IOPtr, "FlushStepsCount", "1");
+    adios2_set_parameter(IOPtr, "StatsLevel", "1");
+    adios2_set_parameter(IOPtr, "InitialBufferSize", "16Mb");
+    adios2_set_parameter(IOPtr, "BufferGrowthFactor", "1.05");
+  }
+  else if (WriterTransportType == EAdiosTransport::BP5)
+  {
+    adios2_set_parameter(IOPtr, "NumAggregators", "0");
+    adios2_set_parameter(IOPtr, "FlushStepsCount", "1");
+    adios2_set_parameter(IOPtr, "StatsLevel", "1");
+    adios2_set_parameter(IOPtr, "InitialBufferSize", "16Mb");
+    adios2_set_parameter(IOPtr, "BufferGrowthFactor", "1.05");
+    adios2_set_parameter(IOPtr, "DirectIO", "true");
+  }
+
+  ConnectionState = EAdiosConnectionState::Disconnected;
 }
 
 void FAdios2State::StartStreaming(const FString& EngineType, const FString& FilenamePrefix)
 {
   UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - begin"))
-  if (bRunning)
+  if (bRunning || ConnectionState == EAdiosConnectionState::Connecting)
   {
     UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - already running, returning"))
     return;
   }
 
-  if (!bInitialized)
-  {
-    UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - calling Initialize()"))
-    Initialize();
-  }
+  UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - calling Initialize()"))
+  Initialize(EngineType, FilenamePrefix);
 
-    WriterFilenamePrefixStr = FilenamePrefix;
-    
-    // Parse engine type and set corresponding transport type
-    if (EngineType == TEXT("sst") || EngineType == TEXT("SST"))
-    {
-        WriterTransportType = EAdiosTransport::SST;
-    }
-    else if (EngineType == TEXT("BP4") || EngineType == TEXT("bp4"))
-    {
-        WriterTransportType = EAdiosTransport::BP4;
-    }
-    else if (EngineType == TEXT("BP5") || EngineType == TEXT("bp5"))
-    {
-        WriterTransportType = EAdiosTransport::BP5;
-    }
-    else if (EngineType == TEXT("dataserver") || EngineType == TEXT("DataServer"))
-    {
-        WriterTransportType = EAdiosTransport::DataServer;
-    }
-    else
-    {
-        // Default to BP5 for real-time streaming
-        WriterTransportType = EAdiosTransport::BP5;
-    }
-
-    FString WriterFilenamePrefix = WriterFilenamePrefixStr;
-
-   UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - declaring IO"))
-   IOPtr = adios2_declare_io(AdiosPtr, "AdiosIO");
-   UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - adios2_declare_io() returned IOPtr=%p"), IOPtr)
-
-    FString EngineTypeString = GetTransportTypeString();
-    const char* engineTypeCStr = TCHAR_TO_UTF8(*EngineTypeString);
-    const char* filenamePrefixCStr = TCHAR_TO_UTF8(*WriterFilenamePrefixStr);
-
-    UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - setting engine type to %hs"), engineTypeCStr)
-     adios2_error writer_engine_result = adios2_set_engine(IOPtr, engineTypeCStr);
-     UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - adios2_set_engine() returned error=%d"), writer_engine_result)
-
-     if (WriterTransportType == EAdiosTransport::SST)
-    {
-      const char* hostnameCStr = TCHAR_TO_UTF8(*Hostname);
-      UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - setting NetworkInterface=%hs, Port=%d"), hostnameCStr, Port)
-      adios2_set_parameter(IOPtr, "NetworkInterface", hostnameCStr);
-      
-      char portStr[16];
-      sprintf_s(portStr, "%d", Port);
-      adios2_error portResult = adios2_set_parameter(IOPtr, "Port", portStr);
-      UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - adios2_set_parameter(Port) returned error=%d"), portResult);
-      
-      adios2_set_parameter(IOPtr, "TimeoutSec", "10");
-      adios2_set_parameter(IOPtr, "RendezvousReaderCount", "1");
-      adios2_set_parameter(IOPtr, "InitialNumReaders", "1");
-      adios2_set_parameter(IOPtr, "ManagesNetworkStack", "true");
-      adios2_set_parameter(IOPtr, "StagingDirectory", TCHAR_TO_UTF8(*(WriterFilenamePrefixStr + TEXT(".staging"))));
-      adios2_set_parameter(IOPtr, "DataDirectory", TCHAR_TO_UTF8(*(WriterFilenamePrefixStr + TEXT(".data"))));
-    }
-    else if (WriterTransportType == EAdiosTransport::BP4)
-    {
-      // BP4-specific parameters for file-based asynchronous I/O
-      // BP4 uses a single file: synavis_output.bp
-      UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - configuring BP4 engine parameters"))
-      adios2_set_parameter(IOPtr, "NumAggregators", "0");
-      adios2_set_parameter(IOPtr, "FlushStepsCount", "1");
-      adios2_set_parameter(IOPtr, "StatsLevel", "1");
-      adios2_set_parameter(IOPtr, "InitialBufferSize", "16Mb");
-      adios2_set_parameter(IOPtr, "BufferGrowthFactor", "1.05");
-      // BP4 uses file-based mode (default)
-    }
-    else if (WriterTransportType == EAdiosTransport::BP5)
-    {
-      // BP5-specific parameters for memory-based real-time streaming
-      // BP5 can use folder structure or memory-based transfer
-      UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - configuring BP5 engine parameters"))
-      adios2_set_parameter(IOPtr, "NumAggregators", "0");
-      adios2_set_parameter(IOPtr, "FlushStepsCount", "1");
-      adios2_set_parameter(IOPtr, "StatsLevel", "1");
-      adios2_set_parameter(IOPtr, "InitialBufferSize", "16Mb");
-      adios2_set_parameter(IOPtr, "BufferGrowthFactor", "1.05");
-      adios2_set_parameter(IOPtr, "DirectIO", "true");  // Enable direct memory transfer
-      // BP5 can optionally use folder mode: adios2_set_parameter(IOPtr, "FolderMode", "true");
-    }
 
   UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - defining variables"))
   adios2_variable* dataVar = adios2_define_variable(IOPtr, "data", adios2_type_uint8_t, 0, NULL, NULL, NULL, adios2_constant_dims_false);
@@ -144,50 +151,54 @@ void FAdios2State::StartStreaming(const FString& EngineType, const FString& File
   adios2_variable* jsonVar = adios2_define_variable(IOPtr, "json", adios2_type_string, 0, NULL, NULL, NULL, adios2_constant_dims_false);
   UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - adios2_define_variable(json) returned var=%p"), jsonVar)
 
-  const char* engineNameCStr = TCHAR_TO_UTF8(*WriterFilenamePrefix);
+  const char* engineNameCStr = TCHAR_TO_UTF8(*WriterFilenamePrefixStr);
   UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - opening engine with name %hs"), engineNameCStr)
   
     WriterEnginePtr = nullptr;
-    bIsConnecting = true;
-   
-    for (int Retry = 0; Retry < ConnectionRetries; Retry++)
+    ConnectionState = EAdiosConnectionState::Connecting;
+
+    const FString EngineName = WriterFilenamePrefixStr;
+    Async(EAsyncExecution::Thread, [this, EngineName]()
     {
-      if (Retry > 0)
+      for (int Retry = 0; Retry < ConnectionRetries && ConnectionState == EAdiosConnectionState::Connecting; Retry++)
       {
-        UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - retry %d/%d after %dms"), Retry, ConnectionRetries, ConnectionRetryDelayMs)
-        FPlatformProcess::Sleep((float)ConnectionRetryDelayMs / 1000.0f);
-      }
-      
-      WriterEnginePtr = adios2_open(IOPtr, engineNameCStr, adios2_mode_write);
-      if (WriterEnginePtr)
-      {
-        UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - adios2_open() succeeded on retry %d"), Retry)
-        break;
-      }
-      else
-      {
+        if (Retry > 0)
+        {
+          UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - retry %d/%d after %dms"), Retry, ConnectionRetries, ConnectionRetryDelayMs)
+          FPlatformProcess::Sleep((float)ConnectionRetryDelayMs / 1000.0f);
+        }
+
+        FTCHARToUTF8 EngineNameUtf8(*EngineName);
+        WriterEnginePtr = adios2_open(IOPtr, EngineNameUtf8.Get(), adios2_mode_write);
+        if (WriterEnginePtr)
+        {
+          UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - adios2_open() succeeded on retry %d"), Retry)
+          bRunning = true;
+          ConnectionState = EAdiosConnectionState::Connected;
+          return;
+        }
+
         UE_LOG(LogTemp, Warning, TEXT("FAdios2State::StartStreaming() - adios2_open() returned NULL, waiting for reader..."))
       }
-    }
-    
-    bIsConnecting = false;
-    
-    if (!WriterEnginePtr)
-    {
-      UE_LOG(LogTemp, Error, TEXT("FAdios2State::StartStreaming() - failed to open engine after %d retries"), ConnectionRetries)
-      return;
-    }
-  
-  bRunning = true;
 
+      if (!WriterEnginePtr)
+      {
+        UE_LOG(LogTemp, Error, TEXT("FAdios2State::StartStreaming() - failed to open engine after %d retries"), ConnectionRetries)
+        ConnectionState = EAdiosConnectionState::Failed;
+      }
+    });
+
+   FString EngineTypeString = GetTransportTypeString();
    UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartStreaming() - completed, engine=%s, prefix=%s, hostname=%s, port=%d"), 
           *EngineTypeString, *WriterFilenamePrefixStr, *Hostname, Port)
 }
 
 void FAdios2State::StopStreaming()
 {
-  if (!bRunning && !bIsConnecting)
+  if (!bRunning && ConnectionState != EAdiosConnectionState::Connecting)
     return;
+
+  ConnectionState = EAdiosConnectionState::Disconnected;
 
   if (WriterEnginePtr)
   {
@@ -205,7 +216,6 @@ void FAdios2State::StopStreaming()
   }
 
   bRunning = false;
-  bIsConnecting = false;
 
   UE_LOG(LogTemp, Log, TEXT("ADIOS2 streaming stopped"))
 }
@@ -222,7 +232,7 @@ void FAdios2State::StartReader()
   if (!bInitialized)
   {
     UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartReader() - calling Initialize()"))
-    Initialize();
+    Initialize(WriterEngineTypeStr, WriterFilenamePrefixStr);
   }
 
   UE_LOG(LogTemp, Log, TEXT("FAdios2State::StartReader() - declaring reader IO"))

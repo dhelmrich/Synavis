@@ -1066,7 +1066,7 @@ void ASynavisDrone::JsonCommand(TSharedPtr<FJsonObject> Jason, double unixtime_s
       // save the task
       ScheduledTasks.Add({ time, regular, Prompt });
     }
-    else if (ApplicationProcessInput.IsSet())
+    else if (this->ApplicationProcessInput.IsSet())
     {
       UE_LOG(LogTemp, Warning, TEXT("Unknown Type, I am delegating this to custom processing."));
       ApplicationProcessInput.GetValue()(Jason);

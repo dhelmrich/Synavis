@@ -25,7 +25,7 @@ void UAdios2Streamer::StartStreaming()
     FString EngineType = TEXT("BP5");
     FString FilenamePrefix = TEXT("synavis_output");
     
-    AdiosState->Initialize();
+    AdiosState->Initialize(EngineType, FilenamePrefix);
     AdiosState->SetConnectionRetries(ConnectionRetries);
     AdiosState->SetConnectionRetryDelayMs(ConnectionRetryDelayMs);
     AdiosState->StartStreaming(EngineType, FilenamePrefix);
@@ -239,19 +239,44 @@ void UAdios2Streamer::CaptureFrame()
 void UAdios2Streamer::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
   Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-  
-  if (!AdiosState || !SceneCapture)
+
+  if (!AdiosState)
   {
-    UE_LOG(LogTemp, Warning, TEXT("UAdios2Streamer: Tick skipped because not running or no SceneCapture"));
     return;
   }
-  
-  if (!AdiosState->IsRunning() && !AdiosState->IsConnecting())
+
+  const bool bIsConnectingNow = AdiosState->IsConnecting();
+  const bool bIsRunningNow = AdiosState->IsRunning();
+
+  if (bIsConnectingNow && !bWasConnectingLastTick)
   {
-    UE_LOG(LogTemp, Warning, TEXT("UAdios2Streamer: Tick skipped because not running or no SceneCapture"));
+    UE_LOG(LogTemp, Log, TEXT("UAdios2Streamer: Waiting for asynchronous ADIOS2 connection setup"));
+  }
+
+  if (bIsRunningNow && !bWasRunningLastTick)
+  {
+    UE_LOG(LogTemp, Log, TEXT("UAdios2Streamer: ADIOS2 connection established"));
+  }
+
+  if (!bIsConnectingNow && !bIsRunningNow && bWasConnectingLastTick)
+  {
+    UE_LOG(LogTemp, Warning, TEXT("UAdios2Streamer: ADIOS2 connection setup finished without a running writer"));
+  }
+
+  bWasConnectingLastTick = bIsConnectingNow;
+  bWasRunningLastTick = bIsRunningNow;
+
+  if (!bIsRunningNow)
+  {
     return;
   }
-  
+
+  if (!SceneCapture)
+  {
+    UE_LOG(LogTemp, Warning, TEXT("UAdios2Streamer: Tick skipped because SceneCapture is null"));
+    return;
+  }
+
   CaptureFrame();
 }
 

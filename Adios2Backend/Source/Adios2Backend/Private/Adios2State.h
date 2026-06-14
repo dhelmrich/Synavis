@@ -3,6 +3,15 @@
 #include "adios2_c.h"
 #include "Adios2Configuration.h"
 
+enum class EAdiosConnectionState : uint8
+{
+  Disconnected,
+  Initializing,
+  Connecting,
+  Connected,
+  Failed
+};
+
 class FAdios2State
 {
 public:
@@ -10,14 +19,17 @@ public:
   ~FAdios2State();
 
   void Initialize();
+  void Initialize(const FString& EngineType, const FString& FilenamePrefix);
   void StartStreaming(const FString& EngineType, const FString& FilenamePrefix);
+  void Tick(float DeltaTime);
   void StopStreaming();
   void StartReader();
   void StopReader();
 
   bool IsRunning() const { return bRunning; }
-  bool IsConnecting() const { return bIsConnecting; }
+  bool IsConnecting() const { return ConnectionState == EAdiosConnectionState::Connecting; }
   bool IsReaderRunning() const { return bReaderRunning; }
+  EAdiosConnectionState GetConnectionState() const { return ConnectionState; }
 
   bool SendData(const TArray<uint8>& Data);
   bool SendString(const FString& Message);
@@ -50,8 +62,11 @@ private:
 
   bool bRunning;
   bool bInitialized;
-  bool bIsConnecting;
   bool bReaderRunning;
+  
+  EAdiosConnectionState ConnectionState;
+  float ConnectionStartTime;
+  int32 CurrentRetryAttempt;
 
   int32 Port;
   FString Hostname;

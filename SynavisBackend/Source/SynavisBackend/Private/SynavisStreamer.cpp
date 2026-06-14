@@ -1,5 +1,6 @@
 #include "SynavisStreamer.h"
 
+#include "SynavisCommunicationInterface.h"
 #include "SynavisVp9SendoffHandler.h"
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"

@@ -72,4 +72,6 @@ protected:
 
   USceneCaptureComponent2D* SceneCapture = nullptr;
   bool bNeedsRenderThreadSync = false;
+  bool bWasConnectingLastTick = false;
+  bool bWasRunningLastTick = false;
 };

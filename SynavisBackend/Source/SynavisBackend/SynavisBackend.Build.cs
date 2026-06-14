@@ -39,6 +39,7 @@ public class SynavisBackend : ModuleRules
 				"Projects",
 				"Json",
 				"JsonUtilities",
+        "SynavisUE"
 			}
 			);
 			
@@ -72,9 +73,12 @@ public class SynavisBackend : ModuleRules
 			string DllPath = System.IO.Path.Combine(LibDataChannelPath, "datachannel.dll");
 			string LibPath = System.IO.Path.Combine(LibDataChannelPath, "datachannel.lib");
       PublicAdditionalLibraries.Add(LibPath);
-      RuntimeDependencies.Add(DllPath);
-      // add DLL folder to path
-      
+      RuntimeDependencies.Add("$(BinaryOutputDir)/datachannel.dll", DllPath);
+      // Also copy OpenSSL dependencies
+      string LibSslPath = System.IO.Path.Combine(LibDataChannelPath, "libssl-3-x64.dll");
+      string LibCryptoPath = System.IO.Path.Combine(LibDataChannelPath, "libcrypto-3-x64.dll");
+      RuntimeDependencies.Add("$(BinaryOutputDir)/libssl-3-x64.dll", LibSslPath);
+      RuntimeDependencies.Add("$(BinaryOutputDir)/libcrypto-3-x64.dll", LibCryptoPath);
 
 		}
 		else if (Target.Platform == UnrealTargetPlatform.Linux)

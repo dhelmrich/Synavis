@@ -34,8 +34,7 @@ public class SynavisUE : ModuleRules
 		        "ProceduralMeshComponent",
 		        "MediaIOCore",
 		        "MediaUtils",
-		        "PixelCapture",
-            "SynavisBackend"
+		        "PixelCapture"
 		        // ... add other public dependencies that you statically link with here ...
 			}
 			);
