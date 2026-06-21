@@ -98,12 +98,18 @@ public:
   void AddVariable(const std::string& Name, const std::string& DataType);
   bool WriteStep();
   void Flush();
+  
+  // Circuit breaker handling
+  void HandleWriteFailure(const std::string& operation);
 
   // Reader functionality for bidirectional streaming
   void StartReader();
   void StopReader();
   bool ReadStep();
   void SetReadCallback(std::function<void(const std::variant<binary, std::string>&, const std::string&)> Callback);
+
+  // Temp additional method to receive the io engine to expose SetParameter
+  adios2::IO* GetIOEngineWriter() { return io_engine_writer_.get(); }
 
 protected:
   // ADIOS2 engine and IO management
@@ -123,22 +129,36 @@ protected:
   std::atomic<bool> streaming_{false};
   std::atomic<bool> writer_ready_{false};
 
-    // Configuration
-     EAdiosTransport transport_type_{EAdiosTransport::BP5};  // BP5 is the default for real-time streaming
-    std::string io_name_{"AdiosIO"};
-    std::string variable_name_{"SynavisData"};
-    std::string filename_prefix_{"synavis_output"};
-    adios2::Mode mode_{adios2::Mode::Write};
+  // Configuration
+    EAdiosTransport transport_type_{EAdiosTransport::BP5};  // BP5 is the default for real-time streaming
+  std::string io_name_{"AdiosIO"};
+  std::string variable_name_{"SynavisData"};
+  std::string filename_prefix_{"synavis_output"};
+  adios2::Mode mode_{adios2::Mode::Write};
     
-   // Connection retry settings (for SST engine startup timing)
-     int connection_retries_{10};
-     int connection_retry_delay_ms_{500};
-     int reader_startup_timeout_ms_{10000};
-     int reader_startup_check_interval_ms_{100};
+  // Connection retry settings (for SST engine startup timing)
+  int connection_retries_{10};
+  int connection_retry_delay_ms_{500};
+  int reader_startup_timeout_ms_{10000};
+  int reader_startup_check_interval_ms_{100};
+    
+  // Circuit breaker settings for WriteStep failures
+  int max_write_failures_{5};
+  int failure_backoff_ms_{1000};
+  std::atomic<int> consecutive_write_failures_{0};
+  std::atomic<bool> circuit_breaker_open_{false};
+    
+  // Circuit breaker configuration
+  void SetMaxWriteFailures(int max_failures) { max_write_failures_ = max_failures; }
+  void SetFailureBackoffMs(int backoff_ms) { failure_backoff_ms_ = backoff_ms; }
+  int GetMaxWriteFailures() const { return max_write_failures_; }
+  int GetFailureBackoffMs() const { return failure_backoff_ms_; }
+  bool IsCircuitBreakerOpen() const { return circuit_breaker_open_.load(); }
+  void ResetCircuitBreaker() { consecutive_write_failures_.store(0); circuit_breaker_open_.store(false); }
 
-   // Network configuration (for SST engine)
-    std::string network_interface_{"localhost"};
-    int network_port_{9001};
+  // Network configuration (for SST engine)
+  std::string network_interface_{"localhost"};
+  int network_port_{9001};
 
   // ADIOS2 objects
   std::unique_ptr<adios2::ADIOS> adios_engine_;

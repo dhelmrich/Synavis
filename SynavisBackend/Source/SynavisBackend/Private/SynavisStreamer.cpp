@@ -1063,7 +1063,7 @@ void USynavisStreamer::BeginPlay()
   Super::BeginPlay();
 
   // set the logging level for libdatachannel to verbose only when UE global verbosity is VeryVerbose
-  if (UE_GET_LOG_VERBOSITY(LogTemp) >= ELogVerbosity::VeryVerbose && false)
+  if (UE_GET_LOG_VERBOSITY(LogTemp) >= ELogVerbosity::VeryVerbose)
   {
     rtcInitLogger(RTC_LOG_VERBOSE, Synavis_Rtc_Logger);
   }

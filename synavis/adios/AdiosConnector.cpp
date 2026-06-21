@@ -4,9 +4,42 @@
 #include <filesystem>
 #include <stdexcept>
 #include <chrono>
+#include <functional>
 
 namespace Synavis
 {
+
+  class ScopeGuard
+  {
+  public:
+
+    explicit ScopeGuard(std::function<void()> cleanup) : cleanup_(std::move(cleanup)), active_(true) {}
+    
+    ~ScopeGuard()
+    {
+      if (active_ && cleanup_)
+      {
+        try
+        {
+          cleanup_();
+        }
+        catch (...)
+        {
+        }
+      }
+    }
+    
+    void dismiss() { active_ = false; }
+    
+    ScopeGuard(const ScopeGuard&) = delete;
+    ScopeGuard& operator=(const ScopeGuard&) = delete;
+    ScopeGuard(ScopeGuard&&) = delete;
+    ScopeGuard& operator=(ScopeGuard&&) = delete;
+    
+  private:
+    std::function<void()> cleanup_;
+    bool active_;
+  };
 
   static const Logger::LoggerInstance ladios = Logger::Get()->LogStarter("AdiosConnector");
 
@@ -31,6 +64,10 @@ namespace Synavis
     reader_cleanup_done_ = false;
     connection_retries_ = 10;
     connection_retry_delay_ms_ = 500;
+    max_write_failures_ = 5;
+    failure_backoff_ms_ = 1000;
+    consecutive_write_failures_.store(0);
+    circuit_breaker_open_.store(false);
   }
 
   AdiosConnector::~AdiosConnector()
@@ -138,6 +175,7 @@ namespace Synavis
 
     ApplyConfiguration();
     CreateEngine();
+    StartReader();
     StartWorkerThread();
 
     ladios(ELogVerbosity::Info) << "ADIOS2 streaming started" << std::endl;
@@ -159,6 +197,10 @@ namespace Synavis
     CloseEngine();
 
     state_ = EConnectionState::CLOSED;
+    
+    // Reset circuit breaker state
+    consecutive_write_failures_.store(0);
+    circuit_breaker_open_.store(false);
 
     ladios(ELogVerbosity::Info) << "ADIOS2 streaming stopped" << std::endl;
 
@@ -453,6 +495,11 @@ namespace Synavis
 
     if (state_ == EConnectionState::CONNECTED && additional_wait > 0)
       std::this_thread::sleep_for(std::chrono::milliseconds(additional_wait));
+    else if (state_ == EConnectionState::FAILED)
+    {
+      ladios(ELogVerbosity::Error) << "Connection failed while waiting, state=" << static_cast<int>(state_.load()) << std::endl;
+      return;
+    }
 
     ladios(ELogVerbosity::Info) << "Connection status: state=" << static_cast<int>(state_.load()) << ", elapsed=" << elapsed << "ms" << std::endl;
   }
@@ -534,15 +581,38 @@ namespace Synavis
     ladios(ELogVerbosity::Info) << "Attempting to open writer engine with retry logic (retries=" << connection_retries_
       << ", delay_ms=" << connection_retry_delay_ms_ << ")" << std::endl;
 
+    state_ = EConnectionState::SIGNUP;
     bool engine_opened = false;
     for (int attempt = 1; attempt <= connection_retries_; ++attempt)
     {
       try
       {
         current_engine_ = std::make_unique<adios2::Engine>(io_engine_writer_->Open(writer_filename, mode_));
-        engine_opened = true;
-        ladios(ELogVerbosity::Info) << "Successfully opened writer engine with engine type: " << io_engine_writer_->EngineType() << std::endl;
-        break;
+        ladios(ELogVerbosity::Info) << "Writer engine opened, verifying connection with BeginStep..." << std::endl;
+        
+        auto step_status = current_engine_->BeginStep();
+        if (step_status == adios2::StepStatus::OK)
+        {
+          engine_opened = true;
+          ladios(ELogVerbosity::Info) << "Successfully opened writer engine and verified connection with reader" << std::endl;
+          current_engine_->EndStep();
+          break;
+        }
+        else
+        {
+          ladios(ELogVerbosity::Warning) << "BeginStep returned status " << static_cast<int>(step_status) 
+            << ", waiting for reader connection..." << std::endl;
+          try
+          {
+            current_engine_->EndStep();
+          }
+          catch (const std::exception& e)
+          {
+            ladios(ELogVerbosity::Warning) << "EndStep failed during cleanup: " << e.what() << std::endl;
+          }
+          current_engine_->Close();
+          current_engine_.reset();
+        }
       }
       catch (const std::exception& e)
       {
@@ -566,7 +636,7 @@ namespace Synavis
 
     ladios(ELogVerbosity::Info) << "ADIOS2 writer engine opened with filename: " << writer_filename << std::endl;
 
-    state_ = EConnectionState::CONNECTED;
+    state_ = EConnectionState::OFFERED;
     writer_ready_ = true;
 
     if (OnConnectedCallback.has_value())
@@ -634,6 +704,7 @@ namespace Synavis
         reader_engine_ = std::make_unique<adios2::Engine>(io_engine_reader_->Open(reader_filename, adios2::Mode::Read));
         engine_opened = true;
         ladios(ELogVerbosity::Info) << "Successfully opened reader engine with engine type: " << io_engine_reader_->EngineType() << std::endl;
+        state_ = EConnectionState::CONNECTED;
         break;
       }
       catch (const std::exception& e)
@@ -650,6 +721,9 @@ namespace Synavis
     if (!engine_opened)
     {
       ladios(ELogVerbosity::Error) << "Failed to open ADIOS2 reader engine after " << connection_retries_ << " attempts" << std::endl;
+      state_ = EConnectionState::FAILED;
+      if (OnFailedCallback.has_value())
+        OnFailedCallback.value()();
       return;
     }
 
@@ -672,96 +746,179 @@ namespace Synavis
     if (!current_engine_ || !streaming_)
       return false;
 
-    auto status = current_engine_->BeginStep();
-    if (status != adios2::StepStatus::OK)
+    // Check circuit breaker
+    if (circuit_breaker_open_.load())
     {
-      ladios(ELogVerbosity::Warning) << "BeginStep failed: " << static_cast<int>(status) << std::endl;
+      ladios(ELogVerbosity::Warning) << "Circuit breaker open, skipping WriteStep" << std::endl;
       return false;
     }
 
-    // Process all queued messages for this step
-    std::queue<QueuedMessage> step_messages;
-
+    bool step_begun = false;
+    try
     {
-      std::lock_guard<std::mutex> lock(queue_mutex_);
-      while (!message_queue_.empty())
+      auto status = current_engine_->BeginStep();
+      if (status != adios2::StepStatus::OK)
       {
-        step_messages.push(std::move(message_queue_.front()));
-        message_queue_.pop();
+        ladios(ELogVerbosity::Warning) << "BeginStep failed: status=" << static_cast<int>(status) << std::endl;
+        HandleWriteFailure("BeginStep");
+        return false;
       }
-    }
+      step_begun = true;
 
-    // Write each message as a variable
-    while (!step_messages.empty())
+      // Process all queued messages for this step
+      std::queue<QueuedMessage> step_messages;
+
+      {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        while (!message_queue_.empty())
+        {
+          step_messages.push(std::move(message_queue_.front()));
+          message_queue_.pop();
+        }
+      }
+
+      // Write each message as a variable
+      while (!step_messages.empty())
+      {
+        const auto& msg = step_messages.front();
+
+        try
+        {
+          if (msg.type == "data" || msg.type == "buffer")
+          {
+            // Binary data - write as uint8_t array
+            if (binary_variables_.find(msg.name) == binary_variables_.end())
+            {
+              binary_variables_[msg.name] = io_engine_writer_->DefineVariable<uint8_t>(msg.name);
+            }
+
+            std::vector<uint8_t> data(msg.data.begin(), msg.data.end());
+            current_engine_->Put(binary_variables_[msg.name], data.data(), adios2::Mode::Sync);
+          }
+          else if (msg.type == "float64")
+          {
+            // Double array
+            if (float64_variables_.find(msg.name) == float64_variables_.end())
+            {
+              float64_variables_[msg.name] = io_engine_writer_->DefineVariable<double>(msg.name);
+            }
+
+            std::vector<double> data(msg.data.size() / sizeof(double));
+            std::memcpy(data.data(), msg.data.data(), msg.data.size());
+            current_engine_->Put(float64_variables_[msg.name], data.data(), adios2::Mode::Sync);
+          }
+          else if (msg.type == "float32")
+          {
+            // Float array
+            if (float32_variables_.find(msg.name) == float32_variables_.end())
+            {
+              float32_variables_[msg.name] = io_engine_writer_->DefineVariable<float>(msg.name);
+            }
+
+            std::vector<float> data(msg.data.size() / sizeof(float));
+            std::memcpy(data.data(), msg.data.data(), msg.data.size());
+            current_engine_->Put(float32_variables_[msg.name], data.data(), adios2::Mode::Sync);
+          }
+          else if (msg.type == "int32")
+          {
+            // Int32 array
+            if (int32_variables_.find(msg.name) == int32_variables_.end())
+            {
+              int32_variables_[msg.name] = io_engine_writer_->DefineVariable<int32_t>(msg.name);
+            }
+
+            std::vector<int32_t> data(msg.data.size() / sizeof(int32_t));
+            std::memcpy(data.data(), msg.data.data(), msg.data.size());
+            current_engine_->Put(int32_variables_[msg.name], data.data(), adios2::Mode::Sync);
+          }
+          else if (msg.type == "string" || msg.type == "json")
+          {
+            // String data
+            std::string str_data(msg.data.begin(), msg.data.end());
+
+            if (string_variables_.find(msg.name) == string_variables_.end())
+            {
+              string_variables_[msg.name] = io_engine_writer_->DefineVariable<std::string>(msg.name);
+            }
+
+            current_engine_->Put(string_variables_[msg.name], str_data, adios2::Mode::Sync);
+          }
+        }
+        catch (const std::exception& e)
+        {
+          ladios(ELogVerbosity::Error) << "Put failed for variable '" << msg.name << "' (type=" << msg.type << "): " << e.what() << std::endl;
+          HandleWriteFailure("Put");
+          try
+          {
+            current_engine_->EndStep();
+          }
+          catch (const std::exception& end_step_ex)
+          {
+            ladios(ELogVerbosity::Error) << "EndStep failed during cleanup: " << end_step_ex.what() << std::endl;
+          }
+          return false;
+        }
+
+        step_messages.pop();
+      }
+
+      try
+      {
+        current_engine_->EndStep();
+        step_begun = false;
+      }
+      catch (const std::exception& e)
+      {
+        ladios(ELogVerbosity::Error) << "EndStep failed: " << e.what() << std::endl;
+        HandleWriteFailure("EndStep");
+        return false;
+      }
+
+      // Success - reset failure counter
+      consecutive_write_failures_.store(0);
+      return true;
+    }
+    catch (const std::exception& e)
     {
-      const auto& msg = step_messages.front();
-
-      if (msg.type == "data" || msg.type == "buffer")
+      ladios(ELogVerbosity::Error) << "WriteStep exception: " << e.what() << std::endl;
+      if (step_begun)
       {
-        // Binary data - write as uint8_t array
-        if (binary_variables_.find(msg.name) == binary_variables_.end())
+        try
         {
-          binary_variables_[msg.name] = io_engine_writer_->DefineVariable<uint8_t>(msg.name);
+          current_engine_->EndStep();
         }
-
-        std::vector<uint8_t> data(msg.data.begin(), msg.data.end());
-        current_engine_->Put(binary_variables_[msg.name], data.data(), adios2::Mode::Sync);
-      }
-      else if (msg.type == "float64")
-      {
-        // Double array
-        if (float64_variables_.find(msg.name) == float64_variables_.end())
+        catch (const std::exception& end_step_ex)
         {
-          float64_variables_[msg.name] = io_engine_writer_->DefineVariable<double>(msg.name);
+          ladios(ELogVerbosity::Error) << "EndStep failed during exception cleanup: " << end_step_ex.what() << std::endl;
         }
-
-        std::vector<double> data(msg.data.size() / sizeof(double));
-        std::memcpy(data.data(), msg.data.data(), msg.data.size());
-        current_engine_->Put(float64_variables_[msg.name], data.data(), adios2::Mode::Sync);
       }
-      else if (msg.type == "float32")
-      {
-        // Float array
-        if (float32_variables_.find(msg.name) == float32_variables_.end())
-        {
-          float32_variables_[msg.name] = io_engine_writer_->DefineVariable<float>(msg.name);
-        }
-
-        std::vector<float> data(msg.data.size() / sizeof(float));
-        std::memcpy(data.data(), msg.data.data(), msg.data.size());
-        current_engine_->Put(float32_variables_[msg.name], data.data(), adios2::Mode::Sync);
-      }
-      else if (msg.type == "int32")
-      {
-        // Int32 array
-        if (int32_variables_.find(msg.name) == int32_variables_.end())
-        {
-          int32_variables_[msg.name] = io_engine_writer_->DefineVariable<int32_t>(msg.name);
-        }
-
-        std::vector<int32_t> data(msg.data.size() / sizeof(int32_t));
-        std::memcpy(data.data(), msg.data.data(), msg.data.size());
-        current_engine_->Put(int32_variables_[msg.name], data.data(), adios2::Mode::Sync);
-      }
-      else if (msg.type == "string" || msg.type == "json")
-      {
-        // String data
-        std::string str_data(msg.data.begin(), msg.data.end());
-
-        if (string_variables_.find(msg.name) == string_variables_.end())
-        {
-          string_variables_[msg.name] = io_engine_writer_->DefineVariable<std::string>(msg.name);
-        }
-
-        current_engine_->Put(string_variables_[msg.name], str_data, adios2::Mode::Sync);
-      }
-
-      step_messages.pop();
+      HandleWriteFailure("WriteStep");
+      return false;
     }
+  }
 
-    current_engine_->EndStep();
+  void AdiosConnector::HandleWriteFailure(const std::string& operation)
+  {
+    int failures = ++consecutive_write_failures_;
+    
+    ladios(ELogVerbosity::Error) << "ADIOS2 " << operation << " failure #" << failures << "/" << max_write_failures_ << std::endl;
 
-    return true;
+    if (failures >= max_write_failures_)
+    {
+      circuit_breaker_open_.store(true);
+      ladios(ELogVerbosity::Error) << "Circuit breaker OPEN after " << failures << " consecutive failures" << std::endl;
+      
+      state_ = EConnectionState::FAILED;
+      if (OnFailedCallback.has_value())
+        OnFailedCallback.value()();
+      
+      StopStreaming();
+    }
+    else
+    {
+      ladios(ELogVerbosity::Info) << "Waiting " << failure_backoff_ms_ << "ms before retry..." << std::endl;
+      std::this_thread::sleep_for(std::chrono::milliseconds(failure_backoff_ms_));
+    }
   }
 
   void AdiosConnector::Flush()
@@ -795,17 +952,31 @@ namespace Synavis
           return !message_queue_.empty() || shutdown_requested_;
         });
 
-      if (!message_queue_.empty() && current_engine_)
+      if (!message_queue_.empty() && current_engine_ && state_ == EConnectionState::CONNECTED)
       {
         lock.unlock();
-        WriteStep();
+        try
+        {
+          WriteStep();
+        }
+        catch (const std::exception& e)
+        {
+          ladios(ELogVerbosity::Error) << "WorkerLoop WriteStep exception: " << e.what() << std::endl;
+        }
       }
     }
 
-    // Final flush
-    if (current_engine_)
+    // Final flush only if connected
+    if (current_engine_ && state_ == EConnectionState::CONNECTED)
     {
-      WriteStep();
+      try
+      {
+        WriteStep();
+      }
+      catch (const std::exception& e)
+      {
+        ladios(ELogVerbosity::Error) << "WorkerLoop final WriteStep exception: " << e.what() << std::endl;
+      }
     }
   }
 
@@ -820,21 +991,29 @@ namespace Synavis
     const unsigned check_interval = reader_startup_check_interval_ms_;
     const unsigned max_wait_time = reader_startup_timeout_ms_;
     
-    while (!writer_ready_ && wait_time < max_wait_time)
+    while (state_ != EConnectionState::OFFERED && wait_time < max_wait_time)
     {
       std::this_thread::sleep_for(std::chrono::milliseconds(check_interval));
       wait_time += check_interval;
     }
     
-    if (!writer_ready_)
+    if (state_ != EConnectionState::OFFERED)
     {
       ladios(ELogVerbosity::Error) << "Writer engine not ready after " << max_wait_time << "ms, aborting reader startup" << std::endl;
       reader_running_ = false;
+      state_ = EConnectionState::FAILED;
       return;
     }
     
     ladios(ELogVerbosity::Info) << "Writer engine ready after " << wait_time << "ms, starting reader..." << std::endl;
     CreateReaderEngine();
+    
+    if (state_ != EConnectionState::CONNECTED)
+    {
+      ladios(ELogVerbosity::Error) << "Failed to create reader engine, aborting reader startup" << std::endl;
+      reader_running_ = false;
+      return;
+    }
     
     reader_thread_ = std::thread(&AdiosConnector::ReaderLoop, this);
     ladios(ELogVerbosity::Info) << "ADIOS2 reader started" << std::endl;
@@ -845,21 +1024,28 @@ namespace Synavis
     if (!reader_running_)
       return;
 
-    reader_shutdown_ = true;
+    ladios(ELogVerbosity::Info) << "Stopping ADIOS2 reader..." << std::endl;
 
-
-    ApplyConfiguration();
     if (reader_engine_)
     {
-      reader_engine_->Close();
-      reader_engine_.reset();
+      try
+      {
+        reader_engine_->Close();
+      }
+      catch (const std::exception& e)
+      {
+        ladios(ELogVerbosity::Warning) << "Reader engine close threw: " << e.what() << std::endl;
+      }
     }
-
+    
+    reader_shutdown_ = true;
+    
     if (reader_thread_.joinable())
     {
       reader_thread_.join();
     }
-
+    
+    reader_engine_.reset();
     reader_running_ = false;
     reader_cleanup_done_ = true;
     ladios(ELogVerbosity::Info) << "ADIOS2 reader stopped" << std::endl;
@@ -877,47 +1063,120 @@ namespace Synavis
     }
     else if (status == adios2::StepStatus::EndOfStream)
     {
-      reader_engine_->EndStep();
+      try
+      {
+        reader_engine_->EndStep();
+      }
+      catch (const std::exception& e)
+      {
+        ladios(ELogVerbosity::Error) << "EndStep failed during EndOfStream cleanup: " << e.what() << std::endl;
+      }
       return false;
     }
-    return false;
+    else
+    {
+      try
+      {
+        reader_engine_->EndStep();
+      }
+      catch (const std::exception& e)
+      {
+        ladios(ELogVerbosity::Error) << "EndStep failed during error cleanup: " << e.what() << std::endl;
+      }
+      return false;
+    }
   }
 
   void AdiosConnector::ReaderLoop()
   {
     while (!reader_shutdown_ && reader_running_)
     {
-      if (ReadStep())
+      bool step_ended = false;
+      try
       {
-        if (ReadCallback.has_value())
+        auto status = reader_engine_->BeginStep();
+        if (status == adios2::StepStatus::OK)
         {
-          for (const auto& [name, var] : string_variables_reader_)
-          {
-            if (!reader_engine_)
-              continue;
-            std::string value;
-            auto var_copy = var;
-            var_copy.SetSelection({ {0}, {1} });
-            reader_engine_->Get(var_copy, value);
-            ReadCallback.value()(value, name);
-          }
+          if (ReadCallback.has_value())
+            {
+              try
+              {
+                for (const auto& [name, var] : string_variables_reader_)
+                {
+                  if (!reader_engine_)
+                    continue;
+                  std::string value;
+                  auto var_copy = var;
+                  // Only set selection for array variables, not scalars
+                  if (var_copy.ShapeID() == adios2::ShapeID::GlobalArray || 
+                      var_copy.ShapeID() == adios2::ShapeID::LocalArray)
+                  {
+                    var_copy.SetSelection({ {0}, {1} });
+                  }
+                  reader_engine_->Get(var_copy, value);
+                  ReadCallback.value()(value, name);
+                }
 
-          for (const auto& [name, var] : binary_variables_reader_)
+                for (const auto& [name, var] : binary_variables_reader_)
+                {
+                  if (!reader_engine_)
+                    continue;
+                  auto var_copy = var;
+                  // Only set selection for array variables, not scalars
+                  if (var_copy.ShapeID() == adios2::ShapeID::GlobalArray || 
+                      var_copy.ShapeID() == adios2::ShapeID::LocalArray)
+                  {
+                    var_copy.SetSelection({ {0}, {1} });
+                  }
+                  else if(var_copy.Count().size() > 0)
+                  {
+                    size_t count = var_copy.Count()[0];
+                    std::vector<uint8_t> data(count);
+                    reader_engine_->Get(var_copy, data.data());
+                    ReadCallback.value()(data, name);
+                  }
+                  else
+                  {
+                    ladios(ELogVerbosity::Warning) << "Data appears neither singular nor has a adios2::dim size" << std::endl;
+                  }
+                }
+              }
+              catch (const std::exception& e)
+              {
+                ladios(ELogVerbosity::Error) << "Reader variable access failed: " << e.what() << std::endl;
+              }
+            }
+          
+          try
           {
-            if (!reader_engine_)
-              continue;
-            auto var_copy = var;
-            var_copy.SetSelection({ {0}, {1} });
-            size_t count = var_copy.Count()[0];
-            std::vector<uint8_t> data(count);
-            reader_engine_->Get(var_copy, data.data());
-            ReadCallback.value()(data, name);
+            reader_engine_->EndStep();
+            step_ended = true;
           }
-
-          reader_engine_->EndStep();
+          catch (const std::exception& e)
+          {
+            ladios(ELogVerbosity::Error) << "Reader EndStep failed: " << e.what() << std::endl;
+          }
+        }
+        else if (status == adios2::StepStatus::EndOfStream)
+        {
+          ladios(ELogVerbosity::Info) << "Reader reached end of stream" << std::endl;
+          break;
+        }
+        else
+        {
+          std::this_thread::sleep_for(std::chrono::milliseconds(10));
+          continue;
         }
       }
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      catch (const std::exception& e)
+      {
+        if (!step_ended)
+        {
+          reader_engine_->EndStep();
+        }
+        ladios(ELogVerbosity::Error) << "ReaderLoop exception: " << e.what() << std::endl;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      }
     }
   }
 }
