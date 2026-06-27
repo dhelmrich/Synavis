@@ -44,7 +44,6 @@ target_include_directories(${projectname}
   PUBLIC ${CMAKE_CURRENT_BINARY_DIR}
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/include
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/deps/json/single_include/nlohmann/
-  ${CMAKE_BINARY_DIR}/_deps/pybind11_json-src/include
 )
 target_include_directories(${PYPROJECT}
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
@@ -52,109 +51,50 @@ target_include_directories(${PYPROJECT}
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/include
   ${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/deps/json/single_include/nlohmann/
   ${CMAKE_BINARY_DIR}/_deps/pybind11-src/include
-  ${CMAKE_BINARY_DIR}/_deps/pybind11_json-src/include
   # Python include dirs are provided by Python::Development target (linked below)
 )
 
-# pybind11_json is a header-only library. If the buildtool (vcpkg/toolchain) provides it,
-# use that. Otherwise, the FetchContent below provides it.
-if(TARGET pybind11_json::pybind11_json)
-  message(STATUS "Using pybind11_json::pybind11_json target from toolchain/FetchContent")
-  target_link_libraries(${PYPROJECT} PRIVATE pybind11_json::pybind11_json)
-  target_include_directories(${projectname} PRIVATE $<TARGET_PROPERTY:pybind11_json::pybind11_json,INTERFACE_INCLUDE_DIRECTORIES>)
-elseif(TARGET pybind11_json)
-  message(STATUS "Using pybind11_json target from toolchain/FetchContent")
-  target_link_libraries(${PYPROJECT} PRIVATE pybind11_json)
-  target_include_directories(${projectname} PRIVATE $<TARGET_PROPERTY:pybind11_json,INTERFACE_INCLUDE_DIRECTORIES>)
+# If the buildtool (vcpkg/toolchain) already provides pybind11_json as a target,
+# avoid adding the vendored include path to prevent duplicate-import errors
+# (Windows + vcpkg often provides pybind11_json). Only add the vendored
+# include dir when the target is not present.
+if(TARGET pybind11_json::pybind11_json OR TARGET pybind11_json)
+  if(DEFINED pybind11_json_SOURCE_DIR)
+    message(STATUS "pybind11_json found (FetchContent-provided); linking and using FetchContent headers")
+  else()
+    message(STATUS "pybind11_json found (Toolchain-provided); linking against toolchain target")
+  endif()
+
+  if(TARGET pybind11_json::pybind11_json)
+    target_link_libraries(${PYPROJECT} PRIVATE pybind11_json::pybind11_json)
+  else()
+    target_link_libraries(${PYPROJECT} PRIVATE pybind11_json)
+  endif()
+
+  if(DEFINED pybind11_json_SOURCE_DIR)
+    target_include_directories(${PYPROJECT} PRIVATE ${pybind11_json_SOURCE_DIR}/include/pybind11_json/)
+  endif()
 else()
-  message(WARNING "pybind11_json target not found; include path must be set manually")
-endif()
-
-target_link_libraries(${projectname} PRIVATE datachannel nlohmann_json::nlohmann_json )
-target_link_libraries(${PYPROJECT} PRIVATE ${projectname} datachannel nlohmann_json::nlohmann_json)
-
-if(ADIOS2_FOUND OR TARGET adios_connector)
-  target_compile_definitions(${PYPROJECT} PUBLIC ADIOS2_AVAILABLE)
-  if(TARGET adios_connector)
-    target_link_libraries(${PYPROJECT} PRIVATE adios_connector)
+  message(STATUS "pybind11_json not found; using FetchContent-provided headers if available")
+  if(DEFINED pybind11_json_SOURCE_DIR)
+    target_include_directories(${PYPROJECT} PRIVATE ${pybind11_json_SOURCE_DIR}/include/pybind11_json/)
+  elseif(EXISTS ${CMAKE_BINARY_DIR}/_deps/pybind11_json-src/include/pybind11_json/)
+    target_include_directories(${PYPROJECT} PRIVATE ${CMAKE_BINARY_DIR}/_deps/pybind11_json-src/include/pybind11_json/)
+  else()
+    message(WARNING "pybind11_json headers not available; build may fail")
   endif()
 endif()
+
+target_link_libraries(${projectname} PRIVATE datachannel-static nlohmann_json::nlohmann_json )
+target_link_libraries(${PYPROJECT} PRIVATE ${projectname} datachannel-static nlohmann_json::nlohmann_json)
 if(TARGET Python::Development)
   target_link_libraries(${PYPROJECT} PRIVATE Python::Development)
 else()
   message(STATUS "Python::Development target not available; assuming pybind11 provided the necessary linkage")
 endif()
 
-# Output directories for library and extension
-set(_lib_output_dir "${CMAKE_CURRENT_BINARY_DIR}/Release")
-set_target_properties(${PYPROJECT} PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${_lib_output_dir})
-
-# On Windows, copy dependent DLLs to the same directory as PySynavis.pyd for proper module loading.
-# This ensures that when Python imports PySynavis, Windows can locate all transitive dependencies.
-# Dependencies include:
-#   - datachannel.dll (from libdatachannel-build)
-#   - adios_connector.dll and ADIOS2 DLLs (from synavis/adios)
-if(WIN32)
-  # Define paths to dependency DLL directories
-  set(_datachannel_dll_dir "${CMAKE_BINARY_DIR}/_deps/libdatachannel-build/Release")
-  set(_adios_dll_dir "${CMAKE_CURRENT_BINARY_DIR}/adios/Release")
-  
-  # Copy datachannel.dll
-  add_custom_command(TARGET ${PYPROJECT} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      "${_datachannel_dll_dir}/datachannel.dll"
-      "${_lib_output_dir}/"
-    COMMENT "Copying datachannel.dll to ${_lib_output_dir}/"
-  )
-  
-  # Copy adios_connector.dll if adios subdirectory was built
-  if(EXISTS "${_adios_dll_dir}")
-    add_custom_command(TARGET ${PYPROJECT} POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${_adios_dll_dir}/adios_connector.dll"
-        "${_lib_output_dir}/"
-      COMMENT "Copying adios_connector.dll to ${_lib_output_dir}/"
-    )
-    
-    # Also copy ADIOS2 runtime DLLs (adios2_core.dll, adios2_cxx11.dll) if they exist
-    add_custom_command(TARGET ${PYPROJECT} POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${_adios_dll_dir}/adios2_core.dll"
-        "${_lib_output_dir}/"
-      COMMENT "Copying adios2_core.dll to ${_lib_output_dir}/"
-    )
-    add_custom_command(TARGET ${PYPROJECT} POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${_adios_dll_dir}/adios2_cxx11.dll"
-        "${_lib_output_dir}/"
-      COMMENT "Copying adios2_cxx11.dll to ${_lib_output_dir}/"
-    )
-  endif()
-  
-  # Install datachannel.dll to package directory
-  if(TARGET datachannel)
-    install(FILES "${_datachannel_dll_dir}/datachannel.dll"
-      DESTINATION ${PY_PACKAGE_NAME}
-    )
-  endif()
-  
-  # Install adios_connector.dll and ADIOS2 DLLs if adios subdirectory was built
-  if(EXISTS "${_adios_dll_dir}")
-    install(FILES "${_adios_dll_dir}/adios_connector.dll"
-      DESTINATION ${PY_PACKAGE_NAME}
-    )
-    
-    # Also install ADIOS2 runtime DLLs if they exist
-    install(FILES "${_adios_dll_dir}/adios2_core.dll"
-      DESTINATION ${PY_PACKAGE_NAME}
-      OPTIONAL
-    )
-    install(FILES "${_adios_dll_dir}/adios2_cxx11.dll"
-      DESTINATION ${PY_PACKAGE_NAME}
-      OPTIONAL
-    )
-  endif()
-endif()
+# Ensure the built extension is placed in the normal library output directory
+set_target_properties(${PYPROJECT} PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/)
 
 # Do not install targets directly into the absolute build directory. That
 # creates absolute DESTINATION paths in the generated cmake_install.cmake which
