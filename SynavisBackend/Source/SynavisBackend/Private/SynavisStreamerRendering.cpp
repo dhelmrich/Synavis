@@ -129,12 +129,13 @@ bool ConvertRenderTargetToI420_GPU(UTextureRenderTarget2D* SrcRT, TArray<uint8>&
     OutV.SetNumUninitialized(UVSize);
 
     // PF_R32_UINT -> 4 bytes per texel; CPU readback returns rows with possible GPU alignment padding
-    uint32 RowPitchBytes = 0;
-    void* YData = ReadbackY->Lock(RowPitchBytes);
+    int32 RowPitchInPixels = 0;
+    void* YData = ReadbackY->Lock(RowPitchInPixels);
     if (!YData)
     {
         return false;
     }
+    uint32 RowPitchBytes = RowPitchInPixels * sizeof(uint32);
     for (int y = 0; y < Height; ++y)
     {
         uint32* srcRow = (uint32*)((uint8_t*)YData + (size_t)y * RowPitchBytes);
@@ -142,12 +143,13 @@ bool ConvertRenderTargetToI420_GPU(UTextureRenderTarget2D* SrcRT, TArray<uint8>&
     }
     ReadbackY->Unlock();
 
-    uint32 URowPitchBytes = 0;
-    void* UData = ReadbackU->Lock(URowPitchBytes);
+    int32 URowPitchInPixels = 0;
+    void* UData = ReadbackU->Lock(URowPitchInPixels);
     if (!UData)
     {
         return false;
     }
+    uint32 URowPitchBytes = URowPitchInPixels * sizeof(uint32);
     for (int y = 0; y < UVHeight; ++y)
     {
         uint32* srcRow = (uint32*)((uint8_t*)UData + (size_t)y * URowPitchBytes);
@@ -155,12 +157,13 @@ bool ConvertRenderTargetToI420_GPU(UTextureRenderTarget2D* SrcRT, TArray<uint8>&
     }
     ReadbackU->Unlock();
 
-    uint32 VRowPitchBytes = 0;
-    void* VData = ReadbackV->Lock(VRowPitchBytes);
+    int32 VRowPitchInPixels = 0;
+    void* VData = ReadbackV->Lock(VRowPitchInPixels);
     if (!VData)
     {
         return false;
     }
+    uint32 VRowPitchBytes = VRowPitchInPixels * sizeof(uint32);
     for (int y = 0; y < UVHeight; ++y)
     {
         uint32* srcRow = (uint32*)((uint8_t*)VData + (size_t)y * VRowPitchBytes);

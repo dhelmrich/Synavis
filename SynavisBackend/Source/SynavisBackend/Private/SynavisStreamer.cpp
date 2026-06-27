@@ -43,6 +43,9 @@ extern "C" {
 static USynavisStreamer* GGlobalStreamer = nullptr;
 static FCriticalSection GGlobalStreamerMutex;
 
+// Sequence counter for tracking rtcAddTrackEx vs rtcSetLocalDescription order
+static std::atomic<int32> GRtcSequenceCounter{0};
+
 static FString GetDataChannelLabelSafe(int dc)
 {
   char buf[256];
@@ -88,7 +91,7 @@ void USynavisStreamer::TeardownConnection(int32 PlayerID)
   // Close any per-handler datachannels and remove global mappings
   for (auto& kv : Conn->HandlersByChannel)
   {
-    int dc = kv.first;
+    int dc = kv.Key;
     if (dc)
     {
       rtcClose(dc);
@@ -99,7 +102,7 @@ void USynavisStreamer::TeardownConnection(int32 PlayerID)
   // Delete any created tracks for this connection
   for (auto& kv : Conn->TracksByHandler)
   {
-    int tr = kv.second;
+    int tr = kv.Value;
     if (tr)
     {
       rtcDeleteTrack(tr);
@@ -121,7 +124,7 @@ void USynavisStreamer::TeardownConnection(int32 PlayerID)
   // Close any per-handler datachannels and remove global mappings
   for (auto& kv : Conn->HandlersByChannel)
   {
-    int dc = kv.first;
+    int dc = kv.Key;
     if (dc)
     {
       rtcClose(dc);
@@ -132,7 +135,7 @@ void USynavisStreamer::TeardownConnection(int32 PlayerID)
   // Delete any created tracks for this connection
   for (auto& kv : Conn->TracksByHandler)
   {
-    int tr = kv.second;
+    int tr = kv.Value;
     if (tr)
     {
       rtcDeleteTrack(tr);
@@ -253,23 +256,56 @@ static void LogHexVerbose(const char* Data, size_t Len, const TCHAR* Prefix)
 }
 
 // Helper to munge incoming answer SDP for UE libdatachannel C API acceptance.
-// Fixes: m=video 9 → m=video 0 (rejected tracks), BUNDLE mids → 0 only,
+// Fixes: m=video 9 → m=video 0 (rejected tracks), BUNDLE mids → dynamic from actual tracks,
 // remove a=group:LS, ensure CRLF. Call before rtcSetRemoteDescription(pc, munged.c_str(), "answer").
-static FString MungSDPForLibdatachannel(const FString& RawSdp)
+// NOTE: For offers, the BUNDLE group is constructed dynamically based on registered tracks.
+static FString MungSDPForLibdatachannel(const FString& RawSdp, FSynavisConnection* Conn = nullptr)
 {
   FString S = RawSdp.Replace(TEXT("\n"), TEXT("\r\n"));
   TArray<FString> Lines;
   S.ParseIntoArrayLines(Lines, true);
+
+  // Build dynamic BUNDLE mids if connection is provided
+  FString DynamicBundleMids = TEXT("0");
+  if (Conn)
+  {
+    TArray<FString> BundleMidsArray;
+    BundleMidsArray.Add(TEXT("0")); // Datachannel always first
+    
+    // Collect actual track mids from registered tracks
+    for (const auto& kv : Conn->TracksByHandler)
+    {
+      int32 TrackId = kv.Value;
+      if (TrackId > 0)
+      {
+        // Construct mid from track id: track-<connid>-<trackid>
+        FString Mid = FString::Printf(TEXT("track-%d-%d"), Conn->ConnectionID, TrackId);
+        BundleMidsArray.Add(Mid);
+      }
+    }
+    
+    // Join with spaces
+    DynamicBundleMids = FString::Join(BundleMidsArray, TEXT(" "));
+    UE_LOG(LogTemp, Verbose, TEXT("Synavis: Dynamic BUNDLE mids for conn %d: %s"), Conn->ConnectionID, *DynamicBundleMids);
+  }
 
   for (int i = 0; i < Lines.Num(); ++i)
   {
     FString& Line = Lines[i];
     // Fix ONLY port: m=video 09 → m=video 9
     if (Line.Left(10) == TEXT("m=video 09")) Line = TEXT("m=video 9") + Line.Mid(10);
-    // BUNDLE → 0 track-1-101 track-2-101 to match local
+    // BUNDLE → dynamic track mids based on actual registered tracks
     if (Line.Contains(TEXT("a=group:BUNDLE ")) && !Line.Contains(TEXT("track-")))
     {
-      Line = TEXT("a=group:BUNDLE 0 track-1-101 track-2-101");
+      if (!Conn)
+      {
+        // Fallback to hardcoded if no connection provided (legacy behavior)
+        Line = TEXT("a=group:BUNDLE 0 track-1-101 track-2-101");
+      }
+      else
+      {
+        Line = TEXT("a=group:BUNDLE ") + DynamicBundleMids;
+      }
     }
   }
   Lines.RemoveAll([](const FString& L){ return L.StartsWith(TEXT("a=group:LS")); });
@@ -702,6 +738,28 @@ void Synavis_Rtc_Track_OnOpen(int id, void* user_ptr)
       Conn->MaxMessageSize = static_cast<uint32>(maxMsg);
       UE_LOG(LogTemp, Verbose, TEXT("Synavis: Track_OnOpen id=%d conn=%d open=%d maxMsg=%d buffered=%d desc_len=%d"), id, Conn->ConnectionID, open ? 1 : 0, maxMsg, buffered, got);
       if (got > 0) UE_LOG(LogTemp, Verbose, TEXT("Synavis: Track_OnOpen description: %s"), ANSI_TO_TCHAR(descBuf));
+      
+      // Check if we should transition to AllOpen state
+      // AllOpen means: at least one datachannel is open AND all registered tracks are open
+      if (Conn->State == EPeerState::ChannelOpen || Conn->State == EPeerState::GeneratingOffer || Conn->State == EPeerState::ReceivedAnswer)
+      {
+        bool AllTracksOpen = true;
+        for (const auto& kv : Conn->TracksByHandler)
+        {
+          int tr = kv.Value;
+          if (!rtcIsOpen(tr))
+          {
+            AllTracksOpen = false;
+            break;
+          }
+        }
+        
+        if (AllTracksOpen && !Conn->TracksByHandler.IsEmpty())
+        {
+          Conn->State = EPeerState::AllOpen;
+          UE_LOG(LogTemp, Log, TEXT("Synavis: Connection %d transitioned to AllOpen state (all tracks and channels open)"), Conn->ConnectionID);
+        }
+      }
     }
     else
     {
@@ -841,12 +899,12 @@ void USynavisStreamer::ResolveAndHandleDataChannelMessage(int dc, const std::var
   {
     TSharedPtr<FSynavisConnection> Conn = Pair.Value;
     if (!Conn) continue;
-    auto it = Conn->HandlersByChannel.find(dc);
-    if (it != Conn->HandlersByChannel.end())
+    auto it = Conn->HandlersByChannel.Find(dc);
+    if (it)
     {
       foundInfo.RawConn = Conn.Get();
       foundInfo.ConnectionID = Conn->ConnectionID;
-      foundInfo.HandlerID = it->second;
+      foundInfo.HandlerID = *it;
       break;
     }
     if (Conn->DataChannel == dc)
@@ -923,12 +981,18 @@ void Synavis_Rtc_OnPcTrack(int pc, int tr, void* user_ptr)
     rtcSetClosedCallback(tr, Synavis_Rtc_Track_OnClosed);
     rtcSetErrorCallback(tr, Synavis_Rtc_Track_OnError);
 
-    
+    // CRITICAL: Check if negotiation is in progress to prevent race conditions
+    // NOTE: We now process tracks immediately regardless of state to avoid deferral bugs
+    if (Conn->State == EPeerState::GeneratingOffer || Conn->State == EPeerState::ReceivedAnswer)
+    {
+      UE_LOG(LogTemp, Warning, TEXT("Synavis: Track %d arrived during active negotiation for conn %d (State=%s) - processing anyway"), 
+        tr, Conn->ConnectionID, *UEnum::GetDisplayValueAsText(Conn->State).ToString());
+    }
 
     // If this track id is already mapped to a handler, nothing to do.
     for (const auto& kv : Conn->TracksByHandler)
     {
-      if (kv.second == tr) return;
+      if (kv.Value == tr) return;
     }
 
     // Try to associate this incoming/new track with an existing registered handler
@@ -937,9 +1001,14 @@ void Synavis_Rtc_OnPcTrack(int pc, int tr, void* user_ptr)
     FSynavisHandler* Found = self->FirstWithoutVideoTrack(Conn);
     if (Found)
     {
-      Conn->TracksByHandler.emplace(Found->HandlerID, tr);
+      Conn->TracksByHandler.Add(Found->HandlerID, tr);
       Found->VideoTracksByConnection.Add(Conn->ConnectionID, tr);
       UE_LOG(LogTemp, Log, TEXT("Synavis: Associated incoming track %d with handler %d on pc %d (auto-assigned)"), tr, Found->HandlerID, pc);
+    }
+    else
+    {
+      UE_LOG(LogTemp, Warning, TEXT("Synavis: Track %d arrived but NO available handler found for conn %d!"), tr, Conn->ConnectionID);
+      UE_LOG(LogTemp, Warning, TEXT("Synavis: This may indicate handlers were not registered properly or all handlers already have tracks"));
     }
   });
 }
@@ -1284,7 +1353,7 @@ FSynavisHandler* USynavisStreamer::FirstWithoutVideoTrack(FSynavisConnection* Co
   for (FSynavisHandler& H : RegisteredDataHandlers)
   {
     if (!H.Video) continue;
-    if (Conn->TracksByHandler.find(H.HandlerID) == Conn->TracksByHandler.end())
+    if (!Conn->TracksByHandler.Contains(H.HandlerID))
       return &H;
   }
   return nullptr;
@@ -1296,7 +1365,7 @@ const FSynavisHandler* USynavisStreamer::FirstWithoutVideoTrack(const FSynavisCo
   for (const FSynavisHandler& H : RegisteredDataHandlers)
   {
     if (!H.Video) continue;
-    if (Conn->TracksByHandler.find(H.HandlerID) == Conn->TracksByHandler.end())
+    if (!Conn->TracksByHandler.Contains(H.HandlerID))
       return &H;
   }
   return nullptr;
@@ -1318,8 +1387,8 @@ void USynavisStreamer::RTCReport() const
   {
     TSharedPtr<FSynavisConnection> C = Pair.Value;
     if (!C) continue;
-    int32 Tracks = static_cast<int32>(C->TracksByHandler.size());
-    int32 Channels = static_cast<int32>(C->HandlersByChannel.size());
+    int32 Tracks = static_cast<int32>(C->TracksByHandler.Num());
+    int32 Channels = static_cast<int32>(C->HandlersByChannel.Num());
     UE_LOG(LogTemp, Log, TEXT("  Conn %d PC=%d DataChannel=%d tracks=%d channels=%d"), C->ConnectionID, C->PeerConnection, C->DataChannel, Tracks, Channels);
     // Detailed libdatachannel diagnostics for this PeerConnection
     if (C->PeerConnection != 0)
@@ -1352,8 +1421,8 @@ void USynavisStreamer::RTCReport() const
     }
     for (const auto& kv : C->TracksByHandler)
     {
-      UE_LOG(LogTemp, Log, TEXT("    TracksByHandler: handler=%u -> track=%d"), kv.first, kv.second);
-      int tr = kv.second;
+      UE_LOG(LogTemp, Log, TEXT("    TracksByHandler: handler=%u -> track=%d"), kv.Key, kv.Value);
+      int tr = kv.Value;
       if (tr != 0)
       {
         bool topen = rtcIsOpen(tr);
@@ -1373,8 +1442,8 @@ void USynavisStreamer::RTCReport() const
     }
     for (const auto& kv : C->HandlersByChannel)
     {
-      UE_LOG(LogTemp, Log, TEXT("    HandlersByChannel: dc=%d -> handler=%u"), kv.first, kv.second);
-      int dc = kv.first;
+      UE_LOG(LogTemp, Log, TEXT("    HandlersByChannel: dc=%d -> handler=%u"), kv.Key, kv.Value);
+      int dc = kv.Key;
       if (dc != 0)
       {
         bool dcopen = rtcIsOpen(dc);
@@ -1384,6 +1453,36 @@ void USynavisStreamer::RTCReport() const
       }
     }
   }
+}
+
+FString USynavisStreamer::GetNegotiationStateReport() const
+{
+  FString Report;
+  Report += FString::Printf(TEXT("=== Negotiation State Report ===\n"));
+  Report += FString::Printf(TEXT("Global Hold: %s\n"), bHoldNegotiation ? TEXT("ACTIVE") : TEXT("INACTIVE"));
+  Report += FString::Printf(TEXT("Negotiation Delay: %.2fs\n"), NegotiationDelaySeconds);
+  Report += FString::Printf(TEXT("Connections: %d\n\n"), Connections.Num());
+
+  for (const auto& Pair : Connections)
+  {
+    const TSharedPtr<FSynavisConnection>& C = Pair.Value;
+    if (!C) continue;
+
+    Report += FString::Printf(TEXT("Connection %d:\n"), C->ConnectionID);
+    Report += FString::Printf(TEXT("  PC ID: %d\n"), C->PeerConnection);
+    Report += FString::Printf(TEXT("  State: %s\n"), *UEnum::GetDisplayValueAsText(C->State).ToString());
+    Report += FString::Printf(TEXT("  bStreaming: %s\n"), C->bStreaming ? TEXT("YES") : TEXT("NO"));
+    Report += FString::Printf(TEXT("  Tracks Registered: %d\n"), static_cast<int32>(C->TracksByHandler.Num()));
+    
+    bool need = false;
+    if (C->PeerConnection != 0)
+    {
+      need = rtcIsNegotiationNeeded(C->PeerConnection);
+    }
+    Report += FString::Printf(TEXT("  rtcIsNegotiationNeeded: %s\n\n"), need ? TEXT("YES") : TEXT("NO"));
+  }
+
+  return Report;
 }
 
 TSharedPtr<DataChannelCtx> USynavisStreamer::GetDataChannelContext(int32 DcId) const
@@ -1581,6 +1680,7 @@ void USynavisStreamer::HandlePcLocalDescriptionCallback(int pc, const char* sdp,
       if (!sdff.Contains(TEXT("m=video")))
       {
         UE_LOG(LogTemp, Warning, TEXT("Synavis: LocalDescription offer for conn %d has no video m= lines despite having video handlers registered"), Conn->ConnectionID);
+        return;
       }
     }
   }
@@ -1622,6 +1722,8 @@ void USynavisStreamer::HandlePcLocalDescriptionCallback(int pc, const char* sdp,
       }
     }
     CommunicateSDPForConnection(*Conn);
+    
+    // State will be updated to ICE when gathering completes
   }
 }
 
@@ -1636,7 +1738,13 @@ void USynavisStreamer::HandlePcGatheringStateChangeCallback(int pc, int state)
       TSharedPtr<FSynavisConnection> maybe = Pair.Value;
       if (maybe && maybe->PeerConnection == pc) { Conn = maybe.Get(); break; }
     }
-    if (Conn) CommunicateSDPForConnection(*Conn);
+    if (Conn)
+    {
+      // Transition to ICE state when gathering is complete
+      Conn->State = EPeerState::ICE;
+      UE_LOG(LogTemp, Log, TEXT("Synavis: Connection %d gathering complete - transitioned to ICE state"), Conn->ConnectionID);
+      CommunicateSDPForConnection(*Conn);
+    }
   }
 }
 
@@ -1667,6 +1775,20 @@ void USynavisStreamer::DrainPendingAnswersForPC(int pc)
     if (res == RTC_ERR_SUCCESS)
     {
       UE_LOG(LogTemp, Log, TEXT("Synavis: Applied queued remote answer for pc %d"), pc);
+      // Transition to ReceivedAnswer state
+      FSynavisConnection* Conn = GetConnectionFromPC(pc);
+      if (Conn) {
+        Conn->State = EPeerState::ReceivedAnswer;
+        UE_LOG(LogTemp, Log, TEXT("Synavis: Connection %d transitioned to ReceivedAnswer state"), Conn->ConnectionID);
+        
+        // CRITICAL: Log track association status after answer applied
+        UE_LOG(LogTemp, Log, TEXT("Synavis: Connection %d has %d tracks registered after answer"), 
+          Conn->ConnectionID, Conn->TracksByHandler.Num());
+        for (const auto& kv : Conn->TracksByHandler)
+        {
+          UE_LOG(LogTemp, Log, TEXT("Synavis:   Handler %d -> Track %d"), kv.Key, kv.Value);
+        }
+      }
       // remove this entry from the queue
       FScopeLock lock(&PendingAnswersMutex);
       if (PendingRemoteAnswers.Contains(pc) && PendingRemoteAnswers[pc].Num() > 0)
@@ -1680,12 +1802,8 @@ void USynavisStreamer::DrainPendingAnswersForPC(int pc)
       break;
     }
   }
-
-  // cleanup empty queue
-  FScopeLock lock(&PendingAnswersMutex);
-  if (PendingRemoteAnswers.Contains(pc) && PendingRemoteAnswers[pc].Num() == 0)
-    PendingRemoteAnswers.Remove(pc);
 }
+
 
 void USynavisStreamer::HandleDataChannelMessageCallback(int dc, const std::variant<TArray<uint8>, std::string>& message)
 {
@@ -1840,7 +1958,7 @@ void USynavisStreamer::HandleDataChannelMessageCallback(int dc, const std::varia
       if (!C) continue;
       FString Mappings;
       for (const auto& kv : C->HandlersByChannel) {
-        Mappings += FString::Printf(TEXT("dc=%d->h=%u "), kv.first, kv.second);
+        Mappings += FString::Printf(TEXT("dc=%d->h=%u "), kv.Key, kv.Value);
       }
       UE_LOG(LogTemp, Verbose, TEXT("  Conn %d PC=%d DataChannel=%d Mappings=[%s]"), C->ConnectionID, C->PeerConnection, C->DataChannel, *Mappings);
     }
@@ -1961,8 +2079,8 @@ bool USynavisStreamer::SendTextToConnection(int32 HandlerId, int32 ConnectionPla
   // Prefer a per-handler dedicated channel if present and open
   for (const auto& kv : Conn->HandlersByChannel)
   {
-    int dc = kv.first;
-    int hid = kv.second;
+    int dc = kv.Key;
+    int hid = kv.Value;
     if (hid == HandlerId)
     {
       if (dc != 0 && rtcIsOpen(dc)) { chosenDc = dc; break; }
@@ -1980,7 +2098,7 @@ bool USynavisStreamer::SendTextToConnection(int32 HandlerId, int32 ConnectionPla
     UE_LOG(LogTemp, Verbose, TEXT("  Conn->DataChannel = %d rtcIsOpen=%d"), Conn->DataChannel, Conn->DataChannel ? rtcIsOpen(Conn->DataChannel) : 0);
     for (const auto& kv : Conn->HandlersByChannel)
     {
-      UE_LOG(LogTemp, Verbose, TEXT("  handler-channel: dc=%d -> handler=%d rtcIsOpen=%d"), kv.first, kv.second, kv.first ? rtcIsOpen(kv.first) : 0);
+      UE_LOG(LogTemp, Verbose, TEXT("  handler-channel: dc=%d -> handler=%d rtcIsOpen=%d"), kv.Key, kv.Value, kv.Key ? rtcIsOpen(kv.Key) : 0);
     }
     return false;
   }
@@ -2027,6 +2145,14 @@ void USynavisStreamer::HandleDataChannelOpenCallback(int dc)
       int maxMsg = rtcMaxMessageSize(dc);
       ConnShared->MaxMessageSize = static_cast<uint32>(maxMsg);
       UE_LOG(LogTemp, Log, TEXT("Synavis: DataChannel %d label='%s' opened for connection %d (max message size=%u) [resolved on game thread]"), dc, *GetDataChannelLabelSafe(dc), ConnShared->ConnectionID, ConnShared->MaxMessageSize);
+      
+      // If there are no video tracks, transition directly to AllOpen
+      if (ConnShared->TracksByHandler.IsEmpty())
+      {
+        ConnShared->State = EPeerState::AllOpen;
+        UE_LOG(LogTemp, Log, TEXT("Synavis: Connection %d transitioned to AllOpen (no video tracks, only datachannel)"), ConnShared->ConnectionID);
+      }
+      
       return;
     }
     // Fallback: if ConnRaw is invalid, try the numeric id (still validated)
@@ -2079,8 +2205,7 @@ void USynavisStreamer::HandleDataChannelClosedCallback(int dc)
     {
       ConnShared->State = EPeerState::NoConnection;
       UE_LOG(LogTemp, Log, TEXT("Synavis: DataChannel %d label='%s' closed for connection %d"), dc, *GetDataChannelLabelSafe(dc), ConnShared->ConnectionID);
-      auto it = ConnShared->HandlersByChannel.find(dc);
-      if (it != ConnShared->HandlersByChannel.end()) ConnShared->HandlersByChannel.erase(it);
+      if (ConnShared->HandlersByChannel.Contains(dc)) ConnShared->HandlersByChannel.Remove(dc);
       return;
     }
     // Fallback: numeric id if available
@@ -2091,8 +2216,7 @@ void USynavisStreamer::HandleDataChannelClosedCallback(int dc)
       {
         C->State = EPeerState::NoConnection;
         UE_LOG(LogTemp, Log, TEXT("Synavis: DataChannel %d label='%s' closed for connection %d (by id fallback)"), dc, *GetDataChannelLabelSafe(dc), C->ConnectionID);
-        auto it = C->HandlersByChannel.find(dc);
-        if (it != C->HandlersByChannel.end()) C->HandlersByChannel.erase(it);
+        if (C->HandlersByChannel.Contains(dc)) C->HandlersByChannel.Remove(dc);
         return;
       }
     }
@@ -2130,20 +2254,12 @@ void USynavisStreamer::CommunicateSDPs()
 
 void USynavisStreamer::CommunicateSDPForConnection(const FSynavisConnection& Conn)
 {
-  // If negotiation is held, do not send SDP now. Mark the connection pending
-  // so `StartConnectionNegotiation()` will handle the SDP transmission later.
+  // If negotiation is held, do not send SDP now. The connection state will
+  // remain in SynavisConnecting until StartConnectionNegotiation() is called.
   if (bHoldNegotiation)
   {
-    FSynavisConnection* Mutable = FindConnectionByPlayerID(Conn.ConnectionID);
-    if (Mutable)
-    {
-      Mutable->PendingNegotiation = true;
-      UE_LOG(LogTemp, Log, TEXT("Synavis: Held negotiation - queued SDP send for conn %d"), Conn.ConnectionID);
-    }
-    else
-    {
-      UE_LOG(LogTemp, Verbose, TEXT("Synavis: Held negotiation - could not find mutable conn %d to mark pending"), Conn.ConnectionID);
-    }
+    UE_LOG(LogTemp, Log, TEXT("Synavis: Held negotiation - queued SDP send for conn %d (State=%s)"), 
+      Conn.ConnectionID, *UEnum::GetDisplayValueAsText(Conn.State).ToString());
     return;
   }
   if (SignallingId == 0 || !rtcIsOpen(SignallingId))
@@ -2244,6 +2360,7 @@ void USynavisStreamer::CreateConnectionForPlayer(int32 PlayerID)
   TSharedPtr<FSynavisConnection> Conn = MakeShared<FSynavisConnection>();
   Conn->ConnectionID = PlayerID;
   Conn->bStreaming = AnyConnectionStreaming();
+  Conn->State = EPeerState::NoConnection;
 
   // Create a PeerConnection via C API and register C callbacks
   rtcConfiguration cfg{}; // default-initialized configuration
@@ -2271,6 +2388,84 @@ void USynavisStreamer::CreateConnectionForPlayer(int32 PlayerID)
   // Notify on signaling state changes so we can apply queued remote answers
   rtcSetSignalingStateChangeCallback(Conn->PeerConnection, Synavis_Rtc_OnPcSignalingStateChange);
   // Media interceptor: allow passing opaque messages into libdatachannel's media pipeline
+
+  
+
+  // Create outgoing send-only tracks for any registered handlers that have video sources.
+  for (const FSynavisHandler& HandlerCopy : RegisteredDataHandlers)
+  {
+    UE_LOG(LogTemp, Verbose, TEXT("Synavis: Checking handler %d for video track creation (video=%d)"), HandlerCopy.HandlerID, HandlerCopy.Video ? 1 : 0);
+    if (HandlerCopy.Video)
+    {
+      rtcTrackInit tinit{};
+      tinit.direction = RTC_DIRECTION_SENDONLY;
+      tinit.codec = RTC_CODEC_VP9;
+      tinit.payloadType = 96;
+      tinit.ssrc = GetNextSSRC();
+
+      FString MsidF = FString::Printf(TEXT("synavis-%d-%d"), HandlerCopy.HandlerID, Conn->ConnectionID);
+      FString TrackIdF = FString::Printf(TEXT("track-%u-%d"), HandlerCopy.HandlerID, Conn->ConnectionID);
+      FString NameF = TrackIdF;  // or customize, e.g., "video"
+
+      auto* MsidUtf8 = Conn->AddPersistentUtf8(MsidF);
+      auto* TrackUtf8 = Conn->AddPersistentUtf8(TrackIdF);
+      auto* NameUtf8 = Conn->AddPersistentUtf8(NameF);
+
+      tinit.msid = MsidUtf8->GetData();
+      tinit.trackId = TrackUtf8->GetData();
+      tinit.name = NameUtf8->GetData();
+      tinit.mid = NameUtf8->GetData();  // Reuse name as mid
+      tinit.profile = nullptr;
+
+      UE_LOG(LogTemp, Log, TEXT("Synavis: [RTC-SEQ] #%d About to call rtcAddTrackEx for handler %d on pc %d (conn=%d)"), ++GRtcSequenceCounter, HandlerCopy.HandlerID, Conn->PeerConnection, Conn->ConnectionID);
+      UE_LOG(LogTemp, Verbose, TEXT("Synavis: rtcTrackInit fields before rtcAddTrackEx: ssrc=%u msid=%s trackId=%s name=%s"), tinit.ssrc, ANSI_TO_TCHAR(tinit.msid ? tinit.msid : ""), ANSI_TO_TCHAR(tinit.trackId ? tinit.trackId : ""), ANSI_TO_TCHAR(tinit.name ? tinit.name : ""));
+      int trid = rtcAddTrackEx(Conn->PeerConnection, &tinit);
+      UE_LOG(LogTemp, Log, TEXT("Synavis: [RTC-SEQ] #%d rtcAddTrackEx returned %d for handler %d on pc %d"), GRtcSequenceCounter.load(), trid, HandlerCopy.HandlerID, Conn->PeerConnection);
+      if (trid > 0)
+      {
+        Conn->TracksByHandler.Add(HandlerCopy.HandlerID, trid);
+        // Also update the authoritative handler instance so handler-level lookups reflect the new per-connection mapping
+        FSynavisHandler* storedHandler = GetHandlerById(HandlerCopy.HandlerID);
+        if (storedHandler)
+        {
+          storedHandler->VideoTracksByConnection.Add(Conn->ConnectionID, trid);
+        }
+        UE_LOG(LogTemp, Log, TEXT("Synavis: Created send-only track %d for handler %d on pc %d"), trid, HandlerCopy.HandlerID, Conn->PeerConnection);
+
+        // NOTE: Local description will be generated when needed via signalling flow
+
+        char trDescBuf[2048] = {0};
+        int trDescLen = rtcGetTrackDescription(trid, trDescBuf, static_cast<int>(sizeof(trDescBuf)));
+        if (trDescLen > 0)
+        {
+          UE_LOG(LogTemp, Verbose, TEXT("Synavis: rtcGetTrackDescription returned %d for track %d immediately after creation:\n%s"), trDescLen, trid, ANSI_TO_TCHAR(trDescBuf));
+          // Parse the returned description once to extract the assigned SSRC
+          const char* key = "a=ssrc:";
+          const char* found = strstr(trDescBuf, key);
+          if (found)
+          {
+            const char* numstart = found + strlen(key);
+            char* endptr = nullptr;
+            unsigned long parsed = strtoul(numstart, &endptr, 10);
+            if (parsed > 0 && SendoffHandler)
+            {
+              SendoffHandler->RegisterTrackSsrc(trid, static_cast<uint32>(parsed));
+            }
+          }
+        }
+        else
+        {
+          UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcGetTrackDescription returned %d for track %d immediately after creation"), trDescLen, trid);
+        }
+        // Renegotiation will be triggered AFTER all tracks are added (see below)
+      }
+      else
+      {
+        UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcAddTrackEx failed for handler %d on pc %d (rc=%d)"), HandlerCopy.HandlerID, Conn->PeerConnection, trid);
+      }
+    }
+  }
+
 
   // Create a per-connection data channel for control/messages using the C API
   std::string channelName = std::string("synavis-data-") + std::to_string(PlayerID);
@@ -2322,78 +2517,6 @@ void USynavisStreamer::CreateConnectionForPlayer(int32 PlayerID)
     }
   }
 
-  // Create outgoing send-only tracks for any registered handlers that have video sources.
-  for (const FSynavisHandler& HandlerCopy : RegisteredDataHandlers)
-  {
-    if (HandlerCopy.Video)
-    {
-      rtcTrackInit tinit{};
-      tinit.direction = RTC_DIRECTION_SENDONLY;
-      tinit.codec = RTC_CODEC_VP9;
-      tinit.payloadType = 96;
-      tinit.ssrc = GetNextSSRC();
-
-      FString MsidF = FString::Printf(TEXT("synavis-%d-%d"), HandlerCopy.HandlerID, Conn->ConnectionID);
-      FString TrackIdF = FString::Printf(TEXT("track-%u-%d"), HandlerCopy.HandlerID, Conn->ConnectionID);
-      FString NameF = TrackIdF;  // or customize, e.g., "video"
-
-      auto* MsidUtf8 = Conn->AddPersistentUtf8(MsidF);
-      auto* TrackUtf8 = Conn->AddPersistentUtf8(TrackIdF);
-      auto* NameUtf8 = Conn->AddPersistentUtf8(NameF);
-
-      tinit.msid = MsidUtf8->GetData();
-      tinit.trackId = TrackUtf8->GetData();
-      tinit.name = NameUtf8->GetData();
-      tinit.mid = NameUtf8->GetData();  // Reuse name as mid
-      tinit.profile = nullptr;
-
-      UE_LOG(LogTemp, Log, TEXT("Synavis: About to add send-only track for handler %d on pc %d (conn=%d)"), HandlerCopy.HandlerID, Conn->PeerConnection, Conn->ConnectionID);
-      UE_LOG(LogTemp, Verbose, TEXT("Synavis: rtcTrackInit fields before rtcAddTrackEx: ssrc=%u msid=%s trackId=%s name=%s"), tinit.ssrc, ANSI_TO_TCHAR(tinit.msid ? tinit.msid : ""), ANSI_TO_TCHAR(tinit.trackId ? tinit.trackId : ""), ANSI_TO_TCHAR(tinit.name ? tinit.name : ""));
-      int trid = rtcAddTrackEx(Conn->PeerConnection, &tinit);
-      if (trid > 0)
-      {
-        Conn->TracksByHandler.emplace(HandlerCopy.HandlerID, trid);
-        // Also update the authoritative handler instance so handler-level lookups reflect the new per-connection mapping
-        FSynavisHandler* storedHandler = GetHandlerById(HandlerCopy.HandlerID);
-        if (storedHandler)
-        {
-          storedHandler->VideoTracksByConnection.Add(Conn->ConnectionID, trid);
-        }
-        UE_LOG(LogTemp, Log, TEXT("Synavis: Created send-only track %d for handler %d on pc %d"), trid, HandlerCopy.HandlerID, Conn->PeerConnection);
-
-        char trDescBuf[2048] = {0};
-        int trDescLen = rtcGetTrackDescription(trid, trDescBuf, static_cast<int>(sizeof(trDescBuf)));
-        if (trDescLen > 0)
-        {
-          UE_LOG(LogTemp, Verbose, TEXT("Synavis: rtcGetTrackDescription returned %d for track %d immediately after creation:\n%s"), trDescLen, trid, ANSI_TO_TCHAR(trDescBuf));
-          // Parse the returned description once to extract the assigned SSRC
-          const char* key = "a=ssrc:";
-          const char* found = strstr(trDescBuf, key);
-          if (found)
-          {
-            const char* numstart = found + strlen(key);
-            char* endptr = nullptr;
-            unsigned long parsed = strtoul(numstart, &endptr, 10);
-            if (parsed > 0 && SendoffHandler)
-            {
-              SendoffHandler->RegisterTrackSsrc(trid, static_cast<uint32>(parsed));
-            }
-          }
-        }
-        else
-        {
-          UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcGetTrackDescription returned %d for track %d immediately after creation"), trDescLen, trid);
-        }
-        // Request centralized renegotiation so the new track appears in local SDP
-        TriggerRenegotiationForConnection(Conn.Get());
-      }
-      else
-      {
-        UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcAddTrackEx failed for handler %d on pc %d (rc=%d)"), HandlerCopy.HandlerID, Conn->PeerConnection, trid);
-      }
-    }
-  }
-
   // Insert into connections map before starting ICE so callbacks can find it
   Connections.Add(PlayerID, Conn);
 
@@ -2407,19 +2530,22 @@ void USynavisStreamer::CreateConnectionForPlayer(int32 PlayerID)
   {
     if (StoredConn)
     {
+      // Set state to SynavisConnecting to indicate we're initiating the connection
+      StoredConn->State = EPeerState::SynavisConnecting;
+      
       // If negotiation is held globally, mark this connection as pending instead
       // of creating the offer immediately. StartConnectionNegotiation() will
       // trigger pending negotiations later.
-        if (bHoldNegotiation)
-        {
-          StoredConn->PendingNegotiation = true;
-          UE_LOG(LogTemp, Log, TEXT("Synavis: Holding negotiation for player %d until StartConnectionNegotiation()"), PlayerID);
-        }
-        else
-        {
-          // Centralized renegotiation will create the offer when appropriate
-          TriggerRenegotiationForConnection(StoredConn.Get());
-        }
+      if (bHoldNegotiation)
+      {
+        UE_LOG(LogTemp, Log, TEXT("Synavis: Holding negotiation for player %d until StartConnectionNegotiation()"), PlayerID);
+      }
+      else
+      {
+        UE_LOG(LogTemp, Log, TEXT("Synavis: Triggering renegotiation for player %d (pc=%d)"), PlayerID, StoredConn->PeerConnection);
+        // Centralized renegotiation will create the offer when appropriate
+        TriggerRenegotiationForConnection(StoredConn.Get());
+      }
     }
   }
 
@@ -2549,7 +2675,8 @@ void USynavisStreamer::HandleSignallingMessage(const std::variant<TArray<uint8>,
     {
       TargetPlayer = static_cast<int32>(Parsed.GetNumberField(TEXT("PlayerID")));
     }
-    if (Type.Equals(TEXT("answer"), ESearchCase::IgnoreCase) || Type.Equals(TEXT("offer"), ESearchCase::IgnoreCase))
+    //if (Type.Equals(TEXT("answer"), ESearchCase::IgnoreCase) || Type.Equals(TEXT("offer"), ESearchCase::IgnoreCase))
+    if (Type.Equals(TEXT("answer"), ESearchCase::IgnoreCase))
     {
       if (TargetPlayer == -1)
       {
@@ -2569,38 +2696,19 @@ void USynavisStreamer::HandleSignallingMessage(const std::variant<TArray<uint8>,
         return;
       }
       FString sdpf = Parsed.GetStringField(TEXT("sdp"));
-      //if (Type.Equals(TEXT("answer"), ESearchCase::IgnoreCase))
-      //{
-      //  FString munged = MungSDPForLibdatachannel(sdpf);
-      //  UE_LOG(LogTemp, Verbose, TEXT("Synavis: Munge incoming answer SDP for player %d orig_len=%d munged_len=%d"), TargetPlayer, sdpf.Len(), munged.Len());
-      //  sdpf = munged;
-      //}
+      if (Type.Equals(TEXT("answer"), ESearchCase::IgnoreCase))
+      {
+        // Munge incoming answer SDP with connection context for dynamic BUNDLE groups
+        FString munged = MungSDPForLibdatachannel(sdpf, Conn);
+        UE_LOG(LogTemp, Verbose, TEXT("Synavis: Munge incoming answer SDP for player %d orig_len=%d munged_len=%d"), TargetPlayer, sdpf.Len(), munged.Len());
+        sdpf = munged;
+      }
       std::string sdp = TCHAR_TO_UTF8(*sdpf);
       // Use C API to set remote description
       int setRes = rtcSetRemoteDescription(Conn->PeerConnection, sdp.c_str(), TCHAR_TO_UTF8(*Type));
       if (setRes != RTC_ERR_SUCCESS)
       {
         UE_LOG(LogTemp, Error, TEXT("Synavis: rtcSetRemoteDescription failed (rc=%d) for player %d. SDP type=%s length=%d"), setRes, TargetPlayer, *Type, sdpf.Len());
-        if (Type.Equals(TEXT("answer"), ESearchCase::IgnoreCase))
-        {
-          // Queue the incoming answer for later application when the PC is in
-          // an appropriate signaling state (e.g. HAVE_LOCAL_OFFER). This avoids
-          // race conditions where the remote sends an answer while we are
-          // still in the stable state.
-          {
-            FScopeLock lock(&this->PendingAnswersMutex);
-            TArray<FString>& Q = PendingRemoteAnswers.FindOrAdd(Conn->PeerConnection);
-            Q.Add(sdpf);
-          }
-          UE_LOG(LogTemp, Warning, TEXT("Synavis: Queued remote answer for player %d (pc=%d) due to rtcSetRemoteDescription rc=%d"), TargetPlayer, Conn->PeerConnection, setRes);
-          // Trigger centralized renegotiation so a local offer will be created
-          // and the signaling state transitions to allow applying the queued answer.
-          TriggerRenegotiationForConnection(Conn);
-        }
-        else
-        {
-          UE_LOG(LogTemp, Error, TEXT("Synavis: Failed remote SDP: %s"), *sdpf);
-        }
 
         // Attempt to dump local description for additional context
         char localBuf[8192] = {0};
@@ -2621,7 +2729,7 @@ void USynavisStreamer::HandleSignallingMessage(const std::variant<TArray<uint8>,
         // Dump per-track descriptions after remote description set
         for (const auto& kv : Conn->TracksByHandler)
         {
-          int tr = kv.second;
+          int tr = kv.Value;
           char trbuf[2048] = {0};
           int trlen = rtcGetTrackDescription(tr, trbuf, static_cast<int>(sizeof(trbuf)));
           if (trlen > 0)
@@ -2639,6 +2747,7 @@ void USynavisStreamer::HandleSignallingMessage(const std::variant<TArray<uint8>,
       // if the far end also used NULL. Use explicit "answer" to avoid DTLS role ambiguity.
       if (Type.Equals(TEXT("offer"), ESearchCase::IgnoreCase))
       {
+        UE_LOG(LogTemp, Log, TEXT("Synavis: [RTC-SEQ] #%d About to call rtcSetLocalDescription (answer) for player %d (pc=%d)"), ++GRtcSequenceCounter, TargetPlayer, Conn->PeerConnection);
         int localRes = rtcSetLocalDescription(Conn->PeerConnection, "answer");
         if (localRes != RTC_ERR_SUCCESS)
         {
@@ -2646,10 +2755,10 @@ void USynavisStreamer::HandleSignallingMessage(const std::variant<TArray<uint8>,
         }
         else
         {
-          UE_LOG(LogTemp, Log, TEXT("Synavis: rtcSetLocalDescription (answer) succeeded for player %d (pc=%d)"), TargetPlayer, Conn->PeerConnection);
+          UE_LOG(LogTemp, Log, TEXT("Synavis: [RTC-SEQ] #%d rtcSetLocalDescription (answer) succeeded for player %d (pc=%d)"), GRtcSequenceCounter.load(), TargetPlayer, Conn->PeerConnection);
           for (const auto& kv : Conn->TracksByHandler)
           {
-            int tr = kv.second;
+            int tr = kv.Value;
             char trbuf[2048] = {0};
             int trlen = rtcGetTrackDescription(tr, trbuf, static_cast<int>(sizeof(trbuf)));
             if (trlen > 0)
@@ -2862,12 +2971,13 @@ int USynavisStreamer::RegisterDataSource(
       tinit.trackId = Conn->PersistentTrackUtf8[baseIdx2 + 1].GetData();
       tinit.profile = nullptr;
 
-      UE_LOG(LogTemp, Log, TEXT("Synavis: About to add send-only track (post-register) for handler %d on pc %d (conn=%d)"), Handler.HandlerID, Conn->PeerConnection, Conn->ConnectionID);
+      UE_LOG(LogTemp, Log, TEXT("Synavis: [RTC-SEQ] #%d About to add send-only track (post-register) for handler %d on pc %d (conn=%d)"), ++GRtcSequenceCounter, Handler.HandlerID, Conn->PeerConnection, Conn->ConnectionID);
       UE_LOG(LogTemp, Verbose, TEXT("Synavis: rtcTrackInit fields before rtcAddTrackEx (post-register): ssrc=%u msid=%s trackId=%s name=%s"), tinit.ssrc, ANSI_TO_TCHAR(tinit.msid ? tinit.msid : ""), ANSI_TO_TCHAR(tinit.trackId ? tinit.trackId : ""), ANSI_TO_TCHAR(tinit.name ? tinit.name : ""));
       int trid = rtcAddTrackEx(Conn->PeerConnection, &tinit);
+      UE_LOG(LogTemp, Log, TEXT("Synavis: [RTC-SEQ] #%d rtcAddTrackEx (post-register) returned %d for handler %d on pc %d"), GRtcSequenceCounter.load(), trid, Handler.HandlerID, Conn->PeerConnection);
       if (trid > 0)
       {
-        Conn->TracksByHandler.emplace(Handler.HandlerID, trid);
+        Conn->TracksByHandler.Add(Handler.HandlerID, trid);
         // Update handler-side mapping for the stored handler instance
         FSynavisHandler* stored = GetHandlerById(Handler.HandlerID);
         if (stored)
@@ -2967,20 +3077,20 @@ void USynavisStreamer::CaptureFrame()
       TSharedPtr<FSynavisConnection> Conn = Pair.Value;
       if (!Conn) continue;
       if (!Conn->bStreaming) continue;
-      auto it = Conn->TracksByHandler.find(Handler.HandlerID);
-      if (it != Conn->TracksByHandler.end() && it->second != 0 && rtcIsOpen(it->second))
+      auto it = Conn->TracksByHandler.Find(Handler.HandlerID);
+      if (it && *it != 0 && rtcIsOpen(*it))
       {
-        TracksToSend.Add(it->second);
+        TracksToSend.Add(*it);
       }
     }
 
     if (TracksToSend.Num() == 0)
     {
       UE_LOG(LogTemp, Error, TEXT("Synavis: No open tracks for handler %d, skipping readback"), Handler.HandlerID);
-      //RTCReport();
+      RTCReport();
       // this is what we need to fix so there is no point going on after this
       // exit game
-      //GetWorld()->GetFirstPlayerController()->ConsoleCommand(TEXT("exit"));
+      GetWorld()->GetFirstPlayerController()->ConsoleCommand(TEXT("exit"));
     }
     else
     {
@@ -3143,7 +3253,7 @@ void USynavisStreamer::HandlePcDataChannelCreated(int pc, int dc)
         bool found = false;
         for (const auto& hb : C->HandlersByChannel)
         {
-          if (hb.second == H.HandlerID) { found = true; break; }
+          if (hb.Value == H.HandlerID) { found = true; break; }
         }
         if (!found) MissingDedicatedHandlers.Add(H.HandlerID);
       }
@@ -3196,22 +3306,40 @@ void USynavisStreamer::HandlePcDataChannelCreated(int pc, int dc)
 void USynavisStreamer::TriggerRenegotiationForConnection(FSynavisConnection* Conn)
 {
   if (!Conn || Conn->PeerConnection == 0) return;
-  // Centralized renegotiation should not immediately perform SDP I/O.
-  // Instead mark the connection as having a pending negotiation so that
-  // `StartConnectionNegotiation()` performs the actual `rtcSetLocalDescription`
-  // and SDP send. This avoids creating intermediate datachannel-only offers.
-  if (bHoldNegotiation)
+  
+  // Use EPeerState as the single source of truth for negotiation logic
+  switch (Conn->State)
   {
-    Conn->PendingNegotiation = true;
-    UE_LOG(LogTemp, Log, TEXT("Synavis: Hold active - marked connection %d pending negotiation"), Conn->ConnectionID);
-    return;
-  }
-
-  // Only attempt renegotiation when the source policy allows dynamic updates
-  if (SourcePolicy == ESynavisSourcePolicy::RemainStatic)
-  {
-    UE_LOG(LogTemp, Verbose, TEXT("Synavis: SourcePolicy=RemainStatic - skipping renegotiation for conn %d"), Conn->ConnectionID);
-    return;
+    case EPeerState::NoConnection:
+    case EPeerState::SynavisConnecting:
+    case EPeerState::GeneratingOffer:
+      // Always allow negotiation - no successful communication yet
+      UE_LOG(LogTemp, Log, TEXT("Synavis: Connection %d in state %s - allowing initial negotiation"), 
+        Conn->ConnectionID, *UEnum::GetDisplayValueAsText(Conn->State).ToString());
+      break;
+      
+    case EPeerState::ReceivedAnswer:
+      // Already have an answer, ignore new requests until ICE/ChannelOpen
+      UE_LOG(LogTemp, Log, TEXT("Synavis: Connection %d already has answer - ignoring request"), Conn->ConnectionID);
+      return;
+      
+    case EPeerState::ICE:
+    case EPeerState::ChannelOpen:
+    case EPeerState::AllOpen:
+      // Connection established, respect SourcePolicy
+      if (SourcePolicy == ESynavisSourcePolicy::RemainStatic)
+      {
+        UE_LOG(LogTemp, Verbose, TEXT("Synavis: SourcePolicy=RemainStatic and connection established - skipping renegotiation for conn %d"), Conn->ConnectionID);
+        return;
+      }
+      UE_LOG(LogTemp, Log, TEXT("Synavis: Connection %d in state %s - checking if renegotiation needed"), 
+        Conn->ConnectionID, *UEnum::GetDisplayValueAsText(Conn->State).ToString());
+      break;
+      
+    default:
+      UE_LOG(LogTemp, Verbose, TEXT("Synavis: Connection %d in unexpected state %s - skipping renegotiation"), 
+        Conn->ConnectionID, *UEnum::GetDisplayValueAsText(Conn->State).ToString());
+      return;
   }
 
   // Ask the C API whether negotiation is required
@@ -3221,7 +3349,11 @@ void USynavisStreamer::TriggerRenegotiationForConnection(FSynavisConnection* Con
     return;
   }
 
+  // Mark state as GeneratingOffer BEFORE generating SDP
+  Conn->State = EPeerState::GeneratingOffer;
+  
   // Perform immediate SDP offer now that negotiation has started
+  UE_LOG(LogTemp, Log, TEXT("Synavis: [RTC-SEQ] #%d About to call rtcSetLocalDescription (offer) for conn %d"), ++GRtcSequenceCounter, Conn->ConnectionID);
   int localRes = rtcSetLocalDescription(Conn->PeerConnection, "offer");
   if (localRes != RTC_ERR_SUCCESS)
   {
@@ -3233,16 +3365,17 @@ void USynavisStreamer::TriggerRenegotiationForConnection(FSynavisConnection* Con
     {
       UE_LOG(LogTemp, Warning, TEXT("Synavis: Renegotiation attempt failed for conn %d (rc=%d)"), Conn->ConnectionID, localRes);
     }
-    Conn->PendingNegotiation = true;
+    // Revert state on failure
+    Conn->State = EPeerState::SynavisConnecting;
     return;
   }
   else
   {
-    UE_LOG(LogTemp, Log, TEXT("Synavis: Triggered renegotiation (offer) for conn %d"), Conn->ConnectionID);
+    UE_LOG(LogTemp, Log, TEXT("Synavis: [RTC-SEQ] #%d rtcSetLocalDescription (offer) triggered for conn %d"), GRtcSequenceCounter.load(), Conn->ConnectionID);
     // Dump per-track descriptions after triggering local offer
     for (const auto& kv : Conn->TracksByHandler)
     {
-      int tr = kv.second;
+      int tr = kv.Value;
       char trbuf[2048] = {0};
       int trlen = rtcGetTrackDescription(tr, trbuf, static_cast<int>(sizeof(trbuf)));
       if (trlen > 0)
@@ -3259,30 +3392,114 @@ void USynavisStreamer::TriggerRenegotiationForConnection(FSynavisConnection* Con
 
 void USynavisStreamer::StartConnectionNegotiation()
 {
-  UE_LOG(LogTemp, Log, TEXT("Synavis: StartConnectionNegotiation called - releasing hold and triggering pending negotiations"));
+  UE_LOG(LogTemp, Log, TEXT("Synavis: StartConnectionNegotiation called - releasing hold and scheduling negotiation with %.2fs delay"), NegotiationDelaySeconds);
   // Clear the global hold first
   bHoldNegotiation = false;
 
+  // Check if any connections need negotiation based on EPeerState
+  bool AnyPending = false;
   for (auto& Pair : Connections)
   {
     TSharedPtr<FSynavisConnection> C = Pair.Value;
     if (!C || C->PeerConnection == 0) continue;
 
     bool need = rtcIsNegotiationNeeded(C->PeerConnection);
-    UE_LOG(LogTemp, Verbose, TEXT("Synavis: StartConnectionNegotiation evaluating conn %d: PendingNegotiation=%d rtcIsNegotiationNeeded=%d"), C->ConnectionID, C->PendingNegotiation ? 1 : 0, need ? 1 : 0);
+    UE_LOG(LogTemp, Verbose, TEXT("Synavis: StartConnectionNegotiation evaluating conn %d: State=%s rtcIsNegotiationNeeded=%d"), 
+      C->ConnectionID, *UEnum::GetDisplayValueAsText(C->State).ToString(), need ? 1 : 0);
 
-    if (C->PendingNegotiation || need)
+    // Consider pending if in a state that allows negotiation or if libdatachannel reports needed
+    if (C->State == EPeerState::NoConnection || 
+        C->State == EPeerState::SynavisConnecting ||
+        C->State == EPeerState::ICE || 
+        C->State == EPeerState::ChannelOpen ||
+        need)
     {
+      AnyPending = true;
+      break;
+    }
+  }
+
+  if (!AnyPending)
+  {
+    UE_LOG(LogTemp, Log, TEXT("Synavis: StartConnectionNegotiation - no pending negotiations found"));
+    return;
+  }
+
+  // Use timer-based delay to allow all track additions to batch together
+  // This prevents race conditions where multiple tracks trigger separate negotiations
+  if (NegotiationDelaySeconds > 0.0f)
+  {
+    UE_LOG(LogTemp, Log, TEXT("Synavis: Scheduling delayed negotiation in %.2fs"), NegotiationDelaySeconds);
+    GetWorld()->GetTimerManager().SetTimer(
+      NegotiationDelayTimerHandle,
+      this,
+      &USynavisStreamer::ExecuteDelayedNegotiation,
+      NegotiationDelaySeconds,
+      false
+    );
+  }
+  else
+  {
+    // Immediate execution (not recommended)
+    ExecuteDelayedNegotiation();
+  }
+}
+
+// Timer callback for delayed negotiation
+void USynavisStreamer::ExecuteDelayedNegotiation()
+{
+  UE_LOG(LogTemp, Log, TEXT("Synavis: Executing delayed negotiation for all pending connections"));
+  
+  for (auto& Pair : Connections)
+  {
+    TSharedPtr<FSynavisConnection> C = Pair.Value;
+    if (!C || C->PeerConnection == 0) continue;
+
+    // Skip if already negotiating
+    if (C->State == EPeerState::GeneratingOffer || C->State == EPeerState::ReceivedAnswer)
+    {
+      UE_LOG(LogTemp, Log, TEXT("Synavis: Conn %d negotiation already in progress (State=%s) - skipping"), C->ConnectionID, *UEnum::GetDisplayValueAsText(C->State).ToString());
+      continue;
+    }
+
+    bool need = rtcIsNegotiationNeeded(C->PeerConnection);
+    if (!need)
+    {
+      UE_LOG(LogTemp, Verbose, TEXT("Synavis: Conn %d rtcIsNegotiationNeeded=false (State=%s) - skipping"), C->ConnectionID, *UEnum::GetDisplayValueAsText(C->State).ToString());
+      continue;
+    }
+
+    // Check if connection is in a state that allows negotiation
+    bool StateAllowsNegotiation = 
+      C->State == EPeerState::NoConnection || 
+      C->State == EPeerState::SynavisConnecting ||
+      C->State == EPeerState::GeneratingOffer ||
+      C->State == EPeerState::ICE || 
+      C->State == EPeerState::ChannelOpen;
+
+    if (StateAllowsNegotiation)
+    {
+      // Mark state as GeneratingOffer
+      C->State = EPeerState::GeneratingOffer;
+
+      UE_LOG(LogTemp, Log, TEXT("Synavis: [RTC-SEQ] #%d About to call rtcSetLocalDescription (offer) for conn %d"), ++GRtcSequenceCounter, C->ConnectionID);
       int localRes = rtcSetLocalDescription(C->PeerConnection, "offer");
       if (localRes != RTC_ERR_SUCCESS)
       {
         UE_LOG(LogTemp, Warning, TEXT("Synavis: StartConnectionNegotiation: rtcSetLocalDescription failed for conn %d (rc=%d)"), C->ConnectionID, localRes);
-        C->PendingNegotiation = true;
+        // Revert to previous state based on context
+        if (C->State == EPeerState::NoConnection || C->State == EPeerState::SynavisConnecting || C->State == EPeerState::GeneratingOffer)
+        {
+          C->State = EPeerState::SynavisConnecting;
+        }
+        else
+        {
+          C->State = EPeerState::ICE;
+        }
       }
       else
       {
-        UE_LOG(LogTemp, Log, TEXT("Synavis: StartConnectionNegotiation: Sending offer for conn %d"), C->ConnectionID);
-        C->PendingNegotiation = false;
+        UE_LOG(LogTemp, Log, TEXT("Synavis: [RTC-SEQ] #%d rtcSetLocalDescription (offer) sent for conn %d"), GRtcSequenceCounter.load(), C->ConnectionID);
         // Immediately attempt to communicate the SDP via signalling here instead
         // of solely relying on the async local-description callback. This avoids
         // races where the callback may be delayed or signalling state changes
@@ -3292,7 +3509,7 @@ void USynavisStreamer::StartConnectionNegotiation()
         // Dump per-track descriptions after sending offer
         for (const auto& kv : C->TracksByHandler)
         {
-          int tr = kv.second;
+          int tr = kv.Value;
           char trbuf[2048] = {0};
           int trlen = rtcGetTrackDescription(tr, trbuf, static_cast<int>(sizeof(trbuf)));
           if (trlen > 0)
@@ -3308,7 +3525,8 @@ void USynavisStreamer::StartConnectionNegotiation()
     }
     else
     {
-      UE_LOG(LogTemp, Verbose, TEXT("Synavis: StartConnectionNegotiation: skipping conn %d (no pending and rtcIsNegotiationNeeded=false)"), C->ConnectionID);
+      UE_LOG(LogTemp, Verbose, TEXT("Synavis: StartConnectionNegotiation: skipping conn %d (State=%s, rtcIsNegotiationNeeded=false)"), 
+        C->ConnectionID, *UEnum::GetDisplayValueAsText(C->State).ToString());
     }
   }
 }

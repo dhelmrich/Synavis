@@ -70,7 +70,6 @@ struct FBackendConnection
 
   int ConnectionID = 0;
   bool bStreaming = false;
-  bool PendingNegotiation = false;
   ESynavisBackendState State = ESynavisBackendState::Offline;
 
   TArray<TArray<ANSICHAR>> PersistentTrackUtf8;

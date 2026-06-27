@@ -31,8 +31,6 @@ struct FLibAVEncoderState;
 
 THIRD_PARTY_INCLUDES_END
 
-
-
 #include "SynavisCommunicationInterface.h"
 #include "SynavisStreamer.generated.h"
 
@@ -67,7 +65,7 @@ enum class EPeerState : uint8
 {
   NoConnection      UMETA(DisplayName = "No Connection"),
   SynavisConnecting      UMETA(DisplayName = "Synavis Connecting"), // received playerConnected from Signalling
-  ReceivedOffer      UMETA(DisplayName = "Received Offer"),
+  GeneratingOffer      UMETA(DisplayName = "Generating Offer"),
   ReceivedAnswer      UMETA(DisplayName = "Received Answer"),
   ICE      UMETA(DisplayName = "ICE"),
   ChannelOpen      UMETA(DisplayName = "Channel Open"),
@@ -155,18 +153,16 @@ struct FSynavisConnection
   uint32 MaxMessageSize = 0;
 
   // Map of handler id -> track id for video/audio tracks. Used during media setup/teardown.
-  std::unordered_map<uint32, int32> TracksByHandler;
+  // Using TMap for better UE integration (no C++ ABI concerns since we use C bindings).
+  TMap<uint32, int32> TracksByHandler;
   // Map of data channel id -> handler id for dispatching incoming messages to the correct handler.
-  std::unordered_map<int32, uint32> HandlersByChannel;
+  TMap<int32, uint32> HandlersByChannel;
 
   int ConnectionID = 0;
   // Per-connection flag indicating whether this connection should receive encoded video
   // frames. This replaces the previous global bStreaming flag which no longer fits
   // the multi-connection model.
   bool bStreaming = false;
-  // If true, a negotiation request is pending for this connection because tracks
-  // or channels were added while global negotiation was held.
-  bool PendingNegotiation = false;
   EPeerState State = EPeerState::NoConnection;
   // Hold converted UTF-8 bytes for track identifiers so pointers remain valid
   TArray<TArray<ANSICHAR>> PersistentTrackUtf8;
@@ -295,13 +291,23 @@ public:
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Streaming|Signalling")
   bool bHoldNegotiation = true;
 
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Streaming|Signalling")
+  float NegotiationDelaySeconds = 0.5f;
+
   UFUNCTION(BlueprintCallable, Category = "Streaming|Signalling")
   void StartSignalling();
 
+  // Get negotiation state diagnostics for all connections
+  UFUNCTION(BlueprintCallable, Category = "Streaming|Connection")
+  FString GetNegotiationStateReport() const;
 
   // Called when libdatachannel reports a new datachannel for a PeerConnection.
   // Implemented as a member so it can safely access protected connection maps.
   void HandlePcDataChannelCreated(int pc, int dc);
+
+  // Timer callback for delayed negotiation execution
+  UFUNCTION()
+  void ExecuteDelayedNegotiation();
 
   UFUNCTION(BlueprintCallable, Category = "Streaming|Connection")
   ESynavisState GetConnectionState() const;
@@ -488,6 +494,9 @@ protected:
   // Mutex protecting DataChannelContexts for thread-safe access from arbitrary
   // callback threads.
   mutable FCriticalSection DataChannelContextsMutex;
+
+  // Timer handle for delayed negotiation (Blueprint-controlled delay)
+  FTimerHandle NegotiationDelayTimerHandle;
 
   // Pending remote answers queued per-peer-connection id. Protected by mutex
   // because C API callbacks may arrive on arbitrary threads.
