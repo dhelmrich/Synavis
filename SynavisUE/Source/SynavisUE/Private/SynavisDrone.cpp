@@ -1941,6 +1941,7 @@ void ASynavisDrone::BeginPlay()
   this->SetActorTickEnabled(false);
   Super::BeginPlay();
 
+  InitializeSynavisRegistration();
   InfoCam->AttachToComponent(RootComponent, FAttachmentTransformRules::SnapToTargetIncludingScale);
   SceneCam->AttachToComponent(RootComponent, FAttachmentTransformRules::SnapToTargetIncludingScale);
 
