@@ -63,13 +63,23 @@ enum class ESynavisState : uint8
 UENUM(BlueprintType)
 enum class EPeerState : uint8
 {
-  NoConnection      UMETA(DisplayName = "No Connection"),
-  SynavisConnecting      UMETA(DisplayName = "Synavis Connecting"), // received playerConnected from Signalling
-  GeneratingOffer      UMETA(DisplayName = "Generating Offer"),
-  ReceivedAnswer      UMETA(DisplayName = "Received Answer"),
-  ICE      UMETA(DisplayName = "ICE"),
-  ChannelOpen      UMETA(DisplayName = "Channel Open"),
-  AllOpen      UMETA(DisplayName = "All Open"),
+  NoConnection      UMETA(DisplayName = "No Connection", ToolTip = "Pre-creation passive state for connection"),
+  SourceRegistration UMETA(DisplayName = "Source Registration", ToolTip = "PC registers handlers with RTC"),
+  LocalDescription UMETA(DisplayName = "Local Description", ToolTip = "Creating local SDP and verifying its completeness"),
+  OfferSent        UMETA(DisplayName = "Offer", ToolTip = "Sending local SDP offer to remote peer"),
+  RemoteDescription UMETA(DisplayName = "Remote Description", ToolTip = "Receiving remote SDP and verifying its completeness"),
+  ICEGathering      UMETA(DisplayName = "ICE Gathering", ToolTip = "Gathering ICE candidates for local SDP"),
+  RemoteICE UMETA(DisplayName = "Remote ICE", ToolTip = "Receiving remote ICE candidates and adding them to the PC"),
+  Connected         UMETA(DisplayName = "Connected", ToolTip = "PeerConnection is fully established and ready to send/receive media"),
+};
+
+UENUM(BlueprintType)
+enum class ETransportState : uint8
+{
+  NEED UMETA(DisplayName = "Needs Registering", ToolTip = "This resource needs to be registered but is expected by some handler"),
+  INIT UMETA(DisplayName = "Initialized", ToolTip = "The resource is initialized with RTC through ID"),
+  OPEN UMETA(DisplayName = "Opened", ToolTip = "The onOpen callback has been called for this resource"),
+  SHUT UMETA(DisplayName = "Shut Down", ToolTip = "The onClose callback has been called for this resource.")
 };
 
 UENUM(BlueprintType)
@@ -128,6 +138,12 @@ struct FSynavisHandler
   }
 };
 
+struct FTransportResource
+{
+  int ID{-1};
+  ETransportState state {ETransportState::NEED};
+};
+
 // Synavis Connection:
 // Represents a single PeerConnection and its associated state.
 // - Stores C API object ids (PeerConnection, Packetizer, DataChannel) used by the C wrapper layer.
@@ -143,9 +159,9 @@ struct FSynavisConnection
    * Connection Objects             *
    * ********************************/
    // C API ids: PeerConnection id, Packetizer id (if used), DataChannel id
-  int PeerConnection = 0;
-  int Packetizer = 0;
-  int DataChannel = 0;
+  int PeerConnection = 0; // internal ID and as such it remains int
+  int Packetizer = 0; // also basically pseudo-pointer
+  FTransportResource DataChannel; // This needs a state
 
   /**********************************
    * Meta Info on Connection        *
@@ -154,7 +170,7 @@ struct FSynavisConnection
 
   // Map of handler id -> track id for video/audio tracks. Used during media setup/teardown.
   // Using TMap for better UE integration (no C++ ABI concerns since we use C bindings).
-  TMap<uint32, int32> TracksByHandler;
+  TMap<uint32, FTransportResource> TracksByHandler;
   // Map of data channel id -> handler id for dispatching incoming messages to the correct handler.
   TMap<int32, uint32> HandlersByChannel;
 
@@ -163,6 +179,7 @@ struct FSynavisConnection
   // frames. This replaces the previous global bStreaming flag which no longer fits
   // the multi-connection model.
   bool bStreaming = false;
+  // Negotiation state driven solely by EPeerState enum
   EPeerState State = EPeerState::NoConnection;
   // Hold converted UTF-8 bytes for track identifiers so pointers remain valid
   TArray<TArray<ANSICHAR>> PersistentTrackUtf8;
@@ -172,7 +189,12 @@ struct FSynavisConnection
   FSynavisConnection(FSynavisConnection&&) = default;
   FSynavisConnection& operator=(FSynavisConnection&&) = default;
 
-  
+  FString SDP;
+  TQueue<FString> ICE;
+
+
+  // negotiation thread
+  TObjectPtr<FRunnableThread> NegotiationThread;
 
   // Helper in your Conn class header
   TArray<ANSICHAR>* AddPersistentUtf8(const FString& Str);
@@ -251,6 +273,8 @@ public:
 
   // Stop streaming globally for all connections (non-blueprint helper)
   void StopStreaming();
+
+  void ConnectionNegotiationThread(TSharedPtr<FSynavisConnection> Connection);
 
   // Connection Policy for handling additional requests to stream cameras
   // from within Unreal: If set, the streamer will attempt to renegotiate

@@ -731,38 +731,30 @@ void Synavis_Rtc_Track_OnOpen(int id, void* user_ptr)
     int maxMsg = rtcMaxMessageSize(id);
     int buffered = rtcGetBufferedAmount(id);
     bool open = rtcIsOpen(id);
-    char descBuf[1024] = {0};
-    int got = rtcGetTrackDescription(id, descBuf, static_cast<int>(sizeof(descBuf)));
     if (Conn)
     {
       Conn->MaxMessageSize = static_cast<uint32>(maxMsg);
-      UE_LOG(LogTemp, Verbose, TEXT("Synavis: Track_OnOpen id=%d conn=%d open=%d maxMsg=%d buffered=%d desc_len=%d"), id, Conn->ConnectionID, open ? 1 : 0, maxMsg, buffered, got);
-      if (got > 0) UE_LOG(LogTemp, Verbose, TEXT("Synavis: Track_OnOpen description: %s"), ANSI_TO_TCHAR(descBuf));
+      UE_LOG(LogTemp, Verbose, TEXT("Synavis: Track_OnOpen id=%d conn=%d open=%d maxMsg=%d buffered=%d"), id, Conn->ConnectionID, open ? 1 : 0, maxMsg, buffered);
       
-      // Check if we should transition to AllOpen state
-      // AllOpen means: at least one datachannel is open AND all registered tracks are open
-      if (Conn->State == EPeerState::ChannelOpen || Conn->State == EPeerState::GeneratingOffer || Conn->State == EPeerState::ReceivedAnswer)
+      // Set the FTransportResource to Open
+      auto TrackIT = Conn->TracksByHandler.FilterByPredicate([id](auto a){
+        return a.ID == id;
+      }).begin();
+
+      if(TrackIT)
       {
-        bool AllTracksOpen = true;
-        for (const auto& kv : Conn->TracksByHandler)
-        {
-          int tr = kv.Value;
-          if (!rtcIsOpen(tr))
-          {
-            AllTracksOpen = false;
-            break;
-          }
-        }
-        
-        if (AllTracksOpen && !Conn->TracksByHandler.IsEmpty())
-        {
-          Conn->State = EPeerState::AllOpen;
-          UE_LOG(LogTemp, Log, TEXT("Synavis: Connection %d transitioned to AllOpen state (all tracks and channels open)"), Conn->ConnectionID);
-        }
+        // push the track to state==open
+        (*TrackIT).Value.state = ETransportState::OPEN;
+      }
+      else
+      {
+        UE_LOG(LogTemp, Error, TEXT("Synavis: Unrecoverable error, did not find track %d reference in connection %d"), id, Conn->ConnectionID);
       }
     }
     else
     {
+      char descBuf[1024] = {0};
+      int got = rtcGetTrackDescription(id, descBuf, static_cast<int>(sizeof(descBuf)));
       UE_LOG(LogTemp, Verbose, TEXT("Synavis: Track_OnOpen id=%d open=%d maxMsg=%d buffered=%d desc_len=%d (no conn pointer)"), id, open ? 1 : 0, maxMsg, buffered, got);
       if (got > 0) UE_LOG(LogTemp, Verbose, TEXT("Synavis: Track_OnOpen description: %s"), ANSI_TO_TCHAR(descBuf));
     }
@@ -2362,194 +2354,22 @@ void USynavisStreamer::CreateConnectionForPlayer(int32 PlayerID)
   Conn->bStreaming = AnyConnectionStreaming();
   Conn->State = EPeerState::NoConnection;
 
-  // Create a PeerConnection via C API and register C callbacks
-  rtcConfiguration cfg{}; // default-initialized configuration
-  // Apply configurable max message size and MTU if provided in UPROPERTYs
-  if (this->MaxMessageSize > 0) cfg.maxMessageSize = this->MaxMessageSize;
-  if (this->Mtu > 0) cfg.mtu = this->Mtu;
-  UE_LOG(LogTemp, Verbose, TEXT("Synavis: Creating PeerConnection with cfg.maxMessageSize=%d cfg.mtu=%d"), cfg.maxMessageSize, cfg.mtu);
-  int pcid = rtcCreatePeerConnection(&cfg);
-  if (pcid <= 0)
-  {
-    UE_LOG(LogTemp, Error, TEXT("Synavis: rtcCreatePeerConnection failed (rc=%d) for player %d"), pcid, PlayerID);
-    return;
-  }
-  Conn->PeerConnection = pcid;
-
-  // Attach user pointer so callbacks can find this USynavisStreamer instance
-  rtcSetUserPointer(Conn->PeerConnection, this);
-  rtcSetLocalDescriptionCallback(Conn->PeerConnection, Synavis_Rtc_OnPcLocalDescription);
-  rtcSetLocalCandidateCallback(Conn->PeerConnection, Synavis_Rtc_OnPcLocalCandidate);
-  rtcSetGatheringStateChangeCallback(Conn->PeerConnection, Synavis_Rtc_OnPcGatheringStateChange);
-  rtcSetDataChannelCallback(Conn->PeerConnection, Synavis_Rtc_OnPcDataChannel);
-  rtcSetTrackCallback(Conn->PeerConnection, Synavis_Rtc_OnPcTrack);
-  rtcSetStateChangeCallback(Conn->PeerConnection, Synavis_Rtc_OnPcStateChange);
-  rtcSetIceStateChangeCallback(Conn->PeerConnection, Synavis_Rtc_OnPcIceStateChange);
-  // Notify on signaling state changes so we can apply queued remote answers
-  rtcSetSignalingStateChangeCallback(Conn->PeerConnection, Synavis_Rtc_OnPcSignalingStateChange);
-  // Media interceptor: allow passing opaque messages into libdatachannel's media pipeline
-
-  
-
-  // Create outgoing send-only tracks for any registered handlers that have video sources.
-  for (const FSynavisHandler& HandlerCopy : RegisteredDataHandlers)
-  {
-    UE_LOG(LogTemp, Verbose, TEXT("Synavis: Checking handler %d for video track creation (video=%d)"), HandlerCopy.HandlerID, HandlerCopy.Video ? 1 : 0);
-    if (HandlerCopy.Video)
-    {
-      rtcTrackInit tinit{};
-      tinit.direction = RTC_DIRECTION_SENDONLY;
-      tinit.codec = RTC_CODEC_VP9;
-      tinit.payloadType = 96;
-      tinit.ssrc = GetNextSSRC();
-
-      FString MsidF = FString::Printf(TEXT("synavis-%d-%d"), HandlerCopy.HandlerID, Conn->ConnectionID);
-      FString TrackIdF = FString::Printf(TEXT("track-%u-%d"), HandlerCopy.HandlerID, Conn->ConnectionID);
-      FString NameF = TrackIdF;  // or customize, e.g., "video"
-
-      auto* MsidUtf8 = Conn->AddPersistentUtf8(MsidF);
-      auto* TrackUtf8 = Conn->AddPersistentUtf8(TrackIdF);
-      auto* NameUtf8 = Conn->AddPersistentUtf8(NameF);
-
-      tinit.msid = MsidUtf8->GetData();
-      tinit.trackId = TrackUtf8->GetData();
-      tinit.name = NameUtf8->GetData();
-      tinit.mid = NameUtf8->GetData();  // Reuse name as mid
-      tinit.profile = nullptr;
-
-      UE_LOG(LogTemp, Log, TEXT("Synavis: [RTC-SEQ] #%d About to call rtcAddTrackEx for handler %d on pc %d (conn=%d)"), ++GRtcSequenceCounter, HandlerCopy.HandlerID, Conn->PeerConnection, Conn->ConnectionID);
-      UE_LOG(LogTemp, Verbose, TEXT("Synavis: rtcTrackInit fields before rtcAddTrackEx: ssrc=%u msid=%s trackId=%s name=%s"), tinit.ssrc, ANSI_TO_TCHAR(tinit.msid ? tinit.msid : ""), ANSI_TO_TCHAR(tinit.trackId ? tinit.trackId : ""), ANSI_TO_TCHAR(tinit.name ? tinit.name : ""));
-      int trid = rtcAddTrackEx(Conn->PeerConnection, &tinit);
-      UE_LOG(LogTemp, Log, TEXT("Synavis: [RTC-SEQ] #%d rtcAddTrackEx returned %d for handler %d on pc %d"), GRtcSequenceCounter.load(), trid, HandlerCopy.HandlerID, Conn->PeerConnection);
-      if (trid > 0)
-      {
-        Conn->TracksByHandler.Add(HandlerCopy.HandlerID, trid);
-        // Also update the authoritative handler instance so handler-level lookups reflect the new per-connection mapping
-        FSynavisHandler* storedHandler = GetHandlerById(HandlerCopy.HandlerID);
-        if (storedHandler)
-        {
-          storedHandler->VideoTracksByConnection.Add(Conn->ConnectionID, trid);
-        }
-        UE_LOG(LogTemp, Log, TEXT("Synavis: Created send-only track %d for handler %d on pc %d"), trid, HandlerCopy.HandlerID, Conn->PeerConnection);
-
-        // NOTE: Local description will be generated when needed via signalling flow
-
-        char trDescBuf[2048] = {0};
-        int trDescLen = rtcGetTrackDescription(trid, trDescBuf, static_cast<int>(sizeof(trDescBuf)));
-        if (trDescLen > 0)
-        {
-          UE_LOG(LogTemp, Verbose, TEXT("Synavis: rtcGetTrackDescription returned %d for track %d immediately after creation:\n%s"), trDescLen, trid, ANSI_TO_TCHAR(trDescBuf));
-          // Parse the returned description once to extract the assigned SSRC
-          const char* key = "a=ssrc:";
-          const char* found = strstr(trDescBuf, key);
-          if (found)
-          {
-            const char* numstart = found + strlen(key);
-            char* endptr = nullptr;
-            unsigned long parsed = strtoul(numstart, &endptr, 10);
-            if (parsed > 0 && SendoffHandler)
-            {
-              SendoffHandler->RegisterTrackSsrc(trid, static_cast<uint32>(parsed));
-            }
-          }
-        }
-        else
-        {
-          UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcGetTrackDescription returned %d for track %d immediately after creation"), trDescLen, trid);
-        }
-        // Renegotiation will be triggered AFTER all tracks are added (see below)
-      }
-      else
-      {
-        UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcAddTrackEx failed for handler %d on pc %d (rc=%d)"), HandlerCopy.HandlerID, Conn->PeerConnection, trid);
-      }
-    }
-  }
-
-
-  // Create a per-connection data channel for control/messages using the C API
-  std::string channelName = std::string("synavis-data-") + std::to_string(PlayerID);
-  int dcid = rtcCreateDataChannel(Conn->PeerConnection, channelName.c_str());
-  if (dcid > 0)
-  {
-    // Record datachannel id on the shared connection object
-    Conn->DataChannel = dcid;
-    TSharedPtr<DataChannelCtx> sysCtx = MakeShared<DataChannelCtx>();
-    sysCtx->Streamer = this;
-    sysCtx->ConnectionID = PlayerID;
-    sysCtx->HandlerID = 0;
-    sysCtx->ConnRaw = Conn.Get();
-    rtcSetUserPointer(dcid, sysCtx.Get());
-    if (DataChannelContexts) DataChannelContexts->Add(dcid, sysCtx);
-    UE_LOG(LogTemp, Verbose, TEXT("Synavis: Allocated system DataChannelCtx %p for dc=%d (player=%d) [CreateConnectionForPlayer]"), sysCtx.Get(), dcid, PlayerID);
-    UE_LOG(LogTemp, Warning, TEXT("Synavis: Created system DC id=%d label='%s' userPtr=%p ctx=%p conn=%d"), dcid, *GetDataChannelLabelSafe(dcid), rtcGetUserPointer(dcid), sysCtx.Get(), PlayerID);
-    rtcSetMessageCallback(dcid, Synavis_Rtc_DataChannel_OnMessage);
-    rtcSetOpenCallback(dcid, Synavis_Rtc_DataChannel_OnOpen);
-    rtcSetClosedCallback(dcid, Synavis_Rtc_DataChannel_OnClosed);
-    rtcSetErrorCallback(dcid, Synavis_Rtc_DataChannel_OnError);
-  }
-
-  // Create per-handler dedicated datachannels for any registered handlers that requested them
-  for (const FSynavisHandler& HandlerCopy : RegisteredDataHandlers)
-  {
-    if (HandlerCopy.WantsDedicatedChannel && HandlerCopy.AcceptsInboundMessages)
-    {
-      std::string hname = std::string("synavis-handler-") + std::to_string(HandlerCopy.HandlerID) + std::string("-") + std::to_string(PlayerID);
-      int hdc = rtcCreateDataChannel(Conn->PeerConnection, hname.c_str());
-      if (hdc > 0)
-      {
-        TSharedPtr<DataChannelCtx> hctx = MakeShared<DataChannelCtx>();
-        hctx->Streamer = this;
-        hctx->ConnectionID = PlayerID;
-        hctx->HandlerID = HandlerCopy.HandlerID;
-        hctx->ConnRaw = Conn.Get();
-        rtcSetUserPointer(hdc, hctx.Get());
-        if (DataChannelContexts) DataChannelContexts->Add(hdc, hctx);
-        UE_LOG(LogTemp, Verbose, TEXT("Synavis: Allocated handler DataChannelCtx %p for dc=%d (handler=%u player=%d) [CreateConnectionForPlayer]"), hctx.Get(), hdc, HandlerCopy.HandlerID, PlayerID);
-        UE_LOG(LogTemp, Warning, TEXT("Synavis: Created handler DC id=%d label='%s' userPtr=%p ctx=%p conn=%d handler=%u"), hdc, *GetDataChannelLabelSafe(hdc), rtcGetUserPointer(hdc), hctx.Get(), PlayerID, HandlerCopy.HandlerID);
-        rtcSetMessageCallback(hdc, Synavis_Rtc_DataChannel_OnMessage);
-        rtcSetOpenCallback(hdc, Synavis_Rtc_DataChannel_OnOpen);
-        rtcSetClosedCallback(hdc, Synavis_Rtc_DataChannel_OnClosed);
-        rtcSetErrorCallback(hdc, Synavis_Rtc_DataChannel_OnError);
-        Conn->HandlersByChannel[hdc] = HandlerCopy.HandlerID;
-        UE_LOG(LogTemp, Log, TEXT("Synavis: Created per-handler datachannel %d for handler %u on pc %d"), hdc, HandlerCopy.HandlerID, Conn->PeerConnection);
-      }
-    }
-  }
-
   // Insert into connections map before starting ICE so callbacks can find it
   Connections.Add(PlayerID, Conn);
 
-  // Diagnostic report after creating the connection and tracks
-  RTCReport();
-
-  // Finally, start ICE gathering by requesting a local description via C API.
-  // Only do this if the streamer is configured to take the first step (offerer).
-  TSharedPtr<FSynavisConnection> StoredConn = Connections[PlayerID];
-  if (bTakeFirstStep)
-  {
-    if (StoredConn)
-    {
-      // Set state to SynavisConnecting to indicate we're initiating the connection
-      StoredConn->State = EPeerState::SynavisConnecting;
-      
-      // If negotiation is held globally, mark this connection as pending instead
-      // of creating the offer immediately. StartConnectionNegotiation() will
-      // trigger pending negotiations later.
-      if (bHoldNegotiation)
-      {
-        UE_LOG(LogTemp, Log, TEXT("Synavis: Holding negotiation for player %d until StartConnectionNegotiation()"), PlayerID);
-      }
-      else
-      {
-        UE_LOG(LogTemp, Log, TEXT("Synavis: Triggering renegotiation for player %d (pc=%d)"), PlayerID, StoredConn->PeerConnection);
-        // Centralized renegotiation will create the offer when appropriate
-        TriggerRenegotiationForConnection(StoredConn.Get());
-      }
-    }
-  }
-
   UE_LOG(LogTemp, Log, TEXT("Synavis: Created connection object for player %d (pc=%d dc=%d)"), PlayerID, StoredConn ? StoredConn->PeerConnection : 0, StoredConn ? StoredConn->DataChannel : 0);
+
+  // start the negotiation thread for this connection
+  AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this, PlayerID]() {
+    FSynavisConnection* ConnPtr = FindConnectionByPlayerID(PlayerID);
+    if (!ConnPtr)
+    {
+      UE_LOG(LogTemp, Warning, TEXT("Synavis: CreateConnectionForPlayer background task - connection for player %d not found"), PlayerID);
+      return;
+    }
+    // Start ICE negotiation for this connection
+    StartConnectionNegotiation(*ConnPtr);
+  });
 }
 
 void USynavisStreamer::RegisterRemoteCandidateForConnection(const FJsonObject& Content, FSynavisConnection& Conn)
@@ -3643,3 +3463,190 @@ bool USynavisStreamer::SendBinaryViaSystemChannel(const TArray<uint8>& Data)
   }
   return false;
 }
+
+void await_state(auto returns_true_if_met, double yield_time = 0.01)
+{
+  while (!returns_true_if_met())
+  {
+    FPlatformProcess::Sleep(yield_time);
+  }
+}
+
+#define AWAIT_STATE(condition) await_state([&]() noexcept { return (condition); })
+#define AWAIT_STATE_CAPTURE(condition, capture) await_state([capture]() noexcept { return (condition); })
+
+void USynavisStreamer::ConnectionNegotiationThread(TSharedPtr<FSynavisConnection> Connection)
+{
+  // flow:
+  // 1. initialize state and make sure we are at NoConnection
+  auto& ConnState = Connection->State;
+  auto ConnID = Connection->PeerConnection;
+  if (ConnID < 0)
+  {
+    // Create a PeerConnection via C API and register C callbacks
+    rtcConfiguration cfg{}; // default-initialized configuration
+    // Apply configurable max message size and MTU if provided in UPROPERTYs
+    if (this->MaxMessageSize > 0) cfg.maxMessageSize = this->MaxMessageSize;
+    if (this->Mtu > 0) cfg.mtu = this->Mtu;
+    UE_LOG(LogTemp, Verbose, TEXT("Synavis: Creating PeerConnection with cfg.maxMessageSize=%d cfg.mtu=%d"), cfg.maxMessageSize, cfg.mtu);
+    int pcid = rtcCreatePeerConnection(&cfg);
+    if (pcid <= 0)
+    {
+      UE_LOG(LogTemp, Error, TEXT("Synavis: rtcCreatePeerConnection failed (rc=%d) for player %d"), pcid, PlayerID);
+      return;
+    }
+    Conn->PeerConnection = pcid;
+
+    // Attach user pointer so callbacks can find this USynavisStreamer instance
+    rtcSetUserPointer(Conn->PeerConnection, this);
+    rtcSetLocalDescriptionCallback(Conn->PeerConnection, Synavis_Rtc_OnPcLocalDescription);
+    rtcSetLocalCandidateCallback(Conn->PeerConnection, Synavis_Rtc_OnPcLocalCandidate);
+    rtcSetGatheringStateChangeCallback(Conn->PeerConnection, Synavis_Rtc_OnPcGatheringStateChange);
+    rtcSetDataChannelCallback(Conn->PeerConnection, Synavis_Rtc_OnPcDataChannel);
+    rtcSetTrackCallback(Conn->PeerConnection, Synavis_Rtc_OnPcTrack);
+    rtcSetStateChangeCallback(Conn->PeerConnection, Synavis_Rtc_OnPcStateChange);
+    rtcSetIceStateChangeCallback(Conn->PeerConnection, Synavis_Rtc_OnPcIceStateChange);
+    // Notify on signaling state changes so we can apply queued remote answers
+    rtcSetSignalingStateChangeCallback(Conn->PeerConnection, Synavis_Rtc_OnPcSignalingStateChange);
+    // Media interceptor: allow passing opaque messages into libdatachannel's media pipeline
+  }
+
+  
+
+  // 2. all registrations of tracks and similar are done here, freezing a certain state of handlers
+  auto handlers = RegisteredDataHandlers; // copy to freeze state
+  
+  // Create outgoing send-only tracks for any registered handlers that have video sources.
+  for (const FSynavisHandler& HandlerCopy : RegisteredDataHandlers)
+  {
+    UE_LOG(LogTemp, Verbose, TEXT("Synavis: Checking handler %d for video track creation (video=%d)"), HandlerCopy.HandlerID, HandlerCopy.Video ? 1 : 0);
+    if (HandlerCopy.Video)
+    {
+      rtcTrackInit tinit{};
+      tinit.direction = RTC_DIRECTION_SENDONLY;
+      tinit.codec = RTC_CODEC_VP9;
+      tinit.payloadType = 96;
+      tinit.ssrc = GetNextSSRC();
+
+      FString MsidF = FString::Printf(TEXT("synavis-%d-%d"), HandlerCopy.HandlerID, Conn->ConnectionID);
+      FString TrackIdF = FString::Printf(TEXT("track-%u-%d"), HandlerCopy.HandlerID, Conn->ConnectionID);
+      FString NameF = TrackIdF;  // or customize, e.g., "video"
+
+      auto* MsidUtf8 = Conn->AddPersistentUtf8(MsidF);
+      auto* TrackUtf8 = Conn->AddPersistentUtf8(TrackIdF);
+      auto* NameUtf8 = Conn->AddPersistentUtf8(NameF);
+
+      tinit.msid = MsidUtf8->GetData();
+      tinit.trackId = TrackUtf8->GetData();
+      tinit.name = NameUtf8->GetData();
+      tinit.mid = NameUtf8->GetData();  // Reuse name as mid
+      tinit.profile = nullptr;
+
+      UE_LOG(LogTemp, Log, TEXT("Synavis: [RTC-SEQ] #%d About to call rtcAddTrackEx for handler %d on pc %d (conn=%d)"), ++GRtcSequenceCounter, HandlerCopy.HandlerID, Conn->PeerConnection, Conn->ConnectionID);
+      UE_LOG(LogTemp, Verbose, TEXT("Synavis: rtcTrackInit fields before rtcAddTrackEx: ssrc=%u msid=%s trackId=%s name=%s"), tinit.ssrc, ANSI_TO_TCHAR(tinit.msid ? tinit.msid : ""), ANSI_TO_TCHAR(tinit.trackId ? tinit.trackId : ""), ANSI_TO_TCHAR(tinit.name ? tinit.name : ""));
+      int trid = rtcAddTrackEx(Conn->PeerConnection, &tinit);
+      UE_LOG(LogTemp, Log, TEXT("Synavis: [RTC-SEQ] #%d rtcAddTrackEx returned %d for handler %d on pc %d"), GRtcSequenceCounter.load(), trid, HandlerCopy.HandlerID, Conn->PeerConnection);
+      if (trid > 0)
+      {
+        Conn->TracksByHandler.Add(HandlerCopy.HandlerID, trid);
+        // Also update the authoritative handler instance so handler-level lookups reflect the new per-connection mapping
+        FSynavisHandler* storedHandler = GetHandlerById(HandlerCopy.HandlerID);
+        if (storedHandler)
+        {
+          storedHandler->VideoTracksByConnection.Add(Conn->ConnectionID, trid);
+        }
+        UE_LOG(LogTemp, Log, TEXT("Synavis: Created send-only track %d for handler %d on pc %d"), trid, HandlerCopy.HandlerID, Conn->PeerConnection);
+
+        // NOTE: Local description will be generated when needed via signalling flow
+
+        char trDescBuf[2048] = {0};
+        int trDescLen = rtcGetTrackDescription(trid, trDescBuf, static_cast<int>(sizeof(trDescBuf)));
+        if (trDescLen > 0)
+        {
+          UE_LOG(LogTemp, Verbose, TEXT("Synavis: rtcGetTrackDescription returned %d for track %d immediately after creation:\n%s"), trDescLen, trid, ANSI_TO_TCHAR(trDescBuf));
+          // Parse the returned description once to extract the assigned SSRC
+          const char* key = "a=ssrc:";
+          const char* found = strstr(trDescBuf, key);
+          if (found)
+          {
+            const char* numstart = found + strlen(key);
+            char* endptr = nullptr;
+            unsigned long parsed = strtoul(numstart, &endptr, 10);
+            if (parsed > 0 && SendoffHandler)
+            {
+              SendoffHandler->RegisterTrackSsrc(trid, static_cast<uint32>(parsed));
+            }
+          }
+        }
+        else
+        {
+          UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcGetTrackDescription returned %d for track %d immediately after creation"), trDescLen, trid);
+        }
+        // Renegotiation will be triggered AFTER all tracks are added (see below)
+      }
+      else
+      {
+        UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcAddTrackEx failed for handler %d on pc %d (rc=%d)"), HandlerCopy.HandlerID, Conn->PeerConnection, trid);
+      }
+    }
+  }
+
+  
+
+  // Create a per-connection data channel for control/messages using the C API
+  std::string channelName = std::string("synavis-data-") + std::to_string(PlayerID);
+  int dcid = rtcCreateDataChannel(Conn->PeerConnection, channelName.c_str());
+  if (dcid > 0)
+  {
+    // Record datachannel id on the shared connection object
+    Conn->DataChannel = dcid;
+    TSharedPtr<DataChannelCtx> sysCtx = MakeShared<DataChannelCtx>();
+    sysCtx->Streamer = this;
+    sysCtx->ConnectionID = PlayerID;
+    sysCtx->HandlerID = 0;
+    sysCtx->ConnRaw = Conn.Get();
+    rtcSetUserPointer(dcid, sysCtx.Get());
+    if (DataChannelContexts) DataChannelContexts->Add(dcid, sysCtx);
+    UE_LOG(LogTemp, Verbose, TEXT("Synavis: Allocated system DataChannelCtx %p for dc=%d (player=%d) [CreateConnectionForPlayer]"), sysCtx.Get(), dcid, PlayerID);
+    UE_LOG(LogTemp, Warning, TEXT("Synavis: Created system DC id=%d label='%s' userPtr=%p ctx=%p conn=%d"), dcid, *GetDataChannelLabelSafe(dcid), rtcGetUserPointer(dcid), sysCtx.Get(), PlayerID);
+    rtcSetMessageCallback(dcid, Synavis_Rtc_DataChannel_OnMessage);
+    rtcSetOpenCallback(dcid, Synavis_Rtc_DataChannel_OnOpen);
+    rtcSetClosedCallback(dcid, Synavis_Rtc_DataChannel_OnClosed);
+    rtcSetErrorCallback(dcid, Synavis_Rtc_DataChannel_OnError);
+  }
+
+  // Create per-handler dedicated datachannels for any registered handlers that requested them
+  for (const FSynavisHandler& HandlerCopy : RegisteredDataHandlers)
+  {
+    if (HandlerCopy.WantsDedicatedChannel && HandlerCopy.AcceptsInboundMessages)
+    {
+      std::string hname = std::string("synavis-handler-") + std::to_string(HandlerCopy.HandlerID) + std::string("-") + std::to_string(PlayerID);
+      int hdc = rtcCreateDataChannel(Conn->PeerConnection, hname.c_str());
+      if (hdc > 0)
+      {
+        TSharedPtr<DataChannelCtx> hctx = MakeShared<DataChannelCtx>();
+        hctx->Streamer = this;
+        hctx->ConnectionID = PlayerID;
+        hctx->HandlerID = HandlerCopy.HandlerID;
+        hctx->ConnRaw = Conn.Get();
+        rtcSetUserPointer(hdc, hctx.Get());
+        if (DataChannelContexts) DataChannelContexts->Add(hdc, hctx);
+        UE_LOG(LogTemp, Verbose, TEXT("Synavis: Allocated handler DataChannelCtx %p for dc=%d (handler=%u player=%d) [CreateConnectionForPlayer]"), hctx.Get(), hdc, HandlerCopy.HandlerID, PlayerID);
+        UE_LOG(LogTemp, Warning, TEXT("Synavis: Created handler DC id=%d label='%s' userPtr=%p ctx=%p conn=%d handler=%u"), hdc, *GetDataChannelLabelSafe(hdc), rtcGetUserPointer(hdc), hctx.Get(), PlayerID, HandlerCopy.HandlerID);
+        rtcSetMessageCallback(hdc, Synavis_Rtc_DataChannel_OnMessage);
+        rtcSetOpenCallback(hdc, Synavis_Rtc_DataChannel_OnOpen);
+        rtcSetClosedCallback(hdc, Synavis_Rtc_DataChannel_OnClosed);
+        rtcSetErrorCallback(hdc, Synavis_Rtc_DataChannel_OnError);
+        Conn->HandlersByChannel[hdc] = HandlerCopy.HandlerID;
+        UE_LOG(LogTemp, Log, TEXT("Synavis: Created per-handler datachannel %d for handler %u on pc %d"), hdc, HandlerCopy.HandlerID, Conn->PeerConnection);
+      }
+    }
+  }
+
+  // call setLocalDescription for the connection
+  rtcSetLocalDescription(Connection->PeerConnection, "offer");
+
+  AWAIT_STATE_CAPTURE(c->SDP.Len() > 0, c=Connection.Get());
+
+}
+
