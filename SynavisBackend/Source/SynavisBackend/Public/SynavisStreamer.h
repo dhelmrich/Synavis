@@ -519,14 +519,6 @@ protected:
   // callback threads.
   mutable FCriticalSection DataChannelContextsMutex;
 
-  // Timer handle for delayed negotiation (Blueprint-controlled delay)
-  FTimerHandle NegotiationDelayTimerHandle;
-
-  // Pending remote answers queued per-peer-connection id. Protected by mutex
-  // because C API callbacks may arrive on arbitrary threads.
-  mutable FCriticalSection PendingAnswersMutex;
-  TMap<int32, TArray<FString>> PendingRemoteAnswers;
-
   // Note: per-connection mapping of datachannel -> handler is stored in
   // FSynavisConnection::HandlersByChannel. No global reverse map is kept.
 
