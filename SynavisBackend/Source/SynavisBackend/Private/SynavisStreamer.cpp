@@ -2727,6 +2727,7 @@ void await_state(auto returns_true_if_met, double yield_time = 0.01)
 
 #define AWAIT_STATE(condition) await_state([this,&]() noexcept { return (condition); })
 #define AWAIT_STATE_CAPTURE(condition, capture) await_state([capture]() noexcept { return (condition); })
+#define CONDITION_FCT(condition, short) auto short = [this,&]() noexcept { return (condition); };
 
 void USynavisStreamer::ConnectionNegotiationThread(TSharedPtr<FSynavisConnection> Connection)
 {
@@ -2922,9 +2923,9 @@ void USynavisStreamer::ConnectionNegotiationThread(TSharedPtr<FSynavisConnection
 
   // Wait for remote description to come in.
   // while not all channels and tracks are open, we could still be receiving remoteICE
-  while (Connection->DataChannel.state != ETransportState::OPEN || std::any_of(Connection->TracksByHandler.begin(), Connection->TracksByHandler.end(), [](const auto& pair) { return !rtcIsOpen(pair.Value); }))
+  while (!Connection->AllOpen())
   {
-    AWAIT_STATE(Connection->ICE.Num() > 0);
+    AWAIT_STATE(Connection->ICE.Num() > 0 || Connection->AllOpen());
     // if we have ICE candidates, add them to the connection
     while (!Connection->ICE.IsEmpty())
     {

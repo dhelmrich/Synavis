@@ -189,6 +189,18 @@ struct FSynavisConnection
   FSynavisConnection(FSynavisConnection&&) = default;
   FSynavisConnection& operator=(FSynavisConnection&&) = default;
 
+  bool AllOpen() const
+  {
+    if (DataChannel.state != ETransportState::OPEN)
+      return false;
+    for (const auto& [handler, track] : TracksByHandler)
+    {
+      if (track.state != ETransportState::OPEN)
+        return false;
+    }
+    return true;
+  }
+
   FString SDP;
   TQueue<FString> ICE;
 
