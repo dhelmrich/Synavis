@@ -1999,21 +1999,7 @@ bool USynavisStreamer::TryParseJSON(std::string message, FJsonObject& OutJsonObj
   return true;
 }
 
-void USynavisStreamer::CommunicateSDPs()
-{
-  // Communicate SDP for each active connection via signalling
-  if (SignallingId == 0 || !rtcIsOpen(SignallingId))
-  {
-    UE_LOG(LogTemp, Warning, TEXT("Synavis: Signalling websocket not open - cannot send local SDP"));
-    return;
-  }
 
-  for (const auto& Pair : Connections)
-  {
-    TSharedPtr<FSynavisConnection> C = Pair.Value;
-    if (C) CommunicateSDPForConnection(*C);
-  }
-}
 
 void USynavisStreamer::CommunicateSDPForConnection(const FSynavisConnection& Conn)
 {
@@ -2200,8 +2186,8 @@ void USynavisStreamer::HandleSignallingMessage(const std::variant<TArray<uint8>,
     {
       TargetPlayer = static_cast<int32>(Parsed.GetNumberField(TEXT("PlayerID")));
     }
-    if (Type.Equals(TEXT("answer"), ESearchCase::IgnoreCase) || Type.Equals(TEXT("offer"), ESearchCase::IgnoreCase))
-    //if (Type.Equals(TEXT("answer"), ESearchCase::IgnoreCase))
+    //if (Type.Equals(TEXT("answer"), ESearchCase::IgnoreCase) || Type.Equals(TEXT("offer"), ESearchCase::IgnoreCase))
+    if (Type.Equals(TEXT("answer"), ESearchCase::IgnoreCase))
     {
       if (TargetPlayer == -1)
       {
@@ -2238,8 +2224,9 @@ void USynavisStreamer::HandleSignallingMessage(const std::variant<TArray<uint8>,
       if(Conn->State < EPeerState::RemoteICE)
       {
         UE_LOG(LogTemp, Log, TEXT("Synavis: Received ICE candidate for player %d (pc=%d) before being ready to parse remote ICE; ignoring!!"), TargetPlayer, Conn->PeerConnection);
+        return;
       }
-      return;
+      Conn->ICE.Enqueue(Parsed);
     }
   }
   else
@@ -2336,7 +2323,7 @@ int USynavisStreamer::RegisterDataSource(
     default:
       break;
   }
-  
+
   return Handler.HandlerID;
 }
 
