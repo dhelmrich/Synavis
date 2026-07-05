@@ -570,7 +570,7 @@ void Synavis_Rtc_OnPcDataChannel(int pc, int dc, void* user_ptr)
     // Attach the per-datachannel context pointer for the C API callbacks
     // so callbacks can quickly find the authoritative context.
     rtcSetUserPointer(dc, ctx.Get());
-      UE_LOG(LogTemp, Warning, TEXT("[%0.6f] PcDataChannel: rtcSetUserPointer dc=%d newUser=%p ctx=%p streamer=%p"), FPlatformTime::Seconds(), dc, rtcGetUserPointer(dc), ctx.Get(), self);
+      UE_LOG(LogTemp, Warning, TEXT("PcDataChannel: rtcSetUserPointer dc=%d newUser=%p ctx=%p streamer=%p"), dc, rtcGetUserPointer(dc), ctx.Get(), self);
       // Log incoming datachannel label for diagnostics (uses C API)
       {
         char buf[256] = {0};
@@ -611,7 +611,7 @@ void Synavis_Rtc_DataChannel_OnOpen(int id, void* user_ptr)
     streamer = GGlobalStreamer;
   }
   if (!streamer) return;
-  UE_LOG(LogTemp, Warning, TEXT("[%0.6f] DC_OnOpen cthread dc=%d label='%s' userPtr=%p"), FPlatformTime::Seconds(), id, *GetDataChannelLabelSafe(id), rtcGetUserPointer(id));
+  UE_LOG(LogTemp, Warning, TEXT("DC_OnOpen cthread dc=%d label='%s' userPtr=%p"), id, *GetDataChannelLabelSafe(id), rtcGetUserPointer(id));
   AsyncTask(ENamedThreads::GameThread, [id]() {
     USynavisStreamer* streamerLocal = nullptr;
     {
@@ -621,7 +621,7 @@ void Synavis_Rtc_DataChannel_OnOpen(int id, void* user_ptr)
     if (!streamerLocal) return;
     TSharedPtr<DataChannelCtx> ctx = streamerLocal->GetDataChannelContext(id);
     DataChannelCtx* p = ctx.Get();
-    UE_LOG(LogTemp, Warning, TEXT("[%0.6f] DC_OnOpen game dc=%d label='%s' ctx=%p conn=%d handler=%u userPtr=%p"), FPlatformTime::Seconds(), id, *GetDataChannelLabelSafe(id), p, p ? p->ConnectionID : 0, p ? p->HandlerID : 0, rtcGetUserPointer(id));
+    UE_LOG(LogTemp, Warning, TEXT("DC_OnOpen game dc=%d label='%s' ctx=%p conn=%d handler=%u userPtr=%p"), id, *GetDataChannelLabelSafe(id), p, p ? p->ConnectionID : 0, p ? p->HandlerID : 0, rtcGetUserPointer(id));
     streamerLocal->HandleDataChannelOpenCallback(id);
   });
 }
@@ -634,7 +634,7 @@ void Synavis_Rtc_DataChannel_OnClosed(int id, void* user_ptr)
     streamer = GGlobalStreamer;
   }
   if (!streamer) return;
-  UE_LOG(LogTemp, Warning, TEXT("[%0.6f] DC_OnClosed cthread dc=%d userPtr=%p"), FPlatformTime::Seconds(), id, rtcGetUserPointer(id));
+  UE_LOG(LogTemp, Warning, TEXT("DC_OnClosed cthread dc=%d userPtr=%p"), id, rtcGetUserPointer(id));
   AsyncTask(ENamedThreads::GameThread, [id]() {
     USynavisStreamer* streamerLocal = nullptr;
     {
@@ -672,8 +672,8 @@ void Synavis_Rtc_DataChannel_OnClosed(int id, void* user_ptr)
     }
 
     // Log safely without dereferencing invalid pointers
-    UE_LOG(LogTemp, Warning, TEXT("[%0.6f] DC_OnClosed game dc=%d ctx=%p conn=%d handler=%u userPtr=%p"),
-      FPlatformTime::Seconds(), id, p, p ? p->ConnectionID : 0, p ? p->HandlerID : 0, uptr);
+    UE_LOG(LogTemp, Warning, TEXT("DC_OnClosed game dc=%d ctx=%p conn=%d handler=%u userPtr=%p"),
+      id, p, p ? p->ConnectionID : 0, p ? p->HandlerID : 0, uptr);
 
     streamerLocal->HandleDataChannelClosedCallback(id);
   });
@@ -682,7 +682,7 @@ void Synavis_Rtc_DataChannel_OnClosed(int id, void* user_ptr)
 void Synavis_Rtc_DataChannel_OnError(int id, const char* error, void* user_ptr)
 {
   USynavisStreamer* self = reinterpret_cast<USynavisStreamer*>(user_ptr);
-  UE_LOG(LogTemp, Warning, TEXT("[%0.6f] DC_OnError cthread dc=%d userPtr=%p err=%s"), FPlatformTime::Seconds(), id, rtcGetUserPointer(id), error ? ANSI_TO_TCHAR(error) : TEXT("<null}"));
+  UE_LOG(LogTemp, Warning, TEXT("DC_OnError cthread dc=%d userPtr=%p err=%s"), id, rtcGetUserPointer(id), error ? ANSI_TO_TCHAR(error) : TEXT("<null}"));
   if (!self) {
     // schedule fallback/diagnostic on game thread
     AsyncTask(ENamedThreads::GameThread, [self, id]() {
@@ -716,7 +716,7 @@ void Synavis_Rtc_DataChannel_OnError(int id, const char* error, void* user_ptr)
   uint32 SavedHandlerId = ctx->HandlerID;
   AsyncTask(ENamedThreads::GameThread, [selfLocal, id, s, CapturedConn, SavedConnId, SavedHandlerId]() {
     (void)CapturedConn; (void)SavedConnId; (void)SavedHandlerId;
-    UE_LOG(LogTemp, Warning, TEXT("[%0.6f] Synavis: DataChannel %d error (game): %s ctx=%p conn=%d handler=%u userPtr=%p"), FPlatformTime::Seconds(), id, ANSI_TO_TCHAR(s.c_str()), (void*)CapturedConn, SavedConnId, SavedHandlerId, rtcGetUserPointer(id));
+    UE_LOG(LogTemp, Warning, TEXT("Synavis: DataChannel %d error (game): %s ctx=%p conn=%d handler=%u userPtr=%p"), id, ANSI_TO_TCHAR(s.c_str()), (void*)CapturedConn, SavedConnId, SavedHandlerId, rtcGetUserPointer(id));
     UE_LOG(LogTemp, Error, TEXT("Synavis: DataChannel %d error: %s"), id, ANSI_TO_TCHAR(s.c_str()));
   });
 }
@@ -801,18 +801,18 @@ void Synavis_Rtc_DataChannel_OnMessage(int id, const char* data, int size, void*
   }
   if (!streamer)
   {
-    UE_LOG(LogTemp, Warning, TEXT("[%0.6f] DC_OnMessage cthread dc=%d label='%s' no global streamer userPtr=%p size=%d"), FPlatformTime::Seconds(), id, *GetDataChannelLabelSafe(id), rtcGetUserPointer(id), size);
+    UE_LOG(LogTemp, Warning, TEXT("DC_OnMessage cthread dc=%d label='%s' no global streamer userPtr=%p size=%d"), id, *GetDataChannelLabelSafe(id), rtcGetUserPointer(id), size);
     return;
   }
 
-  UE_LOG(LogTemp, Warning, TEXT("[%0.6f] DC_OnMessage cthread dc=%d label='%s' userPtr=%p size=%d"), FPlatformTime::Seconds(), id, *GetDataChannelLabelSafe(id), rtcGetUserPointer(id), size);
+  UE_LOG(LogTemp, Warning, TEXT("DC_OnMessage cthread dc=%d label='%s' userPtr=%p size=%d"), id, *GetDataChannelLabelSafe(id), rtcGetUserPointer(id), size);
   if (size < 0)
   {
     std::string s = data ? std::string(data) : std::string();
     AsyncTask(ENamedThreads::GameThread, [streamer, id, s]() {
       TSharedPtr<DataChannelCtx> ctx = streamer->GetDataChannelContext(id);
       DataChannelCtx* p = ctx.Get();
-      UE_LOG(LogTemp, Warning, TEXT("[%0.6f] DC_OnMessage game dc=%d label='%s' ctx=%p conn=%d handler=%u userPtr=%p len=%d isText=1"), FPlatformTime::Seconds(), id, *GetDataChannelLabelSafe(id), p, p ? p->ConnectionID : 0, p ? p->HandlerID : 0, rtcGetUserPointer(id), (int)s.size());
+      UE_LOG(LogTemp, Warning, TEXT("DC_OnMessage game dc=%d label='%s' ctx=%p conn=%d handler=%u userPtr=%p len=%d isText=1"), id, *GetDataChannelLabelSafe(id), p, p ? p->ConnectionID : 0, p ? p->HandlerID : 0, rtcGetUserPointer(id), (int)s.size());
       streamer->ResolveAndHandleDataChannelMessage(id, std::variant<TArray<uint8>, std::string>(s));
     });
   }
@@ -841,7 +841,7 @@ void Synavis_Rtc_DataChannel_OnMessage(int id, const char* data, int size, void*
       AsyncTask(ENamedThreads::GameThread, [streamer, id, s]() {
         TSharedPtr<DataChannelCtx> ctx = streamer->GetDataChannelContext(id);
         DataChannelCtx* p = ctx.Get();
-        UE_LOG(LogTemp, Warning, TEXT("[%0.6f] DC_OnMessage game dc=%d label='%s' ctx=%p conn=%d handler=%u userPtr=%p len=%d isText=1"), FPlatformTime::Seconds(), id, *GetDataChannelLabelSafe(id), p, p ? p->ConnectionID : 0, p ? p->HandlerID : 0, rtcGetUserPointer(id), (int)s.size());
+        UE_LOG(LogTemp, Warning, TEXT("DC_OnMessage game dc=%d label='%s' ctx=%p conn=%d handler=%u userPtr=%p len=%d isText=1"), id, *GetDataChannelLabelSafe(id), p, p ? p->ConnectionID : 0, p ? p->HandlerID : 0, rtcGetUserPointer(id), (int)s.size());
         streamer->ResolveAndHandleDataChannelMessage(id, std::variant<TArray<uint8>, std::string>(s));
       });
     }
@@ -856,7 +856,7 @@ void Synavis_Rtc_DataChannel_OnMessage(int id, const char* data, int size, void*
       AsyncTask(ENamedThreads::GameThread, [streamer, id, b]() mutable {
         TSharedPtr<DataChannelCtx> ctx = streamer->GetDataChannelContext(id);
         DataChannelCtx* p = ctx.Get();
-        UE_LOG(LogTemp, Warning, TEXT("[%0.6f] DC_OnMessage game dc=%d label='%s' ctx=%p conn=%d handler=%u userPtr=%p len=%d isText=0"), FPlatformTime::Seconds(), id, *GetDataChannelLabelSafe(id), p, p ? p->ConnectionID : 0, p ? p->HandlerID : 0, rtcGetUserPointer(id), b.Num());
+        UE_LOG(LogTemp, Warning, TEXT("DC_OnMessage game dc=%d label='%s' ctx=%p conn=%d handler=%u userPtr=%p len=%d isText=0"), id, *GetDataChannelLabelSafe(id), p, p ? p->ConnectionID : 0, p ? p->HandlerID : 0, rtcGetUserPointer(id), b.Num());
         streamer->ResolveAndHandleDataChannelMessage(id, std::variant<TArray<uint8>, std::string>(b));
       });
     }
@@ -929,7 +929,7 @@ void Synavis_Rtc_OnPcTrack(int pc, int tr, void* user_ptr)
 {
   USynavisStreamer* self = reinterpret_cast<USynavisStreamer*>(user_ptr);
   if (!self) return;
-  UE_LOG(LogTemp, Warning, TEXT("[%0.6f] Synavis: Dropping incoming track %d for PC %d (we generally do not expect incoming tracks)"), FPlatformTime::Seconds(), tr, pc);
+  UE_LOG(LogTemp, Warning, TEXT("Synavis: Dropping incoming track %d for PC %d (we generally do not expect incoming tracks)"), tr, pc);
 }
 
 void Synavis_Rtc_OnPcStateChange(int pc, rtcState state, void* user_ptr)
@@ -1207,8 +1207,8 @@ void USynavisStreamer::AddDataChannelContext(int32 DcId, TSharedPtr<DataChannelC
   if (DataChannelContexts) {
     FScopeLock lock(&DataChannelContextsMutex);
     DataChannelContexts->Add(DcId, Ctx);
-    UE_LOG(LogTemp, Warning, TEXT("[%0.6f] AddDC dc=%d ctx=%p conn=%d handler=%d canF=0x%016llx canB=0x%016llx userPtr=%p"),
-      FPlatformTime::Seconds(), DcId, Ctx.Get(), Ctx->ConnectionID, Ctx->HandlerID,
+    UE_LOG(LogTemp, Warning, TEXT("AddDC dc=%d ctx=%p conn=%d handler=%d canF=0x%016llx canB=0x%016llx userPtr=%p"),
+      DcId, Ctx.Get(), Ctx->ConnectionID, Ctx->HandlerID,
       (unsigned long long)Ctx->CANARY_FRONT, (unsigned long long)Ctx->CANARY_BACK,
       rtcGetUserPointer(DcId));
   }
@@ -1222,8 +1222,8 @@ void USynavisStreamer::RemoveDataChannelContext(int32 DcId)
     if (DataChannelContexts->Contains(DcId))
     {
       DataChannelContexts->Remove(DcId);
-      UE_LOG(LogTemp, Warning, TEXT("[%0.6f] RemoveDC dc=%d removed from central map remaining=%d userPtr=%p"),
-        FPlatformTime::Seconds(), DcId, DataChannelContexts->Num(), rtcGetUserPointer(DcId));
+      UE_LOG(LogTemp, Warning, TEXT("RemoveDC dc=%d removed from central map remaining=%d userPtr=%p"),
+        DcId, DataChannelContexts->Num(), rtcGetUserPointer(DcId));
     }
   }
 }
@@ -1445,7 +1445,7 @@ int USynavisStreamer::SetupDataChannel(const FSynavisHandler &Handler)
       ctx->HandlerID = Handler.HandlerID;
       ctx->ConnRaw = Conn.Get();
       rtcSetUserPointer(dcid, ctx.Get());
-      UE_LOG(LogTemp, Warning, TEXT("[%0.6f] SetupDataChannel: rtcSetUserPointer dc=%d newUser=%p ctx=%p conn=%d handler=%u"), FPlatformTime::Seconds(), dcid, rtcGetUserPointer(dcid), ctx.Get(), Conn->ConnectionID, Handler.HandlerID);
+      UE_LOG(LogTemp, Warning, TEXT("SetupDataChannel: rtcSetUserPointer dc=%d newUser=%p ctx=%p conn=%d handler=%u"), dcid, rtcGetUserPointer(dcid), ctx.Get(), Conn->ConnectionID, Handler.HandlerID);
       // Ownership: store in central container (we are on game thread)
       if (DataChannelContexts) DataChannelContexts->Add(dcid, ctx);
       UE_LOG(LogTemp, Verbose, TEXT("Synavis: Allocated DataChannelCtx %p for dc=%d (handler=%u player=%d) [SetupDataChannel]"), ctx.Get(), dcid, Handler.HandlerID, Conn->ConnectionID);
@@ -2509,7 +2509,7 @@ void USynavisStreamer::OnDataChannelMessage(const std::variant<TArray<uint8>, st
 
 void USynavisStreamer::HandlePcDataChannelCreated(int pc, int dc)
 {
-  UE_LOG(LogTemp, Warning, TEXT("[%0.6f] Synavis(member): PC %d created datachannel %d userPtr=%p"), FPlatformTime::Seconds(), pc, dc, rtcGetUserPointer(dc));
+  UE_LOG(LogTemp, Warning, TEXT("Synavis(member): PC %d created datachannel %d userPtr=%p"), pc, dc, rtcGetUserPointer(dc));
 
   // Find matching connection for this peer connection id
   for (auto& Pair : Connections)
@@ -2527,7 +2527,7 @@ void USynavisStreamer::HandlePcDataChannelCreated(int pc, int dc)
           TSharedPtr<DataChannelCtx> ctxptr = GetDataChannelContext(dc);
           if (ctxptr.IsValid()) {
             DataChannelCtx* ctx = ctxptr.Get();
-            UE_LOG(LogTemp, Warning, TEXT("[%0.6f] HandlePcDataChannelCreated: Found central ctx %p for dc=%d prior conn=%d prior handler=%u"), FPlatformTime::Seconds(), ctx, dc, ctx->ConnectionID, ctx->HandlerID);
+            UE_LOG(LogTemp, Warning, TEXT("HandlePcDataChannelCreated: Found central ctx %p for dc=%d prior conn=%d prior handler=%u"), ctx, dc, ctx->ConnectionID, ctx->HandlerID);
             ctx->ConnectionID = C->ConnectionID;
             ctx->HandlerID = 0;
             ctx->ConnRaw = C.Get();
@@ -2536,12 +2536,12 @@ void USynavisStreamer::HandlePcDataChannelCreated(int pc, int dc)
             void* uptr = rtcGetUserPointer(dc);
             if (uptr) {
               DataChannelCtx* ctx = reinterpret_cast<DataChannelCtx*>(uptr);
-              UE_LOG(LogTemp, Warning, TEXT("[%0.6f] HandlePcDataChannelCreated: Fallback userPtr=%p for dc=%d"), FPlatformTime::Seconds(), uptr, dc);
-              if (ctx && ctx->Streamer == this) { ctx->ConnectionID = C->ConnectionID; ctx->HandlerID = 0; ctx->ConnRaw = C.Get(); UE_LOG(LogTemp, Warning, TEXT("[%0.6f] HandlePcDataChannelCreated: Assigned fallback ctx %p -> conn=%d"), FPlatformTime::Seconds(), ctx, C->ConnectionID); }
+              UE_LOG(LogTemp, Warning, TEXT("HandlePcDataChannelCreated: Fallback userPtr=%p for dc=%d"), uptr, dc);
+              if (ctx && ctx->Streamer == this) { ctx->ConnectionID = C->ConnectionID; ctx->HandlerID = 0; ctx->ConnRaw = C.Get(); UE_LOG(LogTemp, Warning, TEXT("HandlePcDataChannelCreated: Assigned fallback ctx %p -> conn=%d"), ctx, C->ConnectionID); }
             }
           }
         }
-        UE_LOG(LogTemp, Warning, TEXT("[%0.6f] Synavis(member): Adopted incoming datachannel %d as system channel for conn %d"), FPlatformTime::Seconds(), dc, C->ConnectionID);
+        UE_LOG(LogTemp, Warning, TEXT("Synavis(member): Adopted incoming datachannel %d as system channel for conn %d"), dc, C->ConnectionID);
         RTCReport();
         return;
       }
@@ -2576,10 +2576,10 @@ void USynavisStreamer::HandlePcDataChannelCreated(int pc, int dc)
           AddDataChannelContext(dc, ctxptr);
           // attach raw ctx pointer to datachannel for C-level callbacks
           rtcSetUserPointer(dc, ctxptr.Get());
-          UE_LOG(LogTemp, Warning, TEXT("[%0.6f] HandlePcDataChannelCreated: Created central ctx %p for dc=%d assigning handler=%u"), FPlatformTime::Seconds(), ctxptr.Get(), dc, HandlerToAssign);
+          UE_LOG(LogTemp, Warning, TEXT("HandlePcDataChannelCreated: Created central ctx %p for dc=%d assigning handler=%u"), ctxptr.Get(), dc, HandlerToAssign);
         } else {
           DataChannelCtx* ctx = ctxptr.Get();
-          UE_LOG(LogTemp, Warning, TEXT("[%0.6f] HandlePcDataChannelCreated: Found central ctx %p for dc=%d assigning handler=%u"), FPlatformTime::Seconds(), ctx, dc, HandlerToAssign);
+          UE_LOG(LogTemp, Warning, TEXT("HandlePcDataChannelCreated: Found central ctx %p for dc=%d assigning handler=%u"), ctx, dc, HandlerToAssign);
           ctx->ConnectionID = C->ConnectionID;
           ctx->HandlerID = HandlerToAssign;
           ctx->ConnRaw = C.Get();
@@ -2587,7 +2587,7 @@ void USynavisStreamer::HandlePcDataChannelCreated(int pc, int dc)
           // ensure user pointer references the ctx for easier diagnostics
           rtcSetUserPointer(dc, ctx);
         }
-        UE_LOG(LogTemp, Warning, TEXT("[%0.6f] Synavis(member): Associated incoming datachannel %d label='%s' -> Handler %u (conn %d) by dedicated-channel heuristic"), FPlatformTime::Seconds(), dc, *GetDataChannelLabelSafe(dc), HandlerToAssign, C->ConnectionID);
+        UE_LOG(LogTemp, Warning, TEXT("Synavis(member): Associated incoming datachannel %d label='%s' -> Handler %u (conn %d) by dedicated-channel heuristic"), dc, *GetDataChannelLabelSafe(dc), HandlerToAssign, C->ConnectionID);
         RTCReport();
         return;
       }
