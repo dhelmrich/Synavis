@@ -1750,52 +1750,6 @@ void USynavisStreamer::HandlePcSignalingStateChangeCallback(int pc, int state)
   }
 }
 
-void USynavisStreamer::DrainPendingAnswersForPC(int pc)
-{
-  TArray<FString> Copy;
-  {
-    FScopeLock lock(&PendingAnswersMutex);
-    if (!PendingRemoteAnswers.Contains(pc)) return;
-    Copy = PendingRemoteAnswers[pc];
-  }
-
-  for (int i = 0; i < Copy.Num(); ++i)
-  {
-    const FString& Ans = Copy[i];
-    std::string sdp = TCHAR_TO_UTF8(*Ans);
-    int res = rtcSetRemoteDescription(pc, sdp.c_str(), "answer");
-    if (res == RTC_ERR_SUCCESS)
-    {
-      UE_LOG(LogTemp, Log, TEXT("Synavis: Applied queued remote answer for pc %d"), pc);
-      // Transition to ReceivedAnswer state
-      FSynavisConnection* Conn = GetConnectionFromPC(pc);
-      if (Conn) {
-        Conn->State = EPeerState::ReceivedAnswer;
-        UE_LOG(LogTemp, Log, TEXT("Synavis: Connection %d transitioned to ReceivedAnswer state"), Conn->ConnectionID);
-        
-        // CRITICAL: Log track association status after answer applied
-        UE_LOG(LogTemp, Log, TEXT("Synavis: Connection %d has %d tracks registered after answer"), 
-          Conn->ConnectionID, Conn->TracksByHandler.Num());
-        for (const auto& kv : Conn->TracksByHandler)
-        {
-          UE_LOG(LogTemp, Log, TEXT("Synavis:   Handler %d -> Track %d"), kv.Key, kv.Value);
-        }
-      }
-      // remove this entry from the queue
-      FScopeLock lock(&PendingAnswersMutex);
-      if (PendingRemoteAnswers.Contains(pc) && PendingRemoteAnswers[pc].Num() > 0)
-      {
-        PendingRemoteAnswers[pc].RemoveAt(0);
-      }
-    }
-    else
-    {
-      UE_LOG(LogTemp, Warning, TEXT("Synavis: Applying queued answer for pc %d failed (rc=%d); will retry later"), pc, res);
-      break;
-    }
-  }
-}
-
 
 void USynavisStreamer::HandleDataChannelMessageCallback(int dc, const std::variant<TArray<uint8>, std::string>& message)
 {
@@ -2389,7 +2343,10 @@ void USynavisStreamer::HandleSignallingMessage(const std::variant<TArray<uint8>,
         PlayerID = static_cast<int32>(CreateConnectionHandle());
         UE_LOG(LogTemp, Warning, TEXT("Synavis: playerConnected message missing playerId - generated id %d"), PlayerID);
       }
-      CreateConnectionForPlayer(PlayerID);
+      // start new async task non-game-thread to fully negotiate this connection
+      AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this, PlayerID]() {
+        this->ConnectionNegotiationThread(PlayerID);
+      });
       return;
     }
 
@@ -2403,8 +2360,8 @@ void USynavisStreamer::HandleSignallingMessage(const std::variant<TArray<uint8>,
     {
       TargetPlayer = static_cast<int32>(Parsed.GetNumberField(TEXT("PlayerID")));
     }
-    //if (Type.Equals(TEXT("answer"), ESearchCase::IgnoreCase) || Type.Equals(TEXT("offer"), ESearchCase::IgnoreCase))
-    if (Type.Equals(TEXT("answer"), ESearchCase::IgnoreCase))
+    if (Type.Equals(TEXT("answer"), ESearchCase::IgnoreCase) || Type.Equals(TEXT("offer"), ESearchCase::IgnoreCase))
+    //if (Type.Equals(TEXT("answer"), ESearchCase::IgnoreCase))
     {
       if (TargetPlayer == -1)
       {
@@ -2412,93 +2369,14 @@ void USynavisStreamer::HandleSignallingMessage(const std::variant<TArray<uint8>,
         return;
       }
       FSynavisConnection* Conn = FindConnectionByPlayerID(TargetPlayer);
-      if (!Conn || !Conn->PeerConnection)
+      if (!Conn)
       {
-        UE_LOG(LogTemp, Warning, TEXT("Synavis: Received SDP for unknown or invalid player %d"), TargetPlayer);
+        UE_LOG(LogTemp, Warning, TEXT("Synavis: Received SDP for unknown player %d"), TargetPlayer);
         return;
-      }
-
-      if (!Parsed.HasField(TEXT("sdp")))
-      {
-        UE_LOG(LogTemp, Warning, TEXT("Synavis: SDP message missing sdp field"));
-        return;
-      }
-      FString sdpf = Parsed.GetStringField(TEXT("sdp"));
-      if (Type.Equals(TEXT("answer"), ESearchCase::IgnoreCase))
-      {
-        // Munge incoming answer SDP with connection context for dynamic BUNDLE groups
-        FString munged = MungSDPForLibdatachannel(sdpf, Conn);
-        UE_LOG(LogTemp, Verbose, TEXT("Synavis: Munge incoming answer SDP for player %d orig_len=%d munged_len=%d"), TargetPlayer, sdpf.Len(), munged.Len());
-        sdpf = munged;
-      }
-      std::string sdp = TCHAR_TO_UTF8(*sdpf);
-      // Use C API to set remote description
-      int setRes = rtcSetRemoteDescription(Conn->PeerConnection, sdp.c_str(), TCHAR_TO_UTF8(*Type));
-      if (setRes != RTC_ERR_SUCCESS)
-      {
-        UE_LOG(LogTemp, Error, TEXT("Synavis: rtcSetRemoteDescription failed (rc=%d) for player %d. SDP type=%s length=%d"), setRes, TargetPlayer, *Type, sdpf.Len());
-
-        // Attempt to dump local description for additional context
-        char localBuf[8192] = {0};
-        int gotLocal = rtcGetLocalDescription(Conn->PeerConnection, localBuf, static_cast<int>(sizeof(localBuf)));
-        if (gotLocal > 0)
-        {
-          UE_LOG(LogTemp, Error, TEXT("Synavis: Current local SDP for pc %d (len=%d):\n%s"), Conn->PeerConnection, gotLocal, ANSI_TO_TCHAR(localBuf));
-        }
-        else
-        {
-          UE_LOG(LogTemp, Error, TEXT("Synavis: No local SDP available for pc %d (rtcGetLocalDescription rc=%d)"), Conn->PeerConnection, gotLocal);
-        }
       }
       else
       {
-        UE_LOG(LogTemp, Log, TEXT("Synavis: Set remote description for player %d"), TargetPlayer);
-        UE_LOG(LogTemp, Verbose, TEXT("Synavis: Remote SDP for player %d:\n%s"), TargetPlayer, *sdpf);
-        // Dump per-track descriptions after remote description set
-        for (const auto& kv : Conn->TracksByHandler)
-        {
-          int tr = kv.Value;
-          char trbuf[2048] = {0};
-          int trlen = rtcGetTrackDescription(tr, trbuf, static_cast<int>(sizeof(trbuf)));
-          if (trlen > 0)
-          {
-            UE_LOG(LogTemp, Verbose, TEXT("Synavis: Post-setRemote track %d description (len=%d):\n%s"), tr, trlen, ANSI_TO_TCHAR(trbuf));
-          }
-          else
-          {
-            UE_LOG(LogTemp, Warning, TEXT("Synavis: Post-setRemote rtcGetTrackDescription returned %d for track %d"), trlen, tr);
-          }
-        }
-      }
-      // If remote sent an offer, explicitly create an answer via the C API.
-      // Passing NULL lets libdatachannel pick a role which can lead to actpass/actpass
-      // if the far end also used NULL. Use explicit "answer" to avoid DTLS role ambiguity.
-      if (Type.Equals(TEXT("offer"), ESearchCase::IgnoreCase))
-      {
-        UE_LOG(LogTemp, Log, TEXT("Synavis: [RTC-SEQ] #%d About to call rtcSetLocalDescription (answer) for player %d (pc=%d)"), ++GRtcSequenceCounter, TargetPlayer, Conn->PeerConnection);
-        int localRes = rtcSetLocalDescription(Conn->PeerConnection, "answer");
-        if (localRes != RTC_ERR_SUCCESS)
-        {
-          UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcSetLocalDescription returned %d for player %d"), localRes, TargetPlayer);
-        }
-        else
-        {
-          UE_LOG(LogTemp, Log, TEXT("Synavis: [RTC-SEQ] #%d rtcSetLocalDescription (answer) succeeded for player %d (pc=%d)"), GRtcSequenceCounter.load(), TargetPlayer, Conn->PeerConnection);
-          for (const auto& kv : Conn->TracksByHandler)
-          {
-            int tr = kv.Value;
-            char trbuf[2048] = {0};
-            int trlen = rtcGetTrackDescription(tr, trbuf, static_cast<int>(sizeof(trbuf)));
-            if (trlen > 0)
-            {
-              UE_LOG(LogTemp, Verbose, TEXT("Synavis: After setLocal(answer) track %d description (len=%d):\n%s"), tr, trlen, ANSI_TO_TCHAR(trbuf));
-            }
-            else
-            {
-              UE_LOG(LogTemp, Warning, TEXT("Synavis: After setLocal(answer) rtcGetTrackDescription returned %d for track %d"), trlen, tr);
-            }
-          }
-        }
+        Conn->SDP = Parsed;
       }
 
       return;
@@ -2517,7 +2395,10 @@ void USynavisStreamer::HandleSignallingMessage(const std::variant<TArray<uint8>,
         UE_LOG(LogTemp, Warning, TEXT("Synavis: Received ICE for unknown player %d"), TargetPlayer);
         return;
       }
-      RegisterRemoteCandidateForConnection(Parsed, *Conn);
+      if(Conn->State < EPeerState::RemoteICE)
+      {
+        UE_LOG(LogTemp, Log, TEXT("Synavis: Received ICE candidate for player %d (pc=%d) before being ready to parse remote ICE; ignoring!!"), TargetPlayer, Conn->PeerConnection);
+      }
       return;
     }
   }
@@ -2525,34 +2406,6 @@ void USynavisStreamer::HandleSignallingMessage(const std::variant<TArray<uint8>,
   {
     // Binary signalling frames not expected in this use-case
     UE_LOG(LogTemp, Verbose, TEXT("Synavis: Received binary signalling frame (ignored)"));
-  }
-}
-
-void USynavisStreamer::RegisterRemoteCandidate(const FJsonObject& Content)
-{
-  // Route to the correct per-player connection if playerId is present; otherwise broadcast to all
-  int32 TargetPlayer = -1;
-  if (Content.HasField(TEXT("playerId"))) TargetPlayer = static_cast<int32>(Content.GetNumberField(TEXT("playerId")));
-  else if (Content.HasField(TEXT("PlayerID"))) TargetPlayer = static_cast<int32>(Content.GetNumberField(TEXT("PlayerID")));
-
-  if (TargetPlayer != -1)
-  {
-    FSynavisConnection* Conn = FindConnectionByPlayerID(TargetPlayer);
-    if (Conn != nullptr)
-    {
-      RegisterRemoteCandidateForConnection(Content, *Conn);
-      return;
-    }
-
-    UE_LOG(LogTemp, Warning, TEXT("Synavis: Received remote candidate for unknown player %d"), TargetPlayer);
-    return;
-  }
-
-  // No player specified: attempt to add to all connections
-  for (auto& Pair : Connections)
-  {
-    TSharedPtr<FSynavisConnection> C = Pair.Value;
-    if (C) RegisterRemoteCandidateForConnection(Content, *C);
   }
 }
 
@@ -3156,9 +3009,25 @@ void await_state(auto returns_true_if_met, double yield_time = 0.01)
 #define AWAIT_STATE(condition) await_state([this,&]() noexcept { return (condition); })
 #define AWAIT_STATE_CAPTURE(condition, capture) await_state([capture]() noexcept { return (condition); })
 
-void USynavisStreamer::ConnectionNegotiationThread(TSharedPtr<FSynavisConnection> Connection)
+void USynavisStreamer::ConnectionNegotiationThread(int playerId)
 {
   // flow:
+  int res = 0;
+  // first, create a connection object for this player if it doesn't exist yet
+  
+  TSharedPtr<FSynavisConnection>* Ptr = Connections.Find(PlayerID);
+  if (!Ptr)
+  {
+    TSharedPtr<FSynavisConnection> NewConn = MakeShared<FSynavisConnection>();
+    NewConn->ConnectionID = PlayerID;
+    NewConn->PeerConnection = -1; // not yet created
+    NewConn->State = EPeerState::NoConnection;
+    Connections.Add(PlayerID, NewConn);
+    Ptr = Connections.Find(PlayerID);
+  }
+  TSharedPtr<FSynavisConnection> Connection = *Ptr;
+
+
   // 1. initialize state and make sure we are at NoConnection
   auto& ConnState = Connection->State;
   auto ConnID = Connection->PeerConnection;
@@ -3328,66 +3197,59 @@ void USynavisStreamer::ConnectionNegotiationThread(TSharedPtr<FSynavisConnection
   ConnState = EPeerState::LocalDescription;
 
   // call setLocalDescription for the connection
-  rtcSetLocalDescription(Connection->PeerConnection, "offer");
+  res = rtcSetLocalDescription(Connection->PeerConnection, "offer");
 
   AWAIT_STATE_CAPTURE(c->SDP.Len() > 0, c=Connection.Get());
 
   // communicate local SDP
-
   this->CommunicateSDPForConnection(*Connection);
 
   ConnState = EPeerState::OfferSent;
   Connection->SDP.Reset();
 
+  AWAIT_STATE_CAPTURE(c->SDP.Len() > 0, c=Connection.Get());
+
+  // we have the remote SDP
+  res = rtcSetRemoteDescription(Connection->PeerConnection, TCHAR_TO_ANSI(*Connection->SDP));
+
+  UE_LOG(LogTemp, Log, TEXT("Synavis: rtcSetRemoteDescription returned %d for conn %d"), res, Connection->ConnectionID);
+  
+
   // Wait for remote description to come in.
-
-  FString candStr;
-  FString sdpMid; int32 sdpMLineIndex = -1;
-  const TSharedPtr<FJsonValue>* val = nullptr;
-  if (Content.HasField(TEXT("candidate")))
+  // while not all channels and tracks are open, we could still be receiving remoteICE
+  while (Connection->DataChannel.state != ETransportState::OPEN || std::any_of(Connection->TracksByHandler.begin(), Connection->TracksByHandler.end(), [](const auto& pair) { return !rtcIsOpen(pair.Value); }))
   {
-    const TSharedPtr<FJsonValue> CandidateVal = Content.TryGetField(TEXT("candidate"));
-    if (CandidateVal.IsValid() && CandidateVal->Type == EJson::Object)
+    AWAIT_STATE(Connection->ICE.Num() > 0);
+    // if we have ICE candidates, add them to the connection
+    while (!Connection->ICE.IsEmpty())
     {
-      TSharedPtr<FJsonObject> Inner = CandidateVal->AsObject();
-      if (Inner.IsValid() && Inner->HasField(TEXT("candidate")))
-        candStr = Inner->GetStringField(TEXT("candidate"));
-      if (Inner.IsValid() && Inner->HasField(TEXT("sdpMid")))
-        sdpMid = Inner->GetStringField(TEXT("sdpMid"));
-      if (Inner.IsValid() && Inner->HasField(TEXT("sdpMLineIndex")))
-        sdpMLineIndex = static_cast<int32>(Inner->GetNumberField(TEXT("sdpMLineIndex")));
+      FString IceCandidate;
+      if (Connection->ICE.Dequeue(IceCandidate))
+      {
+        UE_LOG(LogTemp, Verbose, TEXT("Synavis: Adding ICE candidate for conn %d: %s"), Connection->ConnectionID, *IceCandidate);
+        this->AddRemoteCandidateForConnection(*Connection, IceCandidate);
+      }
     }
-    else if (CandidateVal.IsValid() && CandidateVal->Type == EJson::String)
-    {
-      candStr = CandidateVal->AsString();
-    }
+
   }
 
-  if (Content.HasField(TEXT("sdpMid")) && sdpMid.IsEmpty())
-  {
-    sdpMid = Content.GetStringField(TEXT("sdpMid"));
-  }
-  if (Content.HasField(TEXT("sdpMLineIndex")) && sdpMLineIndex == -1)
-  {
-    sdpMLineIndex = static_cast<int32>(Content.GetNumberField(TEXT("sdpMLineIndex")));
-  }
+ // if we exited the above loop, we are open and can close this thread
+ ConnState = EPeerState::Connected;
+ 
+ return;
+}
 
-  if (candStr.IsEmpty())
+void USynavisStreamer::AddRemoteCandidateForConnection(FSynavisConnection& Conn, const FString& Candidate)
+{
+  if (Conn.PeerConnection <= 0)
   {
-    UE_LOG(LogTemp, Warning, TEXT("Synavis: Received iceCandidate message with no candidate field (conn %d)"), Conn.ConnectionID);
+    UE_LOG(LogTemp, Warning, TEXT("Synavis: Cannot add remote candidate for conn %d because PeerConnection is invalid"), Conn.ConnectionID);
     return;
   }
-
-  auto CandAnsi = StringCast<ANSICHAR>(*candStr);
-  //LogHex(CandAnsi.Get(), static_cast<size_t>(CandAnsi.Length()), TEXT("StringCast(candStr) bytes"));
+  
+  auto CandAnsi = StringCast<ANSICHAR>(*Candidate);
   std::string scand(CandAnsi.Get(), CandAnsi.Length());
-  //LogHex(scand.c_str(), scand.size(), TEXT("std::string(scand) bytes"));
-  auto SmidAnsi = StringCast<ANSICHAR>(*sdpMid);
-  //LogHex(SmidAnsi.Get(), static_cast<size_t>(SmidAnsi.Length()), TEXT("StringCast(sdpMid) bytes"));
-  std::string smid(SmidAnsi.Get(), SmidAnsi.Length());
-  //LogHex(smid.c_str(), smid.size(), TEXT("std::string(smid) bytes"));
-  // Use C API to add remote candidate
-  int addRes = rtcAddRemoteCandidate(Conn.PeerConnection, scand.c_str(), smid.c_str());
+  int addRes = rtcAddRemoteCandidate(Conn.PeerConnection, scand.c_str(), nullptr);
   if (addRes != RTC_ERR_SUCCESS)
   {
     UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcAddRemoteCandidate returned %d for conn %d"), addRes, Conn.ConnectionID);
@@ -3396,6 +3258,5 @@ void USynavisStreamer::ConnectionNegotiationThread(TSharedPtr<FSynavisConnection
   {
     UE_LOG(LogTemp, Log, TEXT("Synavis: Registered remote candidate for conn %d"), Conn.ConnectionID);
   }
-
-}
+} 
 
