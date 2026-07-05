@@ -2108,17 +2108,10 @@ void USynavisStreamer::CreateConnectionForPlayer(int32 PlayerID)
 
   UE_LOG(LogTemp, Log, TEXT("Synavis: Created connection object for player %d (pc=%d dc=%d)"), PlayerID, StoredConn ? StoredConn->PeerConnection : 0, StoredConn ? StoredConn->DataChannel : 0);
 
-  // start the negotiation thread for this connection
-  AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this, PlayerID]() {
-    FSynavisConnection* ConnPtr = FindConnectionByPlayerID(PlayerID);
-    if (!ConnPtr)
-    {
-      UE_LOG(LogTemp, Warning, TEXT("Synavis: CreateConnectionForPlayer background task - connection for player %d not found"), PlayerID);
-      return;
-    }
-    // Start ICE negotiation for this connection
-    StartConnectionNegotiation(*ConnPtr);
-  });
+  // new TFuture<void> for the negotiation thread, calling ConnectionNegotiationThread
+  Conn->NegotiationThread = MakeShared<TFuture<void>>(Async(EAsyncExecution::Thread, [this, Conn]() {
+    ConnectionNegotiationThread(Conn);
+  }));
 }
 
 void USynavisStreamer::HandleSignallingOpen()
@@ -2168,11 +2161,8 @@ void USynavisStreamer::HandleSignallingMessage(const std::variant<TArray<uint8>,
         PlayerID = static_cast<int32>(CreateConnectionHandle());
         UE_LOG(LogTemp, Warning, TEXT("Synavis: playerConnected message missing playerId - generated id %d"), PlayerID);
       }
-      // start new async task non-game-thread to fully negotiate this connection
-      AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this, PlayerID]() {
-        auto c = CreateConnectionForPlayer(PlayerID);
-        this->ConnectionNegotiationThread(c);
-      });
+
+      CreateConnectionForPlayer(PlayerID);
       return;
     }
 
@@ -2729,13 +2719,14 @@ void await_state(auto returns_true_if_met, double yield_time = 0.01)
 #define AWAIT_STATE_CAPTURE(condition, capture) await_state([capture]() noexcept { return (condition); })
 #define CONDITION_FCT(condition, short) auto short = [this,&]() noexcept { return (condition); };
 
-void USynavisStreamer::ConnectionNegotiationThread(TSharedPtr<FSynavisConnection> Connection)
+void USynavisStreamer::(TSharedPtr<FSynavisConnection> Connection)
 {
   // flow:
   int res = 0;
 
   // 1. initialize state and make sure we are at NoConnection
   auto& ConnState = Connection->State;
+  auto PlayerID = Connection->ConnectionID;
   auto ConnID = Connection->PeerConnection;
   if (ConnID < 0)
   {
@@ -2851,7 +2842,7 @@ void USynavisStreamer::ConnectionNegotiationThread(TSharedPtr<FSynavisConnection
   
 
   // Create a per-connection data channel for control/messages using the C API
-  std::string channelName = std::string("synavis-data-") + std::to_string(PlayerID);
+  std::string channelName = std::string("synavis-data-") + std::to_string(Connection->ConnectionID);
   int dcid = rtcCreateDataChannel(Connection->PeerConnection, channelName.c_str());
   if (dcid > 0)
   {

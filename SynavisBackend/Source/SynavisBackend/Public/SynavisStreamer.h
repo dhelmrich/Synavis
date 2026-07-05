@@ -189,7 +189,7 @@ struct FSynavisConnection
   FSynavisConnection(FSynavisConnection&&) = default;
   FSynavisConnection& operator=(FSynavisConnection&&) = default;
 
-  bool AllOpen() const
+  inline bool AllOpen() const
   {
     if (DataChannel.state != ETransportState::OPEN)
       return false;
@@ -204,9 +204,8 @@ struct FSynavisConnection
   FString SDP;
   TQueue<FString> ICE;
 
-
   // negotiation thread
-  TObjectPtr<FRunnableThread> NegotiationThread;
+  TFuture<void> NegotiationThread;
 
   // Helper in your Conn class header
   TArray<ANSICHAR>* AddPersistentUtf8(const FString& Str);
