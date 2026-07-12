@@ -69,6 +69,7 @@ enum class EPeerState : uint8
   OfferSent        UMETA(DisplayName = "Offer", ToolTip = "Sending local SDP offer to remote peer"),
   RemoteDescription UMETA(DisplayName = "Remote Description", ToolTip = "Receiving remote SDP and verifying its completeness"),
   ICEGathering      UMETA(DisplayName = "ICE Gathering", ToolTip = "Gathering ICE candidates for local SDP"),
+  ICEGathered       UMETA(DisplayName = "ICE Gathered", ToolTip = "Local ICE candidates gathered and ready to send"),
   RemoteICE UMETA(DisplayName = "Remote ICE", ToolTip = "Receiving remote ICE candidates and adding them to the PC"),
   Connected         UMETA(DisplayName = "Connected", ToolTip = "PeerConnection is fully established and ready to send/receive media"),
 };
