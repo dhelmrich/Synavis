@@ -542,16 +542,9 @@ void Synavis_Rtc_OnPcDataChannel(int pc, int dc, void* user_ptr)
     FScopeLock lock(&GGlobalStreamerMutex);
     self = GGlobalStreamer;
   }
-  rtcSetMessageCallback(dc, Synavis_Rtc_DataChannel_OnMessage);
-  rtcSetOpenCallback(dc, Synavis_Rtc_DataChannel_OnOpen);
-  rtcSetClosedCallback(dc, Synavis_Rtc_DataChannel_OnClosed);
-  rtcSetErrorCallback(dc, Synavis_Rtc_DataChannel_OnError);
-  // Attempt to associate incoming datachannel with a registered handler by inspecting its label.
-  AsyncTask(ENamedThreads::GameThread, [self, pc, dc]() {
-    // Forward to member handler which is allowed to access protected members
-    UE_LOG(LogTemp, Log, TEXT("Synavis: DataChannel %d label='%s' created for PC %d (forwarding to member handler)"), dc, *GetDataChannelLabelSafe(dc), pc);
-    self->HandlePcDataChannelCreated(pc, dc);
-  });
+  if (!self) return;
+  // We are not going to accept data channels from remote right now, so just log
+  UE_LOG(LogTemp, Warning, TEXT("Synavis: OnPcDataChannel pc=%d dc=%d - unexpected incoming data channel"), pc, dc);
 }
 
 // DataChannel callbacks used above
