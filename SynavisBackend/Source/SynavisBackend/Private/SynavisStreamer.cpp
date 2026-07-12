@@ -550,42 +550,10 @@ void Synavis_Rtc_OnPcSignalingStateChange(int pc, rtcSignalingState state, void*
 
 void Synavis_Rtc_OnPcDataChannel(int pc, int dc, void* user_ptr)
 {
-  USynavisStreamer* self = reinterpret_cast<USynavisStreamer*>(user_ptr);
-  if (!self) return;
-  // Configure per-datachannel callbacks and forward open/message events
-  // Ensure a per-datachannel context exists. rtcGetUserPointer may return
-  // a previously-set context (for locally-created channels). Only allocate
-  // when none exists.
-  void* existing = rtcGetUserPointer(dc);
-  if (!existing)
+  USynavisStreamer* self = nullptr;
   {
-    // Create a shared context and attach its raw pointer to the datachannel.
-    TSharedPtr<DataChannelCtx> ctx = MakeShared<DataChannelCtx>();
-    ctx->Streamer = self;
-    ctx->ConnectionID = 0;
-    ctx->HandlerID = 0;
-    ctx->PeerPC = pc;
-    // Attach the per-datachannel context pointer for the C API callbacks
-    // so callbacks can quickly find the authoritative context.
-    rtcSetUserPointer(dc, ctx.Get());
-      UE_LOG(LogTemp, Warning, TEXT("PcDataChannel: rtcSetUserPointer dc=%d newUser=%p ctx=%p streamer=%p"), dc, rtcGetUserPointer(dc), ctx.Get(), self);
-      // Log incoming datachannel label for diagnostics (uses C API)
-      {
-        char buf[256] = {0};
-        int got = rtcGetDataChannelLabel(dc, buf, static_cast<int>(sizeof(buf)));
-        if (got > 0 && buf[0]) {
-          UE_LOG(LogTemp, Verbose, TEXT("Synavis: Incoming DC %d label: %s"), dc, ANSI_TO_TCHAR(buf));
-        } else {
-          UE_LOG(LogTemp, Verbose, TEXT("Synavis: Incoming DC %d label: <null>"), dc);
-        }
-      }
-      existing = ctx.Get();
-      // Defer adding ownership to the streamer's central container onto the game thread
-      AsyncTask(ENamedThreads::GameThread, [self, dc, ctx]() {
-        if (self) {
-          self->AddDataChannelContext(dc, ctx);
-        }
-      });
+    FScopeLock lock(&GGlobalStreamerMutex);
+    self = GGlobalStreamer;
   }
   rtcSetMessageCallback(dc, Synavis_Rtc_DataChannel_OnMessage);
   rtcSetOpenCallback(dc, Synavis_Rtc_DataChannel_OnOpen);
