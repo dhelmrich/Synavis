@@ -539,16 +539,13 @@ void Synavis_Rtc_OnPcGatheringStateChange(int pc, rtcGatheringState state, void*
 
 void Synavis_Rtc_OnPcSignalingStateChange(int pc, rtcSignalingState state, void* user_ptr)
 {
+  UE_LOG(LogTemp, Verbose, TEXT("Synavis: OnPcSignalingStateChange pc=%d state=%d"), pc, static_cast<int>(state));
   USynavisStreamer* self = nullptr;
   {
     FScopeLock lock(&GGlobalStreamerMutex);
     self = GGlobalStreamer;
   }
   if (!self) return;
-  int istate = static_cast<int>(state);
-  AsyncTask(ENamedThreads::GameThread, [self, pc, istate]() {
-    self->HandlePcSignalingStateChangeCallback(pc, istate);
-  });
 }
 
 void Synavis_Rtc_OnPcDataChannel(int pc, int dc, void* user_ptr)
