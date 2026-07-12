@@ -1397,6 +1397,7 @@ int USynavisStreamer::SetupDataChannel(const FSynavisHandler &Handler)
     }
   }
 
+  
 
   return CreatedAny ? 0 : -1;
 }
@@ -2652,7 +2653,7 @@ void await_state(auto returns_true_if_met, double yield_time = 0.01)
 #define AWAIT_STATE_CAPTURE(condition, capture) await_state([capture]() noexcept { return (condition); })
 #define CONDITION_FCT(condition, short) auto short = [this,&]() noexcept { return (condition); };
 
-void USynavisStreamer::(TSharedPtr<FSynavisConnection> Connection)
+void USynavisStreamer::ConnectionNegotiationThread(TSharedPtr<FSynavisConnection> Connection)
 {
   // flow:
   int res = 0;
@@ -2677,8 +2678,8 @@ void USynavisStreamer::(TSharedPtr<FSynavisConnection> Connection)
     }
     Connection->PeerConnection = pcid;
 
-    // Attach user pointer so callbacks can find this USynavisStreamer instance
-    rtcSetUserPointer(Connection->PeerConnection, this);
+    // Attach user pointer so callbacks can find the FSynavisConnection instance
+    rtcSetUserPointer(Connection->PeerConnection, Connection.Get());
     rtcSetLocalDescriptionCallback(Connection->PeerConnection, Synavis_Rtc_OnPcLocalDescription);
     rtcSetLocalCandidateCallback(Connection->PeerConnection, Synavis_Rtc_OnPcLocalCandidate);
     rtcSetGatheringStateChangeCallback(Connection->PeerConnection, Synavis_Rtc_OnPcGatheringStateChange);
@@ -2729,6 +2730,7 @@ void USynavisStreamer::(TSharedPtr<FSynavisConnection> Connection)
       UE_LOG(LogTemp, Log, TEXT("Synavis: [RTC-SEQ] #%d rtcAddTrackEx returned %d for handler %d on pc %d"), GRtcSequenceCounter.load(), trid, HandlerCopy.HandlerID, Connection->PeerConnection);
       if (trid > 0)
       {
+        rtcSetUserPointer(trid, Conn.Get());
         Connection->TracksByHandler.Add(HandlerCopy.HandlerID, trid);
         // Also update the authoritative handler instance so handler-level lookups reflect the new per-connection mapping
         FSynavisHandler* storedHandler = GetHandlerById(HandlerCopy.HandlerID);
@@ -2829,7 +2831,18 @@ void USynavisStreamer::(TSharedPtr<FSynavisConnection> Connection)
   // call setLocalDescription for the connection
   res = rtcSetLocalDescription(Connection->PeerConnection, "offer");
 
-  AWAIT_STATE_CAPTURE(c->SDP.Len() > 0, c=Connection.Get());
+  // get local description, no need to wait
+
+  res = rtcGetLocalDescription(Connection->PeerConnection, Connection->SDP.GetData(), static_cast<int>(Connection->SDP.Num()));
+  if (res < 0)
+  {
+    UE_LOG(LogTemp, Error, TEXT("Synavis: rtcGetLocalDescription failed with %d for conn %d"), res, Connection->ConnectionID);
+    return;
+  }
+  else
+  {
+    UE_LOG(LogTemp, Log, TEXT("Synavis: rtcGetLocalDescription returned %d for conn %d (SDP length=%d)"), res, Connection->ConnectionID, Connection->SDP.Len());
+  }
 
   // communicate local SDP
   this->CommunicateSDPForConnection(*Connection);
@@ -2837,6 +2850,7 @@ void USynavisStreamer::(TSharedPtr<FSynavisConnection> Connection)
   ConnState = EPeerState::OfferSent;
   Connection->SDP.Reset();
 
+  // since this is a remote description, we do need to wait
   AWAIT_STATE_CAPTURE(c->SDP.Len() > 0, c=Connection.Get());
 
   // we have the remote SDP
