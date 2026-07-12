@@ -531,9 +531,10 @@ void Synavis_Rtc_OnPcGatheringStateChange(int pc, rtcGatheringState state, void*
   }
   if (!self) return;
   int istate = static_cast<int>(state);
-  AsyncTask(ENamedThreads::GameThread, [self, pc, istate]() {
-    self->HandlePcGatheringStateChangeCallback(pc, istate);
-  });
+  // pointer conversion
+  FSynavisConnection* Conn = reinterpret_cast<FSynavisConnection*>(user_ptr);
+  assert(Conn->State == EPeerState::ICEGathering);
+  Conn->State = (istate == RTC_GATHERING_COMPLETE) ? EPeerState::ICEGathered : EPeerState::ICEGathering;
 }
 
 void Synavis_Rtc_OnPcSignalingStateChange(int pc, rtcSignalingState state, void* user_ptr)
