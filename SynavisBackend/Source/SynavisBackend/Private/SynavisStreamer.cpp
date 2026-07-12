@@ -855,7 +855,11 @@ void USynavisStreamer::ResolveAndHandleDataChannelMessage(int dc, const std::var
 // Additional PeerConnection callbacks: track/state/ice state notifications
 void Synavis_Rtc_OnPcTrack(int pc, int tr, void* user_ptr)
 {
-  USynavisStreamer* self = reinterpret_cast<USynavisStreamer*>(user_ptr);
+  USynavisStreamer* self = nullptr;
+  {
+    FScopeLock lock(&GGlobalStreamerMutex);
+    self = GGlobalStreamer;
+  }
   if (!self) return;
   UE_LOG(LogTemp, Warning, TEXT("Synavis: Dropping incoming track %d for PC %d (we generally do not expect incoming tracks)"), tr, pc);
 }
