@@ -496,30 +496,17 @@ static FORCEINLINE bool __isValidContextWithDiagnostics(
 
 void Synavis_Rtc_OnPcLocalDescription(int pc, const char* sdp, const char* type, void* user_ptr)
 {
-  USynavisStreamer* self = nullptr;
-  {
-    FScopeLock lock(&GGlobalStreamerMutex);
-    self = GGlobalStreamer;
-  }
-  if (!self) return;
-  std::string s = sdp ? std::string(sdp) : std::string();
-  std::string t = type ? std::string(type) : std::string();
-  //AsyncTask(ENamedThreads::GameThread, [self, pc, s, t]() {
-  self->HandlePcLocalDescriptionCallback(pc, s.c_str(), t.c_str());
-  //});
+  // callback unnecessary
+  UE_LOG(LogTemp, Verbose, TEXT("Synavis: OnPcLocalDescription pc=%d type=%s sdp_len=%d"), pc, type ? ANSI_TO_TCHAR(type) : TEXT("<null>"), sdp ? static_cast<int32>(strlen(sdp)) : 0);
 }
 
 void Synavis_Rtc_OnPcLocalCandidate(int pc, const char* cand, const char* mid, void* user_ptr)
 {
-  USynavisStreamer* self = nullptr;
-  {
-    FScopeLock lock(&GGlobalStreamerMutex);
-    self = GGlobalStreamer;
-  }
-  if (!self) return;
-  //AsyncTask(ENamedThreads::GameThread, [self, pc, cand = cand ? std::string(cand) : std::string(), mid = mid ? std::string(mid) : std::string()]() {
-  self->AddIcetoPc(pc, cand);
-  //});
+  // This callback is asynchronous and depends on backends like libjuice
+  FSynavisConnection* Conn = reinterpret_cast<FSynavisConnection*>(user_ptr);
+  if (!Conn) return;
+  // Add ICE candidate to the connection's thread-safe queue
+  Conn->ICE.Enqueue(FString(UTF8_TO_TCHAR(cand)));
 }
 
 void Synavis_Rtc_OnPcGatheringStateChange(int pc, rtcGatheringState state, void* user_ptr)
@@ -875,20 +862,28 @@ void Synavis_Rtc_OnPcTrack(int pc, int tr, void* user_ptr)
 
 void Synavis_Rtc_OnPcStateChange(int pc, rtcState state, void* user_ptr)
 {
-  USynavisStreamer* self = reinterpret_cast<USynavisStreamer*>(user_ptr);
+  USynavisStreamer* self = nullptr;
+  {
+    FScopeLock lock(&GGlobalStreamerMutex);
+    self = GGlobalStreamer;
+  }
   if (!self) return;
-  AsyncTask(ENamedThreads::GameThread, [self, pc, state]() {
+  //AsyncTask(ENamedThreads::GameThread, [self, pc, state]() {
     UE_LOG(LogTemp, Verbose, TEXT("Synavis: PC %d state change %d"), pc, static_cast<int>(state));
-    });
+    //});
 }
 
 void Synavis_Rtc_OnPcIceStateChange(int pc, rtcIceState state, void* user_ptr)
 {
-  USynavisStreamer* self = reinterpret_cast<USynavisStreamer*>(user_ptr);
+  USynavisStreamer* self = nullptr;
+  {
+    FScopeLock lock(&GGlobalStreamerMutex);
+    self = GGlobalStreamer;
+  }
   if (!self) return;
-  AsyncTask(ENamedThreads::GameThread, [self, pc, state]() {
+  //AsyncTask(ENamedThreads::GameThread, [self, pc, state]() {
     UE_LOG(LogTemp, Verbose, TEXT("Synavis: PC %d ice state change %d"), pc, static_cast<int>(state));
-    });
+    //});
 }
 
 static const TMap<FString, TArray<TTuple<FString, FString, uint32>>> DataConnectionHeaderMap
