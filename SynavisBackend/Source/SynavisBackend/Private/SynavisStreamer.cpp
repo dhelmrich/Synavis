@@ -647,44 +647,19 @@ void Synavis_Rtc_DataChannel_OnClosed(int id, void* user_ptr)
 
 void Synavis_Rtc_DataChannel_OnError(int id, const char* error, void* user_ptr)
 {
-  USynavisStreamer* self = reinterpret_cast<USynavisStreamer*>(user_ptr);
-  UE_LOG(LogTemp, Warning, TEXT("DC_OnError cthread dc=%d userPtr=%p err=%s"), id, rtcGetUserPointer(id), error ? ANSI_TO_TCHAR(error) : TEXT("<null}"));
-  if (!self) {
-    // schedule fallback/diagnostic on game thread
-    AsyncTask(ENamedThreads::GameThread, [self, id]() {
-      if (self) self->HandleDataChannelClosedCallback(id);
-    });
-    return;
-  }
-
-  TSharedPtr<DataChannelCtx> ctxPtr = self->GetDataChannelContext(id);
-  DataChannelCtx* ctx = ctxPtr.Get();
+  DataChannelCtx* ctx = reinterpret_cast<DataChannelCtx*>(user_ptr);
   if (!__isValidContextWithDiagnostics(ctx, id, true)) {
-    // Best-effort: schedule a game-thread diagnostic log to try numeric fallback
-    AsyncTask(ENamedThreads::GameThread, [self, id]() {
-      FSynavisConnection* C = nullptr;
-      // final fallback on game thread will inspect rtcGetUserPointer if needed
-      if (self) self->HandleDataChannelClosedCallback(id);
-      if (C) {
-        UE_LOG(LogTemp, Warning, TEXT("DC %d: Error callback numeric fallback found conn %d"), id, C->ConnectionID);
-      } else {
-        UE_LOG(LogTemp, Warning, TEXT("DC %d: Error callback numeric fallback failed"), id);
-      }
-    });
+    UE_LOG(LogTemp, Warning, TEXT("DC_OnError cthread dc=%d userPtr=%p err=%s - invalid context"), id, rtcGetUserPointer(id), error ? ANSI_TO_TCHAR(error) : TEXT("<null}"));
     return;
   }
-
-  USynavisStreamer* selfLocal = ctx->Streamer;
+  USynavisStreamer* self = ctx->Streamer;
   std::string s = error ? std::string(error) : std::string();
-  // Capture weak + ids for diagnostics if needed on game thread
   FSynavisConnection* CapturedConn = ctx->ConnRaw;
   int32 SavedConnId = ctx->ConnectionID;
   uint32 SavedHandlerId = ctx->HandlerID;
-  AsyncTask(ENamedThreads::GameThread, [selfLocal, id, s, CapturedConn, SavedConnId, SavedHandlerId]() {
-    (void)CapturedConn; (void)SavedConnId; (void)SavedHandlerId;
-    UE_LOG(LogTemp, Warning, TEXT("Synavis: DataChannel %d error (game): %s ctx=%p conn=%d handler=%u userPtr=%p"), id, ANSI_TO_TCHAR(s.c_str()), (void*)CapturedConn, SavedConnId, SavedHandlerId, rtcGetUserPointer(id));
-    UE_LOG(LogTemp, Error, TEXT("Synavis: DataChannel %d error: %s"), id, ANSI_TO_TCHAR(s.c_str()));
-  });
+  //AsyncTask(ENamedThreads::GameThread, [self, id, s, CapturedConn, SavedConnId, SavedHandlerId]() {
+    UE_LOG(LogTemp, Warning, TEXT("Synavis: DataChannel %d error callback ctx=%p conn=%d handler=%u err=%s"), id, ctx, SavedConnId, SavedHandlerId, ANSI_TO_TCHAR(s.c_str()));
+  //});
 }
 
 // Track-level callbacks ----------------------------------------------------
