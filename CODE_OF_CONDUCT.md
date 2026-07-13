@@ -23,7 +23,7 @@ This project is open source, and we encourage contributions from individuals of 
 
 ## Relevance
 
-Contributions, both in terms of issues and discussions, are required to relay in some manner to the Synavis framework, synthetic data production, or related issues in visualization or machine learning. Content moderation is aligned with this principle.
+Contributions, whether in the form of issues or discussions, must relate to the Synavis framework, synthetic data production, or related topics in visualization and machine learning. Content moderation is guided by this principle.
 
 ## Ethical Science
 
