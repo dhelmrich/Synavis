@@ -21,6 +21,10 @@ Take active steps to ensure that your contributions and interactions promote div
 
 This project is open source, and we encourage contributions from individuals of all backgrounds. We are committed to creating a positive experience for everyone involved. If at some point in the future the open source nature of this project is endangered by external forces, such as copyright holders to currently open source code, we will switch to other codebases that allow us to maintain our open source commitment.
 
+## Relevance
+
+Contributions, both in terms of issues and discussions, are required to relay in some manner to the Synavis framework, synthetic data production, or related issues in visualization or machine learning. Content moderation is aligned with this principle.
+
 ## Ethical Science
 
 We are committed to conducting and promoting ethical scientific practices in all aspects of this project. This includes ensuring the accuracy and integrity of our work, respecting the rights and dignity of all individuals, and adhering to established ethical guidelines in research and development.
