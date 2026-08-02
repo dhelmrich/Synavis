@@ -17,6 +17,7 @@
 #include "Misc/ScopeLock.h"
 #include <memory>
 #include <string>
+#include "HAL/PlatformCrt.h"
 #include <span>
 #include "Async/Async.h"
 #include "SynavisStreamerRendering.h"
@@ -29,9 +30,6 @@ THIRD_PARTY_INCLUDES_START
 
 
 extern "C" {
-
-
-
 #include <libavcodec/avcodec.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/opt.h>
@@ -76,16 +74,14 @@ void USynavisStreamer::TeardownConnection(int32 PlayerID)
     // Close and delete the C API peer connection id
     rtcClosePeerConnection(Conn->PeerConnection);
     rtcDeletePeerConnection(Conn->PeerConnection);
-    // Close and delete the C API peer connection id
-    rtcClosePeerConnection(Conn->PeerConnection);
-    rtcDeletePeerConnection(Conn->PeerConnection);
     Conn->PeerConnection = 0;
   }
-  if (Conn->DataChannel)
+  if (Conn->DataChannel.ID)
   {
-    rtcClose(Conn->DataChannel);
-    rtcDeleteDataChannel(Conn->DataChannel);
-    Conn->DataChannel = 0;
+    rtcClose(Conn->DataChannel.ID);
+    rtcDeleteDataChannel(Conn->DataChannel.ID);
+    Conn->DataChannel.ID = 0;
+    Conn->DataChannel.state = ETransportState::SHUT;
   }
 
   // Close any per-handler datachannels and remove global mappings
@@ -102,40 +98,7 @@ void USynavisStreamer::TeardownConnection(int32 PlayerID)
   // Delete any created tracks for this connection
   for (auto& kv : Conn->TracksByHandler)
   {
-    int tr = kv.Value;
-    if (tr)
-    {
-      rtcDeleteTrack(tr);
-    }
-  }
-
-  // Finally remove from map; ConnShared keeps the object alive until function exit.
-  Connections.Remove(PlayerID);
-  UE_LOG(LogTemp, Log, TEXT("Synavis: Teardown complete for connection %d"), PlayerID);
-
-  // Close control/data channels
-  if (Conn->DataChannel)
-  {
-    rtcClose(Conn->DataChannel);
-    rtcDeleteDataChannel(Conn->DataChannel);
-    Conn->DataChannel = 0;
-  }
-
-  // Close any per-handler datachannels and remove global mappings
-  for (auto& kv : Conn->HandlersByChannel)
-  {
-    int dc = kv.Key;
-    if (dc)
-    {
-      rtcClose(dc);
-      rtcDeleteDataChannel(dc);
-    }
-  }
-
-  // Delete any created tracks for this connection
-  for (auto& kv : Conn->TracksByHandler)
-  {
-    int tr = kv.Value;
+    int tr = kv.Value.ID;
     if (tr)
     {
       rtcDeleteTrack(tr);
@@ -151,8 +114,6 @@ void USynavisStreamer::TeardownConnection(int32 PlayerID)
 
 
 // Use TArray<uint8> for binary payloads instead of rtc::binary to avoid C++ ABI crossing
-
-THIRD_PARTY_INCLUDES_END
 
 // Forward declarations for helper functions defined later in this file but used earlier.
 static uint32 CreatePawnHandle();
@@ -275,7 +236,7 @@ static FString MungSDPForLibdatachannel(const FString& RawSdp, FSynavisConnectio
     // Collect actual track mids from registered tracks
     for (const auto& kv : Conn->TracksByHandler)
     {
-      int32 TrackId = kv.Value;
+      int32 TrackId = kv.Value.ID;
       if (TrackId > 0)
       {
         // Construct mid from track id: track-<connid>-<trackid>
@@ -519,8 +480,8 @@ void Synavis_Rtc_OnPcGatheringStateChange(int pc, rtcGatheringState state, void*
   if (!self) return;
   int istate = static_cast<int>(state);
   // pointer conversion
-  FSynavisConnection* Conn = reinterpret_cast<FSynavisConnection*>(user_ptr);
-  assert(Conn->State == EPeerState::ICEGathering);
+FSynavisConnection* Conn = reinterpret_cast<FSynavisConnection*>(user_ptr);
+   check(Conn->State == EPeerState::ICEGathering);
   Conn->State = (istate == RTC_GATHERING_COMPLETE) ? EPeerState::ICEGathered : EPeerState::ICEGathering;
 }
 
@@ -657,17 +618,18 @@ void Synavis_Rtc_Track_OnOpen(int id, void* user_ptr)
       Conn->MaxMessageSize = static_cast<uint32>(maxMsg);
       UE_LOG(LogTemp, Verbose, TEXT("Synavis: Track_OnOpen id=%d conn=%d open=%d maxMsg=%d buffered=%d"), id, Conn->ConnectionID, open ? 1 : 0, maxMsg, buffered);
       
-      // Set the FTransportResource to Open
-      auto TrackIT = Conn->TracksByHandler.FilterByPredicate([id](auto a){
-        return a.ID == id;
-      }).begin();
-
-      if(TrackIT)
+      // Set the FTransportResource to Open - find by ID and update state
+      bool found = false;
+      for (auto& kv : Conn->TracksByHandler)
       {
-        // push the track to state==open
-        (*TrackIT).Value.state = ETransportState::OPEN;
+        if (kv.Value.ID == id)
+        {
+          kv.Value.state = ETransportState::OPEN;
+          found = true;
+          break;
+        }
       }
-      else
+      if (!found)
       {
         UE_LOG(LogTemp, Error, TEXT("Synavis: Unrecoverable error, did not find track %d reference in connection %d"), id, Conn->ConnectionID);
       }
@@ -820,7 +782,7 @@ void USynavisStreamer::ResolveAndHandleDataChannelMessage(int dc, const std::var
       foundInfo.HandlerID = *it;
       break;
     }
-    if (Conn->DataChannel == dc)
+    if (Conn->DataChannel.ID == dc)
     {
       foundInfo.RawConn = Conn.Get();
       foundInfo.ConnectionID = Conn->ConnectionID;
@@ -1021,7 +983,6 @@ void USynavisStreamer::BeginPlay()
       UE_LOG(LogTemp, Warning, TEXT("Synavis: Linked LibAVState to SendoffHandler %p -> LibAVState=%p"), SendoffHandler, LibAVState);
     }
   }
-
 }
 
 
@@ -1121,10 +1082,6 @@ void USynavisStreamer::TickComponent(float DeltaTime, ELevelTick TickType, FActo
       // If no pending work and queue empty, we're done for this tick
       if (PendingReadbacks.Num() == 0)
       {
-        {
-          FScopeLock lock(&GGlobalStreamerMutex);
-          if (GGlobalStreamer == this) GGlobalStreamer = nullptr;
-        }
         break;
       }
     }
@@ -1241,7 +1198,7 @@ void USynavisStreamer::RTCReport() const
     if (!C) continue;
     int32 Tracks = static_cast<int32>(C->TracksByHandler.Num());
     int32 Channels = static_cast<int32>(C->HandlersByChannel.Num());
-    UE_LOG(LogTemp, Log, TEXT("  Conn %d PC=%d DataChannel=%d tracks=%d channels=%d"), C->ConnectionID, C->PeerConnection, C->DataChannel, Tracks, Channels);
+    UE_LOG(LogTemp, Log, TEXT("  Conn %d PC=%d DataChannel=%d tracks=%d channels=%d"), C->ConnectionID, C->PeerConnection, C->DataChannel.ID, Tracks, Channels);
     // Detailed libdatachannel diagnostics for this PeerConnection
     if (C->PeerConnection != 0)
     {
@@ -1273,8 +1230,8 @@ void USynavisStreamer::RTCReport() const
     }
     for (const auto& kv : C->TracksByHandler)
     {
-      UE_LOG(LogTemp, Log, TEXT("    TracksByHandler: handler=%u -> track=%d"), kv.Key, kv.Value);
-      int tr = kv.Value;
+      UE_LOG(LogTemp, Log, TEXT("    TracksByHandler: handler=%u -> track=%d"), kv.Key, kv.Value.ID);
+      int tr = kv.Value.ID;
       if (tr != 0)
       {
         bool topen = rtcIsOpen(tr);
@@ -1353,54 +1310,6 @@ ESynavisState USynavisStreamer::GetConnectionState() const
   return this->ConnectionState;
 }
 
-int USynavisStreamer::SetupDataChannel(const FSynavisHandler &Handler)
-{
-  // If handler does not accept inbound messages, skip creating datachannels/reverse mappings
-  if (!Handler.AcceptsInboundMessages)
-  {
-    return -1;
-  }
-  bool CreatedAny = false;
-  // Create a dedicated data channel for the given handler on every active connection.
-  for (auto& Pair : Connections)
-  {
-    TSharedPtr<FSynavisConnection> Conn = Pair.Value;
-    if (!Conn) continue;
-    if (Conn->PeerConnection == 0) continue;
-
-    std::string channelName = std::string("synavis-handler-") + std::to_string(Handler.HandlerID) + std::string("-") + std::to_string(Conn->ConnectionID);
-    int dcid = rtcCreateDataChannel(Conn->PeerConnection, channelName.c_str());
-    if (dcid > 0)
-    {
-      TSharedPtr<DataChannelCtx> ctx = MakeShared<DataChannelCtx>();
-      ctx->Streamer = this;
-      ctx->ConnectionID = Conn->ConnectionID;
-      ctx->HandlerID = Handler.HandlerID;
-      ctx->ConnRaw = Conn.Get();
-      rtcSetUserPointer(dcid, ctx.Get());
-      UE_LOG(LogTemp, Warning, TEXT("SetupDataChannel: rtcSetUserPointer dc=%d newUser=%p ctx=%p conn=%d handler=%u"), dcid, rtcGetUserPointer(dcid), ctx.Get(), Conn->ConnectionID, Handler.HandlerID);
-      // Ownership: store in central container (we are on game thread)
-      if (DataChannelContexts) DataChannelContexts->Add(dcid, ctx);
-      UE_LOG(LogTemp, Verbose, TEXT("Synavis: Allocated DataChannelCtx %p for dc=%d (handler=%u player=%d) [SetupDataChannel]"), ctx.Get(), dcid, Handler.HandlerID, Conn->ConnectionID);
-      rtcSetMessageCallback(dcid, Synavis_Rtc_DataChannel_OnMessage);
-      rtcSetOpenCallback(dcid, Synavis_Rtc_DataChannel_OnOpen);
-      rtcSetClosedCallback(dcid, Synavis_Rtc_DataChannel_OnClosed);
-      rtcSetErrorCallback(dcid, Synavis_Rtc_DataChannel_OnError);
-      // record mapping so incoming messages can be dispatched to the handler
-      Conn->HandlersByChannel[dcid] = Handler.HandlerID;
-      CreatedAny = true;
-      UE_LOG(LogTemp, Verbose, TEXT("Synavis: Created data channel %d for handler %d on connection %d (PC %d)"), dcid, Handler.HandlerID, Conn->ConnectionID, Conn->PeerConnection);
-    }
-    else
-    {
-      UE_LOG(LogTemp, Warning, TEXT("Synavis: Failed to create data channel for handler %d on connection %d"), Handler.HandlerID, Conn->ConnectionID);
-    }
-  }
-
-  
-
-  return CreatedAny ? 0 : -1;
-}
 bool USynavisStreamer::AnyConnectionStreaming() const
 {
   for (const auto& Pair : Connections)
@@ -1428,15 +1337,12 @@ void USynavisStreamer::StartStreaming()
 
 void USynavisStreamer::StopStreaming()
 {
-  // Disable streaming on all connections and tear down encoder state.
+  // Disable streaming on all connections
   for (auto& Pair : Connections)
   {
     TSharedPtr<FSynavisConnection> C = Pair.Value;
     if (C) C->bStreaming = false;
   }
-
-
-
 }
 
 void USynavisStreamer::StopStreamingConnection(int32 ConnectionID)
@@ -1527,12 +1433,7 @@ void USynavisStreamer::HandlePcGatheringStateChangeCallback(int pc, int state)
 
 void USynavisStreamer::HandlePcSignalingStateChangeCallback(int pc, int state)
 {
-  // rtcSignalingState: 0=Stable, 1=HaveLocalOffer, 2=HaveRemoteOffer, 3=HaveLocalPranswer, 4=HaveRemotePranswer
-  // When we have a local offer or local pranswer, attempt to apply any queued remote answers.
-  if (state == 1 || state == 3)
-  {
-    DrainPendingAnswersForPC(pc);
-  }
+  UE_LOG(LogTemp, Log, TEXT("Synavis: PeerConnection %d signaling state changed to %d"), pc, state);
 }
 
 
@@ -1691,7 +1592,7 @@ void USynavisStreamer::HandleDataChannelMessageCallback(int dc, const std::varia
       for (const auto& kv : C->HandlersByChannel) {
         Mappings += FString::Printf(TEXT("dc=%d->h=%u "), kv.Key, kv.Value);
       }
-      UE_LOG(LogTemp, Verbose, TEXT("  Conn %d PC=%d DataChannel=%d Mappings=[%s]"), C->ConnectionID, C->PeerConnection, C->DataChannel, *Mappings);
+      UE_LOG(LogTemp, Verbose, TEXT("  Conn %d PC=%d DataChannel=%d Mappings=[%s]"), C->ConnectionID, C->PeerConnection, C->DataChannel.ID, *Mappings);
     }
     UE_LOG(LogTemp, Warning, TEXT("Synavis: Invoking generic handler as last resort for dc=%d"), dc);
     OnDataChannelMessage(message);
@@ -1723,6 +1624,22 @@ int32 USynavisStreamer::RegisterDataSourceCpp(const std::function<void(int32, co
   H.Video = SceneCapture;
   H.WantsDedicatedChannel = DedicatedChannel;
   RegisteredDataHandlers.Add(H);
+
+  bool anyNegotiating = false;
+  for (const auto& [connId, conn] : Connections)
+  {
+    if (conn->State != EPeerState::NoConnection)
+    {
+      anyNegotiating = true;
+      break;
+    }
+  }
+
+  if (anyNegotiating && AcceptsInboundMessages)
+  {
+    UE_LOG(LogTemp, Warning, TEXT("Synavis: RegisterDataSourceCpp registered but setup deferred - negotiation in progress (handler=%u)"), H.HandlerID);
+  }
+
   UE_LOG(LogTemp, Log, TEXT("Synavis: RegisterDataSourceCpp -> assigned handler id=%u (video=%d wantsDedicated=%d acceptsInbound=%d)"), H.HandlerID, H.Video ? 1 : 0, H.WantsDedicatedChannel ? 1 : 0, H.AcceptsInboundMessages ? 1 : 0);
   // Report RTC state after handler registration
   RTCReport();
@@ -1757,7 +1674,16 @@ void USynavisStreamer::UnregisterDataSource(int32 HandlerId)
   for (auto& Pair : Connections)
   {
     TSharedPtr<FSynavisConnection> C = Pair.Value;
-    (void)C;
+    // Remove all channel mappings that point to this HandlerId
+    TArray<int32> KeysToRemove;
+    for (const auto& kv : C->HandlersByChannel) {
+      if (kv.Value == HandlerId) KeysToRemove.Add(kv.Key);
+    }
+    for (int32 Key : KeysToRemove) {
+      C->HandlersByChannel.Remove(Key);
+    }
+    // Also remove from TracksByHandler
+    C->TracksByHandler.Remove(HandlerId);
   }
 }
 
@@ -1767,7 +1693,7 @@ bool USynavisStreamer::SendBinaryToConnection(int32 HandlerId, int32 ConnectionP
   bool Sent = false;
   FSynavisConnection* Conn = FindConnectionByPlayerID(ConnectionPlayerID);
   if (!Conn) return false;
-  auto dcid = Conn->DataChannel;
+  auto dcid = Conn->DataChannel.ID;
   if (dcid != 0 && rtcIsOpen(dcid))
   {
     int sendRes = rtcSendMessage(dcid, reinterpret_cast<const char*>(Data.GetData()), static_cast<int>(Data.Num()));
@@ -1820,13 +1746,13 @@ bool USynavisStreamer::SendTextToConnection(int32 HandlerId, int32 ConnectionPla
   // Fallback to the system datachannel
   if (chosenDc == 0)
   {
-    if (Conn->DataChannel != 0 && rtcIsOpen(Conn->DataChannel)) chosenDc = Conn->DataChannel;
+    if (Conn->DataChannel.ID != 0 && rtcIsOpen(Conn->DataChannel.ID)) chosenDc = Conn->DataChannel.ID;
   }
   if (chosenDc == 0)
   {
     // Diagnostic: log why we couldn't send, include call parameters and channel states
     UE_LOG(LogTemp, Warning, TEXT("Synavis: SendTextToConnection failed - no open datachannel (handler=%d conn=%d). TextPreview=%s"), HandlerId, ConnectionPlayerID, *Text.Left(200));
-    UE_LOG(LogTemp, Verbose, TEXT("  Conn->DataChannel = %d rtcIsOpen=%d"), Conn->DataChannel, Conn->DataChannel ? rtcIsOpen(Conn->DataChannel) : 0);
+    UE_LOG(LogTemp, Verbose, TEXT("  Conn->DataChannel = %d rtcIsOpen=%d"), Conn->DataChannel.ID, Conn->DataChannel.ID ? rtcIsOpen(Conn->DataChannel.ID) : 0);
     for (const auto& kv : Conn->HandlersByChannel)
     {
       UE_LOG(LogTemp, Verbose, TEXT("  handler-channel: dc=%d -> handler=%d rtcIsOpen=%d"), kv.Key, kv.Value, kv.Key ? rtcIsOpen(kv.Key) : 0);
@@ -1877,7 +1803,10 @@ void USynavisStreamer::HandleDataChannelOpenCallback(int dc)
     ConnShared->DataChannel.state = ETransportState::OPEN;
     UE_LOG(LogTemp, Log, TEXT("Synavis: DataChannel %d label='%s' opened for connection %d (max message size=%u) [resolved on game thread]"), dc, *GetDataChannelLabelSafe(dc), ConnShared->ConnectionID, ConnShared->MaxMessageSize);
   }
-  UE_LOG(LogTemp, Warning, TEXT("Synavis: DataChannel %d label='%s' opened but owning connection not found"), dc, *GetDataChannelLabelSafe(dc));
+  else
+  {
+    UE_LOG(LogTemp, Warning, TEXT("Synavis: DataChannel %d label='%s' opened but owning connection not found"), dc, *GetDataChannelLabelSafe(dc));
+  }
   //});
 }
 
@@ -1913,6 +1842,7 @@ void USynavisStreamer::HandleDataChannelClosedCallback(int dc)
     if (ConnShared)
     {
       ConnShared->State = EPeerState::NoConnection;
+      ConnShared->DataChannel.state = ETransportState::SHUT;
       UE_LOG(LogTemp, Log, TEXT("Synavis: DataChannel %d label='%s' closed for connection %d"), dc, *GetDataChannelLabelSafe(dc), ConnShared->ConnectionID);
       if (ConnShared->HandlersByChannel.Contains(dc)) ConnShared->HandlersByChannel.Remove(dc);
       return;
@@ -2040,12 +1970,12 @@ void USynavisStreamer::CreateConnectionForPlayer(int32 PlayerID)
   // Insert into connections map before starting ICE so callbacks can find it
   Connections.Add(PlayerID, Conn);
 
-  UE_LOG(LogTemp, Log, TEXT("Synavis: Created connection object for player %d (pc=%d dc=%d)"), PlayerID, StoredConn ? StoredConn->PeerConnection : 0, StoredConn ? StoredConn->DataChannel : 0);
+  UE_LOG(LogTemp, Log, TEXT("Synavis: Created connection object for player %d (pc=%d dc=%d)"), PlayerID, Conn->PeerConnection, Conn->DataChannel.ID);
 
-  // new TFuture<void> for the negotiation thread, calling ConnectionNegotiationThread
-  Conn->NegotiationThread = MakeShared<TFuture<void>>(Async(EAsyncExecution::Thread, [this, Conn]() {
+  // TFuture<void> for the negotiation thread, calling ConnectionNegotiationThread
+  Conn->NegotiationThread = Async(EAsyncExecution::Thread, [this, Conn]() {
     ConnectionNegotiationThread(Conn);
-  }));
+  });
 }
 
 void USynavisStreamer::HandleSignallingOpen()
@@ -2096,7 +2026,16 @@ void USynavisStreamer::HandleSignallingMessage(const std::variant<TArray<uint8>,
         UE_LOG(LogTemp, Warning, TEXT("Synavis: playerConnected message missing playerId - generated id %d"), PlayerID);
       }
 
-      CreateConnectionForPlayer(PlayerID);
+      if(this->bHoldNegotiation)
+      {
+        UE_LOG(LogTemp, Log, TEXT("Synavis: playerConnected message received for player %d but negotiation is on hold; deferring connection creation"), PlayerID);
+        this->PendingNegotiationPlayerIDs.Add(PlayerID);
+      }
+      else
+      {
+        UE_LOG(LogTemp, Log, TEXT("Synavis: playerConnected message received for player %d; creating connection"), PlayerID);
+        CreateConnectionForPlayer(PlayerID);
+      }
       return;
     }
 
@@ -2126,7 +2065,11 @@ void USynavisStreamer::HandleSignallingMessage(const std::variant<TArray<uint8>,
       }
       else
       {
-        Conn->SDP = Parsed;
+        // Store SDP as string - extract from JSON
+        if (Parsed.HasField(TEXT("sdp")))
+        {
+          Conn->SDP = Parsed.GetStringField(TEXT("sdp"));
+        }
       }
 
       return;
@@ -2150,7 +2093,12 @@ void USynavisStreamer::HandleSignallingMessage(const std::variant<TArray<uint8>,
         UE_LOG(LogTemp, Log, TEXT("Synavis: Received ICE candidate for player %d (pc=%d) before being ready to parse remote ICE; ignoring!!"), TargetPlayer, Conn->PeerConnection);
         return;
       }
-      Conn->ICE.Enqueue(Parsed);
+      // Extract ICE candidate as string
+      if (Parsed.HasField(TEXT("candidate")))
+      {
+        FString IceCandidate = Parsed.GetStringField(TEXT("candidate"));
+        Conn->ICE.Enqueue(IceCandidate);
+      }
     }
   }
   else
@@ -2224,26 +2172,27 @@ int USynavisStreamer::RegisterDataSource(
     case ESynavisSourcePolicy::RemainStatic:
       if (Handler.AcceptsInboundMessages && !IsInGame())
       {
-        this->SetupDataChannel(Handler);
-      }
-      break;
-    case ESynavisSourcePolicy::DynamicOptional:
-      if (Handler.AcceptsInboundMessages)
-        this->SetupDataChannel(Handler);
-      break;
-    case ESynavisSourcePolicy::DynamicMandatory:
-    {
-      if (Handler.AcceptsInboundMessages)
-      {
-        int Res = this->SetupDataChannel(Handler);
-        if (Res < 0)
+        bool anyNegotiating = false;
+        for (const auto& [connId, conn] : Connections)
         {
-          UE_LOG(LogTemp, Warning, TEXT("%s: Failed to setup data channel for dynamic mandatory source"), *LogPrefix);
+          if (conn->State != EPeerState::NoConnection)
+          {
+            anyNegotiating = true;
+            break;
+          }
+        }
+        
+        if (anyNegotiating)
+        {
+          UE_LOG(LogTemp, Warning, TEXT("%s: RegisterDataSource rejected - negotiation in progress for RemainStatic policy (handler=%u)"), *LogPrefix, Handler.HandlerID);
           return -1;
         }
       }
-    }
-    break;
+      break;
+    case ESynavisSourcePolicy::DynamicOptional:
+    case ESynavisSourcePolicy::DynamicMandatory:
+      // No immediate setup - handled in negotiation thread
+      break;
     default:
       break;
   }
@@ -2302,9 +2251,9 @@ void USynavisStreamer::CaptureFrame()
       if (!Conn) continue;
       if (!Conn->bStreaming) continue;
       auto it = Conn->TracksByHandler.Find(Handler.HandlerID);
-      if (it && *it != 0 && rtcIsOpen(*it))
+      if (it && it->ID != 0 && rtcIsOpen(it->ID))
       {
-        TracksToSend.Add(*it);
+        TracksToSend.Add(it->ID);
       }
     }
 
@@ -2442,9 +2391,10 @@ void USynavisStreamer::HandlePcDataChannelCreated(int pc, int dc)
     if (!C) continue;
     if (C->PeerConnection == pc)
     {
-      if (C->DataChannel == 0)
+      if (C->DataChannel.ID == 0)
       {
-        C->DataChannel = dc;
+        C->DataChannel.ID = dc;
+        C->DataChannel.state = ETransportState::INIT;
         C->HandlersByChannel[dc] = 0;
         // Prefer authoritative ctx from central map
         {
@@ -2662,7 +2612,8 @@ void USynavisStreamer::ConnectionNegotiationThread(TSharedPtr<FSynavisConnection
   auto& ConnState = Connection->State;
   auto PlayerID = Connection->ConnectionID;
   auto ConnID = Connection->PeerConnection;
-  if (ConnID < 0)
+  Connection->SDP.Reserve(10 * 1024); // preallocate 10k for SDP JSON
+  if (ConnID == 0)
   {
     // Create a PeerConnection via C API and register C callbacks
     rtcConfiguration cfg{}; // default-initialized configuration
@@ -2692,11 +2643,8 @@ void USynavisStreamer::ConnectionNegotiationThread(TSharedPtr<FSynavisConnection
     // Media interceptor: allow passing opaque messages into libdatachannel's media pipeline
   }
 
+  UE_LOG(LogTemp, Log, TEXT("Synavis: [NEGOTIATION-START] Connection %d entering SourceRegistration state"), PlayerID);
   ConnState = EPeerState::SourceRegistration;
-  
-
-  // 2. all registrations of tracks and similar are done here, freezing a certain state of handlers
-  auto handlers = RegisteredDataHandlers; // copy to freeze state
   
   // Create outgoing send-only tracks for any registered handlers that have video sources.
   for (const FSynavisHandler& HandlerCopy : RegisteredDataHandlers)
@@ -2730,8 +2678,8 @@ void USynavisStreamer::ConnectionNegotiationThread(TSharedPtr<FSynavisConnection
       UE_LOG(LogTemp, Log, TEXT("Synavis: [RTC-SEQ] #%d rtcAddTrackEx returned %d for handler %d on pc %d"), GRtcSequenceCounter.load(), trid, HandlerCopy.HandlerID, Connection->PeerConnection);
       if (trid > 0)
       {
-        rtcSetUserPointer(trid, Conn.Get());
-        Connection->TracksByHandler.Add(HandlerCopy.HandlerID, trid);
+        rtcSetUserPointer(trid, Connection.Get());
+        Connection->TracksByHandler.Add(HandlerCopy.HandlerID, FTransportResource{trid, ETransportState::INIT});
         // Also update the authoritative handler instance so handler-level lookups reflect the new per-connection mapping
         FSynavisHandler* storedHandler = GetHandlerById(HandlerCopy.HandlerID);
         if (storedHandler)
@@ -2739,6 +2687,7 @@ void USynavisStreamer::ConnectionNegotiationThread(TSharedPtr<FSynavisConnection
           storedHandler->VideoTracksByConnection.Add(Connection->ConnectionID, trid);
         }
         UE_LOG(LogTemp, Log, TEXT("Synavis: Created send-only track %d for handler %d on pc %d"), trid, HandlerCopy.HandlerID, Connection->PeerConnection);
+        UE_LOG(LogTemp, Log, TEXT("Synavis: [TRACK-CREATED] Handler %u -> Track %d on Connection %d (state=%s)"), HandlerCopy.HandlerID, trid, Connection->ConnectionID, *UEnum::GetValueAsString(ConnState));
 
         // NOTE: Local description will be generated when needed via signalling flow
 
@@ -2782,12 +2731,13 @@ void USynavisStreamer::ConnectionNegotiationThread(TSharedPtr<FSynavisConnection
   if (dcid > 0)
   {
     // Record datachannel id on the shared connection object
-    Connection->DataChannel = dcid;
+    Connection->DataChannel.ID = dcid;
+    Connection->DataChannel.state = ETransportState::INIT;
     TSharedPtr<DataChannelCtx> sysCtx = MakeShared<DataChannelCtx>();
     sysCtx->Streamer = this;
     sysCtx->ConnectionID = PlayerID;
     sysCtx->HandlerID = 0;
-    sysCtx->ConnRaw = Conn.Get();
+    sysCtx->ConnRaw = Connection.Get();
     rtcSetUserPointer(dcid, sysCtx.Get());
     if (DataChannelContexts) DataChannelContexts->Add(dcid, sysCtx);
     UE_LOG(LogTemp, Verbose, TEXT("Synavis: Allocated system DataChannelCtx %p for dc=%d (player=%d) [CreateConnectionForPlayer]"), sysCtx.Get(), dcid, PlayerID);
@@ -2821,40 +2771,44 @@ void USynavisStreamer::ConnectionNegotiationThread(TSharedPtr<FSynavisConnection
         rtcSetClosedCallback(hdc, Synavis_Rtc_DataChannel_OnClosed);
         rtcSetErrorCallback(hdc, Synavis_Rtc_DataChannel_OnError);
         Connection->HandlersByChannel[hdc] = HandlerCopy.HandlerID;
-        UE_LOG(LogTemp, Log, TEXT("Synavis: Created per-handler datachannel %d for handler %u on pc %d"), hdc, HandlerCopy.HandlerID, Conn->PeerConnection);
+        UE_LOG(LogTemp, Log, TEXT("Synavis: Created per-handler datachannel %d for handler %u on pc %d"), hdc, HandlerCopy.HandlerID, Connection->PeerConnection);
       }
     }
   }
 
   ConnState = EPeerState::LocalDescription;
+  UE_LOG(LogTemp, Log, TEXT("Synavis: [NEGOTIATION-LOCAL-DESC] Connection %d state=%s"), PlayerID, *UEnum::GetValueAsString(ConnState));
 
   // call setLocalDescription for the connection
   res = rtcSetLocalDescription(Connection->PeerConnection, "offer");
 
   // get local description, no need to wait
 
-  res = rtcGetLocalDescription(Connection->PeerConnection, Connection->SDP.GetData(), static_cast<int>(Connection->SDP.Num()));
-  if (res < 0)
+  const int BufSize = 65536;
+  std::vector<char> sdpBuf(BufSize);
+  int got = rtcGetLocalDescription(Connection->PeerConnection, sdpBuf.data(), BufSize);
+  if (got > 0)
   {
-    UE_LOG(LogTemp, Error, TEXT("Synavis: rtcGetLocalDescription failed with %d for conn %d"), res, Connection->ConnectionID);
-    return;
+    Connection->SDP = FString(UTF8_TO_TCHAR(sdpBuf.data()));
   }
   else
   {
-    UE_LOG(LogTemp, Log, TEXT("Synavis: rtcGetLocalDescription returned %d for conn %d (SDP length=%d)"), res, Connection->ConnectionID, Connection->SDP.Len());
+    UE_LOG(LogTemp, Error, TEXT("Synavis: rtcGetLocalDescription failed with %d for conn %d"), got, Connection->ConnectionID);
+    return;
   }
 
   // communicate local SDP
   this->CommunicateSDPForConnection(*Connection);
 
   ConnState = EPeerState::OfferSent;
+  UE_LOG(LogTemp, Log, TEXT("Synavis: [NEGOTIATION-SDP-SENT] Connection %d state=%s"), PlayerID, *UEnum::GetValueAsString(ConnState));
   Connection->SDP.Reset();
 
   // since this is a remote description, we do need to wait
   AWAIT_STATE_CAPTURE(c->SDP.Len() > 0, c=Connection.Get());
 
   // we have the remote SDP
-  res = rtcSetRemoteDescription(Connection->PeerConnection, TCHAR_TO_ANSI(*Connection->SDP));
+  res = rtcSetRemoteDescription(Connection->PeerConnection, TCHAR_TO_ANSI(*Connection->SDP), "answer");
 
   UE_LOG(LogTemp, Log, TEXT("Synavis: rtcSetRemoteDescription returned %d for conn %d"), res, Connection->ConnectionID);
   
@@ -2863,7 +2817,7 @@ void USynavisStreamer::ConnectionNegotiationThread(TSharedPtr<FSynavisConnection
   // while not all channels and tracks are open, we could still be receiving remoteICE
   while (!Connection->AllOpen())
   {
-    AWAIT_STATE(Connection->ICE.Num() > 0 || Connection->AllOpen());
+    AWAIT_STATE_CAPTURE(!c->ICE.IsEmpty() || c->AllOpen(), c=Connection.Get());
     // if we have ICE candidates, add them to the connection
     while (!Connection->ICE.IsEmpty())
     {
@@ -2877,10 +2831,23 @@ void USynavisStreamer::ConnectionNegotiationThread(TSharedPtr<FSynavisConnection
 
   }
 
- // if we exited the above loop, we are open and can close this thread
- ConnState = EPeerState::Connected;
+// if we exited the above loop, we are open and can close this thread
+  ConnState = EPeerState::Connected;
+  UE_LOG(LogTemp, Log, TEXT("Synavis: [NEGOTIATION-COMPLETE] Connection %d final state=%s"), PlayerID, *UEnum::GetValueAsString(ConnState));
  
  return;
+}
+
+void USynavisStreamer::StartConnectionNegotiation()
+{
+  if(PendingNegotiationPlayerIDs.Num() > 0)
+  {
+    for(auto PlayerID : PendingNegotiationPlayerIDs)
+    {
+      CreateConnectionForPlayer(PlayerID);
+    }
+  }
+  this->bHoldNegotiation = false;
 }
 
 void USynavisStreamer::AddRemoteCandidateForConnection(FSynavisConnection& Conn, const FString& Candidate)

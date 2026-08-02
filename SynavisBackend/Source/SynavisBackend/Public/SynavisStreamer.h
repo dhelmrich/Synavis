@@ -139,6 +139,9 @@ struct FSynavisHandler
   }
 };
 
+// Transport Resource:
+// Represents a single transport resource (data channel or media track) and its state.
+// Rationale: ID is -1 by default for invalid, state is NEED and goes through NEED -rtc register> INIT -synavis connection> OPEN -onClose> SHUT
 struct FTransportResource
 {
   int ID{-1};
@@ -200,6 +203,11 @@ struct FSynavisConnection
         return false;
     }
     return true;
+  }
+
+  inline bool IsInNegotiation() const
+  {
+    return State != EPeerState::NoConnection;
   }
 
   FString SDP;
@@ -330,6 +338,10 @@ public:
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Streaming|Signalling")
   float NegotiationDelaySeconds = 0.5f;
 
+  // Player IDs that were assigned and need to initiated via connection thread.
+  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Streaming|Signalling")
+  TArray<int32> PendingNegotiationPlayerIDs;
+
   UFUNCTION(BlueprintCallable, Category = "Streaming|Signalling")
   void StartSignalling();
 
@@ -341,14 +353,8 @@ public:
   // Implemented as a member so it can safely access protected connection maps.
   void HandlePcDataChannelCreated(int pc, int dc);
 
-  // Timer callback for delayed negotiation execution
-  UFUNCTION()
-  void ExecuteDelayedNegotiation();
-
   UFUNCTION(BlueprintCallable, Category = "Streaming|Connection")
   ESynavisState GetConnectionState() const;
-
-  int SetupDataChannel(const FSynavisHandler& Handler);
 
   uint64 UniqueIdenfifier()
   {
@@ -504,10 +510,6 @@ protected:
   // connections default to bStreaming=false and will be enabled by StartStreaming.
   bool AnyConnectionStreaming() const;
 
-  // Remote playerConnected state: only send local SDP after a playerConnected message
-  // with dataChannel=true and sfu=false is received from the signalling server.
-  bool bPlayerConnected = false;
-
   std::string WebSocketUri;
   // When using the C API wrapper of libdatachannel we store the created websocket id here.
   // Value 0 indicates no websocket has been created via the C API.
@@ -568,12 +570,11 @@ public:
   // to be called from editor/blueprint once handler registration is complete.
   UFUNCTION(BlueprintCallable, Category = "Streaming|Signalling")
   void StartConnectionNegotiation();
-  // Drain any pending remote answers for a given peer connection id
-  void DrainPendingAnswersForPC(int pc);
   // Send local SDP for a specific connection via the signalling websocket
   void CommunicateSDPForConnection(const FSynavisConnection& Conn);
   // Register remote ICE candidate for a given connection (content contains candidate obj)
   void RegisterRemoteCandidateForConnection(const FJsonObject& Content, FSynavisConnection& Conn);
+  void AddRemoteCandidateForConnection(FSynavisConnection& Conn, const FString& Candidate);
 
   // Stop streaming for a specific connection (marks connection not to receive video).
   UFUNCTION(BlueprintCallable, Category = "Streaming")
