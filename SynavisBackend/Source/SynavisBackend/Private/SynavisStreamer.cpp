@@ -480,9 +480,15 @@ void Synavis_Rtc_OnPcGatheringStateChange(int pc, rtcGatheringState state, void*
   if (!self) return;
   int istate = static_cast<int>(state);
   // pointer conversion
-FSynavisConnection* Conn = reinterpret_cast<FSynavisConnection*>(user_ptr);
-   check(Conn->State == EPeerState::ICEGathering);
-  Conn->State = (istate == RTC_GATHERING_COMPLETE) ? EPeerState::ICEGathered : EPeerState::ICEGathering;
+  FSynavisConnection* Conn = reinterpret_cast<FSynavisConnection*>(user_ptr);
+  if(Conn && Conn->State == EPeerState::ICEGathering)
+  {
+    Conn->State = (istate == RTC_GATHERING_COMPLETE) ? EPeerState::ICEGathered : EPeerState::ICEGathering;
+  }
+  else
+  {
+    UE_LOG(LogTemp, Warning, TEXT("Synavis: OnPcGatheringStateChange pc=%d state=%d but Conn->State=%d"), pc, istate, static_cast<int>(Conn->State));
+  }
 }
 
 void Synavis_Rtc_OnPcSignalingStateChange(int pc, rtcSignalingState state, void* user_ptr)
@@ -2770,7 +2776,7 @@ void USynavisStreamer::ConnectionNegotiationThread(TSharedPtr<FSynavisConnection
         rtcSetOpenCallback(hdc, Synavis_Rtc_DataChannel_OnOpen);
         rtcSetClosedCallback(hdc, Synavis_Rtc_DataChannel_OnClosed);
         rtcSetErrorCallback(hdc, Synavis_Rtc_DataChannel_OnError);
-        Connection->HandlersByChannel[hdc] = HandlerCopy.HandlerID;
+        Connection->HandlersByChannel.Add(hdc, HandlerCopy.HandlerID);
         UE_LOG(LogTemp, Log, TEXT("Synavis: Created per-handler datachannel %d for handler %u on pc %d"), hdc, HandlerCopy.HandlerID, Connection->PeerConnection);
       }
     }
