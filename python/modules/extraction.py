@@ -44,7 +44,7 @@ _plt_img = None
 from queue import Queue, Empty
 
 # queue for handing frames from worker thread to main thread for plotting
-frame_queue = Queue(maxsize=8)
+frame_queue = Queue(maxsize=800)
 
 message_buffer = []
 
