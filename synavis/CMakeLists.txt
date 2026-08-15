@@ -269,3 +269,4 @@ endif()
 generate_export_header(${projectname}
   EXPORT_FILE_NAME ${CMAKE_CURRENT_BINARY_DIR}/${projectname}/export.hpp
 )
+add_subdirectory(adios)
