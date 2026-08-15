@@ -259,6 +259,7 @@ def frame_callback(frame, info=None) :
 m = syn.MediaReceiver()
 f = syn.FrameDecode(syn.Codec.VP9)
 f.OutputMode = syn.OutputMode.PackedRGB
+f.SetAcceptOnlyKeyframes(True)
 
 m.Initialize()
 #Media.SetConfigFile("config.json")
