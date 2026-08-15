@@ -3,6 +3,9 @@ cmake_minimum_required(VERSION 3.12)
 project(${projectname})
 include(GenerateExportHeader)
 
+# Find ADIOS2 (from vcpkg or system)
+find_package(ADIOS2 REQUIRED)
+
 # Use GLOB to collect sources/headers (project convention)
 file(GLOB ADIOS_SOURCES "*.cpp")
 file(GLOB ADIOS_HEADERS "*.hpp")
