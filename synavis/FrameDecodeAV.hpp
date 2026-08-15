@@ -142,7 +142,17 @@ namespace Synavis
 
     void SetMaxFrameBuffer(uint32_t MaxFrames);
 
+    // If true, only keyframes (intra frames) are accepted/decoded; all
+    // inter-frames are dropped. This is useful when a late joiner or a
+    // recovered receiver only wants self-contained frames.
+    void SetAcceptOnlyKeyframes(bool b) { AcceptOnlyKeyframes = b; }
+    bool GetAcceptOnlyKeyframes() const { return AcceptOnlyKeyframes; }
+
     EOutputMode OutputMode{EOutputMode::Unchanged};
+
+    // If true, only keyframes (intra frames) are accepted/decoded; all
+    // inter-frames are dropped.
+    bool AcceptOnlyKeyframes{false};
 
   private:
 
@@ -158,6 +168,11 @@ namespace Synavis
     std::deque<uint32_t> currentlyCapturing;
 
     void AddPacket(const rtc::binary& Data);
+
+    // If AcceptOnlyKeyframes is enabled, decide from a frame's start packet
+    // whether it should be accepted. Returns true if the packet may be
+    // buffered, false if it (and its frame) must be dropped.
+    bool ShouldAcceptPacket(const rtc::RtpHeader* Header, const uint8_t* Body);
 
     // ffmpeg decoding context
     AVCodecContext* CodecContext;

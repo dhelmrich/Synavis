@@ -545,6 +545,8 @@ namespace Synavis
       })
       .def("SetFrameCallback", &FrameDecode::SetFrameCallback)
       .def("ParseDescription", &FrameDecode::ParseDescription, py::arg("desc"))
+      .def("SetAcceptOnlyKeyframes", &FrameDecode::SetAcceptOnlyKeyframes, py::arg("b"))
+      .def("GetAcceptOnlyKeyframes", &FrameDecode::GetAcceptOnlyKeyframes)
       .def_readwrite("OutputMode", &FrameDecode::OutputMode)
     ;
 #endif

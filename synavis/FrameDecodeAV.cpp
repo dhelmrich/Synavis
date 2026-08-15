@@ -498,6 +498,15 @@ namespace Synavis
         ldecoder(ELogVerbosity::Verbose) << "No payload packet" << std::endl;
         return false;
       }
+
+      // AcceptOnlyKeyframes gate: decide before the packet is buffered whether
+      // its frame may be accepted. Rejected frames are never added to the buffer.
+      if (!ShouldAcceptPacket(Header, body))
+      {
+        ldecoder(ELogVerbosity::Verbose) << "FrameDecode: packet rejected (AcceptOnlyKeyframes), ts=" << Header->timestamp() << std::endl;
+        return false;
+      }
+
       // add the packet to the buffer
       try {
         AddPacket(Data);
@@ -846,6 +855,45 @@ namespace Synavis
       frameBuffer[Header->timestamp()].push_back(Data); // copy!
     }
   lthread(ELogVerbosity::Verbose) << "Current frame buffer size: " << frameBuffer.size() << " entries" << std::endl;
+  }
+
+  bool FrameDecode::ShouldAcceptPacket(const rtc::RtpHeader* Header, const uint8_t* Body)
+  {
+    if (!AcceptOnlyKeyframes)
+    {
+      return true;
+    }
+
+    // VP9 payload descriptor: B bit (0x08) marks the start of a frame, I bit
+    // (0x40) marks an inter (delta) frame. A keyframe has B=1 and I=0.
+    const uint8_t desc = Body[0];
+    const bool is_start = (desc & 0x08) != 0;
+
+    if (is_start)
+    {
+      const bool inter = (desc & 0x40) != 0;
+      if (inter)
+      {
+        // Inter (delta) frame: reject its start packet so no buffer entry is
+        // created for this timestamp.
+        ldecoder(ELogVerbosity::Info) << "AcceptOnlyKeyframes: rejecting inter-frame ts=" << Header->timestamp() << std::endl;
+        return false;
+      }
+      // Keyframe start: accept.
+      ldecoder(ELogVerbosity::Debug) << "AcceptOnlyKeyframes: accepting keyframe ts=" << Header->timestamp() << std::endl;
+      return true;
+    }
+
+    // Continuation packet (no B bit). Buffer it only if the frame was already
+    // started (i.e. an accepted start packet created a buffer entry). If no
+    // entry exists, this is the tail of a rejected delta frame -> drop it.
+    const bool frameStarted = (frameBuffer.find(Header->timestamp()) != frameBuffer.end());
+    if (!frameStarted)
+    {
+      ldecoder(ELogVerbosity::Verbose) << "AcceptOnlyKeyframes: dropping continuation packet of rejected frame ts=" << Header->timestamp() << std::endl;
+      return false;
+    }
+    return true;
   }
 }
 
