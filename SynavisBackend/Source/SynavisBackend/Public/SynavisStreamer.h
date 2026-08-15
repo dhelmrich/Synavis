@@ -269,8 +269,9 @@ public:
   ESynavisTextureConversionMode TextureConversionMode = ESynavisTextureConversionMode::CPU;
 
     // Centralized non-blocking sendoff handler (encodes+packetizes+sends on workers)
-    UPROPERTY()
-    USynavisVp9SendoffHandler* SendoffHandler = nullptr;
+    
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Streaming")
+  USynavisVp9SendoffHandler* SendoffHandler = nullptr;
 
   // Resolve channel -> connection mapping on the game thread and dispatch message
   void ResolveAndHandleDataChannelMessage(int dc, const std::variant<TArray<uint8>, std::string>& message);
