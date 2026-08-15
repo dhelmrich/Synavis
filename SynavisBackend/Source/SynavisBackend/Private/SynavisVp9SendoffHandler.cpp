@@ -195,6 +195,12 @@ void USynavisVp9SendoffHandler::UnregisterTrack(int32 TrackId)
         UE_LOG(LogTemp, Verbose, TEXT("VP9 Sendoff: unregistered track %d"), TrackId);
 }
 
+void USynavisVp9SendoffHandler::RequestKeyframe()
+{
+        bForceKeyframe = true;
+        UE_LOG(LogTemp, Log, TEXT("VP9 Sendoff: keyframe requested; next frame will be forced intra"));
+}
+
 FLibAVEncoderState* USynavisVp9SendoffHandler::GetOrCreateLibAVEncoderState()
 {
   if (!InternalLibAVState)
@@ -552,8 +558,22 @@ void USynavisVp9SendoffHandler::EncodeAndSendYuv420Buffers(AVBufferRef* BufY, AV
         }
         bDumped.store(true);
     }
-
+    
     frame->pts = static_cast<int64_t>(++LibAVState->FrameCounter);
+
+    // Handle a pending keyframe request from the PLI callback: force this
+    // frame to be an intra (keyframe). The frame is reused across calls, so
+    // always reset the keyframe flag/pict_type to avoid leaking state into
+    // subsequent frames.
+    frame->flags &= ~AV_FRAME_FLAG_KEY;
+    frame->pict_type = AV_PICTURE_TYPE_NONE;
+    if (bForceKeyframe.Exchange(false))
+    {
+        frame->flags |= AV_FRAME_FLAG_KEY;
+        frame->pict_type = AV_PICTURE_TYPE_I; // optional compatibility hint
+        UE_LOG(LogTemp, Log, TEXT("ENC forced keyframe on pts=%lld"), (long long)frame->pts);
+    }
+
     UE_LOG(LogTemp, Verbose, TEXT("ENC send_frame pts=%lld fmt=%d w=%d h=%d"), (long long)frame->pts, frame->format, frame->width, frame->height);
     int ret = avcodec_send_frame(LibAVState->CodecCtx, frame);
     if (ret == AVERROR(EAGAIN)) { UE_LOG(LogTemp, Verbose, TEXT("ENC send_frame: EAGAIN, must drain packets")); av_frame_unref(frame); }
@@ -694,7 +714,7 @@ void USynavisVp9SendoffHandler::EnqueueReadbackNonBlocking(FRHIGPUTextureReadbac
             UE_LOG(LogTemp, Warning, TEXT("VP9 Enqueue: readback timeout or not ready Y=%d U=%d V=%d"), ReadbackY->IsReady(), ReadbackU->IsReady(), ReadbackV->IsReady());
             return;
         }
-
+        
         int YRowPitch = 0; void* YPtr = ReadbackY->Lock(YRowPitch);
         if (!YPtr) { UE_LOG(LogTemp, Warning, TEXT("VP9 Enqueue: Lock Y failed")); ReadbackY->Unlock(); ReadbackU->Unlock(); ReadbackV->Unlock(); return; }
         int URowPitch = 0; void* UPtr = ReadbackU->Lock(URowPitch);

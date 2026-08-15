@@ -107,6 +107,11 @@ public:
     // Unregister a track when it is torn down.
     void UnregisterTrack(int32 TrackId);
 
+    // Request that the next encoded frame be a keyframe (intra frame).
+    // Typically wired to the libdatachannel PLI callback so the sender responds
+    // to receiver keyframe requests. Thread-safe: callable from any thread.
+    void RequestKeyframe();
+
 private:
     int32 PayloadType = 96;
     uint32 SSRC = 12345678U;
@@ -122,6 +127,9 @@ private:
     class FVp9SendoffWorker* Worker = nullptr;
     class FRunnableThread* WorkerThread = nullptr;
     TAtomic<bool> bShouldExit{false};
+    // Set by RequestKeyframe() (from any thread) and consumed by the encoder on
+    // the next frame so the VP9 encoder emits a forced intra frame.
+    TAtomic<bool> bForceKeyframe{false};
     uint16 SequenceNumber = 0;
     uint8 PictureId = 0;
 

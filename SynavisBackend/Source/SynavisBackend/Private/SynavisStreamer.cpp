@@ -2720,6 +2720,23 @@ void USynavisStreamer::ConnectionNegotiationThread(TSharedPtr<FSynavisConnection
         {
           UE_LOG(LogTemp, Warning, TEXT("Synavis: rtcGetTrackDescription returned %d for track %d immediately after creation"), trDescLen, trid);
         }
+        if (SendoffHandler)
+        {
+          rtcChainPliHandler(trid, [](int tr, void* /*ptr*/) {
+            USynavisStreamer* self = nullptr;
+            {
+              FScopeLock lock(&GGlobalStreamerMutex);
+              self = GGlobalStreamer;
+            }
+            if (self && self->SendoffHandler)
+              self->SendoffHandler->RequestKeyframe();
+          });
+          UE_LOG(LogTemp, Log, TEXT("Synavis: chained PLI handler on track %d (handler=%p)"), trid, SendoffHandler);
+        }
+        else
+        {
+          UE_LOG(LogTemp, Warning, TEXT("Synavis: SendoffHandler not available, cannot chain PLI handler on track %d"), trid);
+        }
         // Renegotiation will be triggered AFTER all tracks are added (see below)
       }
       else
@@ -2837,7 +2854,7 @@ void USynavisStreamer::ConnectionNegotiationThread(TSharedPtr<FSynavisConnection
 
   }
 
-// if we exited the above loop, we are open and can close this thread
+  // if we exited the above loop, we are open and can close this thread
   ConnState = EPeerState::Connected;
   UE_LOG(LogTemp, Log, TEXT("Synavis: [NEGOTIATION-COMPLETE] Connection %d final state=%s"), PlayerID, *UEnum::GetValueAsString(ConnState));
  

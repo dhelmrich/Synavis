@@ -827,7 +827,7 @@ namespace Synavis
     if (frameBuffer.find(Header->timestamp()) == frameBuffer.end())
     {
       lthread(ELogVerbosity::Verbose) << "New timestamp " << Header->timestamp() << " - initializing buffer entry" << std::endl;
-      // checif the buffer is full
+      // if the buffer is full, remove the oldest frame to make room
       if (frameBuffer.size() >= MaxFrames)
       {
         lthread(ELogVerbosity::Verbose) << "Frame buffer full (size=" << frameBuffer.size() << "), removing oldest frame to make room for new timestamp " << Header->timestamp() << std::endl;
@@ -838,15 +838,12 @@ namespace Synavis
         // log to verbose
         ldecoder(ELogVerbosity::Verbose) << "Removed frame " << oldest << " from buffer" << std::endl;
       }
-      else
-      {
-        lthread(ELogVerbosity::Verbose) << "Frame buffer has space (size=" << frameBuffer.size() << "), adding new timestamp " << Header->timestamp() << std::endl;
-        // create a new frame entry and track its timestamp so we can remove oldest later
-        frameBuffer[Header->timestamp()] = std::vector<rtc::binary>();
-        currentlyCapturing.push_back(Header->timestamp());
-        // move the packet into the buffer
-        frameBuffer[Header->timestamp()].push_back(std::move(Data)); // move!
-      }
+      lthread(ELogVerbosity::Verbose) << "Frame buffer has space (size=" << frameBuffer.size() << "), adding new timestamp " << Header->timestamp() << std::endl;
+      // create a new frame entry and track its timestamp so we can remove oldest later
+      frameBuffer[Header->timestamp()] = std::vector<rtc::binary>();
+      currentlyCapturing.push_back(Header->timestamp());
+      // move the packet into the buffer
+      frameBuffer[Header->timestamp()].push_back(std::move(Data)); // move!
     }
     else
     {
