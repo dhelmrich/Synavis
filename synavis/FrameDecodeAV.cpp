@@ -557,11 +557,19 @@ namespace Synavis
             lthread(ELogVerbosity::Warning) << "InitializePacketFromData returned null for timestamp " << ts << " (incomplete frame or sequence error)" << std::endl;
             // Diagnostic: dump any buffered packets we have for this timestamp so
             // the sender/receiver header bytes can be compared when we bail.
-            if (frameBuffer.find(ts) != frameBuffer.end())
+            std::vector<rtc::binary> dumpBuf;
             {
-              auto &buf = frameBuffer[ts];
+              std::lock_guard<std::mutex> guard(FrameBufferMutex);
+              auto dit = frameBuffer.find(ts);
+              if (dit != frameBuffer.end())
+              {
+                dumpBuf = dit->second;
+              }
+            }
+            if (!dumpBuf.empty())
+            {
               int pktIdx = 0;
-              for (auto &pkt : buf)
+              for (auto &pkt : dumpBuf)
               {
                 const uint8_t* p = reinterpret_cast<const uint8_t*>(pkt.data());
                 size_t hdrBytes = std::min<size_t>(13, pkt.size());
@@ -597,18 +605,46 @@ namespace Synavis
           }
           else
           {
-            GotFrame = avcodec_receive_frame(CodecContext, Frame);
-            lffmpeg(ELogVerbosity::Debug) << "avcodec_receive_frame return: " << GotFrame << std::endl;
-            // frame decoded?
-            if (GotFrame >= 0)
+            // Drain all frames the decoder can emit for this packet in a single
+            // pass. The VP9 decoder is stateful: a keyframe may yield 0 frames
+            // (EAGAIN, still buffering) or several at once, so report the count
+            // per decode task to make that burstiness observable.
+            int FramesProduced = 0;
+            int GotFrame = 0;
+            while (true)
             {
+              GotFrame = avcodec_receive_frame(CodecContext, Frame);
+              lffmpeg(ELogVerbosity::Debug) << "avcodec_receive_frame return: " << GotFrame << std::endl;
+              // frame decoded?
+              if (GotFrame >= 0)
+              {
+                ++FramesProduced;
+              }
+              else
+              {
+                break;
+              }
               // create a frame content
               FrameContent Content;
               const int w = Frame->width;
               const int h = Frame->height;
               Content.Width = w;
               Content.Height = h;
+              // Use the frame's actual PTS (not the packet's RTP timestamp) as the
+              // content identity. Because the decoder is stateful, receive_frame may
+              // return a frame decoded from an earlier packet, so tagging it with the
+              // current packet's ts would label the content with the wrong time.
               Content.Timestamp = ts;
+              if (Frame->pts != AV_NOPTS_VALUE)
+              {
+                const AVRational& tb = CodecContext->time_base;
+                if (tb.num != 0 && tb.den != 0)
+                {
+                  // rescale codec PTS (time_base) to the 90 kHz RTP clock
+                  Content.Timestamp = static_cast<uint32_t>(
+                    av_rescale_q(Frame->pts, tb, AVRational{1, 90000}));
+                }
+              }
 
               // Prefer to export a tightly packed YUV420P buffer (WxH Y, WxH/4 U, WxH/4 V).
               // Use linesize to copy each source row because linesize may contain padding.
@@ -728,14 +764,23 @@ namespace Synavis
               {
                 FrameCallback.value()(Content);
               }
+              else
+              {
+                // EAGAIN means the decoder has no frame ready yet (still buffering);
+                // any other code is a genuine decode error worth logging.
+                if (GotFrame != AVERROR(EAGAIN))
+                {
+                  char Error[AV_ERROR_MAX_STRING_SIZE];
+                  av_strerror(GotFrame, Error, AV_ERROR_MAX_STRING_SIZE);
+                  lffmpeg(ELogVerbosity::Error) << "Error decoding frame (receive_frame returned " << GotFrame << "): " << Error << std::endl;
+                }
+                break;
+              }
             }
-            else
-            {
-              // get the error from the decoder (use GotFrame as code)
-              char Error[AV_ERROR_MAX_STRING_SIZE];
-              av_strerror(GotFrame, Error, AV_ERROR_MAX_STRING_SIZE);
-              lffmpeg(ELogVerbosity::Error) << "Error decoding frame (receive_frame returned " << GotFrame << "): " << Error << std::endl;
-            }
+            // Per-task summary: how many frames this decode task actually produced.
+            // 0 here for a complete keyframe means the decoder is still buffering
+            // (bursty), which is the pressure signal to watch.
+            lthread(ELogVerbosity::Info) << "Decoder produced " << FramesProduced << " frame(s) for ts=" << ts << std::endl;
           }
           // free the packet returned by depacketizer
           av_packet_free(&packet);
@@ -757,15 +802,24 @@ namespace Synavis
   {
     lthread(ELogVerbosity::Info) << "Initializing AVPacket from buffered data for index " << index << std::endl;
     Depacketizer->ResetPacket();
-    // to extract the VP9 package from multiple RTP packages, we need to sort them by sequence number
-    // return nullptr if the frameBuffer does not contain the index
-    if (frameBuffer.find(index) == frameBuffer.end())
+
+    // Copy the buffered packets out from under the lock. frameBuffer is mutated
+    // concurrently by the RTP receive thread (AddPacket), so we must not hold a
+    // reference into the map while iterating it (that would dangle on reallocation).
+    std::vector<rtc::binary> packets;
     {
-      lthread(ELogVerbosity::Debug) << "InitializePacketFromData: no frame for index " << index << std::endl;
-      return nullptr;
+      std::lock_guard<std::mutex> guard(FrameBufferMutex);
+      auto it = frameBuffer.find(index);
+      if (it == frameBuffer.end())
+      {
+        lthread(ELogVerbosity::Debug) << "InitializePacketFromData: no frame for index " << index << std::endl;
+        return nullptr;
+      }
+      lthread(ELogVerbosity::Debug) << "InitializePacketFromData: found frame for index " << index << " with " << it->second.size() << " packets" << std::endl;
+      packets = it->second; // copy under lock; iterate outside
     }
-    lthread(ELogVerbosity::Debug) << "InitializePacketFromData: found frame for index " << index << " with " << frameBuffer[index].size() << " packets" << std::endl;
-    auto& packets = frameBuffer[index];
+
+    // to extract the VP9 package from multiple RTP packages, we need to sort them by sequence number
     std::ranges::sort(packets, [](const rtc::binary& a, const rtc::binary& b)
     {
       return reinterpret_cast<const rtc::RtpHeader*>(a.data())->seqNumber()
@@ -822,6 +876,7 @@ namespace Synavis
     const rtc::RtpHeader* Header = reinterpret_cast<const rtc::RtpHeader*>(Data.data());
     const uint8_t* body = reinterpret_cast<const uint8_t*>(Header->getBody());
 
+    std::lock_guard<std::mutex> guard(FrameBufferMutex);
 
     // check if timestamp is already in the buffer
     if (frameBuffer.find(Header->timestamp()) == frameBuffer.end())
@@ -884,7 +939,10 @@ namespace Synavis
     // Continuation packet (no B bit). Buffer it only if the frame was already
     // started (i.e. an accepted start packet created a buffer entry). If no
     // entry exists, this is the tail of a rejected delta frame -> drop it.
-    const bool frameStarted = (frameBuffer.find(Header->timestamp()) != frameBuffer.end());
+    const bool frameStarted = [&]() {
+      std::lock_guard<std::mutex> guard(FrameBufferMutex);
+      return frameBuffer.find(Header->timestamp()) != frameBuffer.end();
+    }();
     if (!frameStarted)
     {
       ldecoder(ELogVerbosity::Verbose) << "AcceptOnlyKeyframes: dropping continuation packet of rejected frame ts=" << Header->timestamp() << std::endl;

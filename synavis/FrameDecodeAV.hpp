@@ -4,6 +4,7 @@
 #pragma once
 
 #include <json.hpp>
+#include <mutex>
 #include <span>
 #include <variant>
 #include <vector>
@@ -166,6 +167,11 @@ namespace Synavis
 
     std::map<uint32_t, std::vector<rtc::binary>> frameBuffer;
     std::deque<uint32_t> currentlyCapturing;
+    // Protects frameBuffer/currentlyCapturing. AddPacket runs on the RTP receive
+    // thread while the decode tasks run on DecoderThread (a separate WorkerThread),
+    // so every access to frameBuffer/currentlyCapturing must be serialized under
+    // this mutex (use std::lock_guard, never raw lock/unlock).
+    mutable std::mutex FrameBufferMutex;
 
     void AddPacket(const rtc::binary& Data);
 

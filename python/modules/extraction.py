@@ -368,9 +368,21 @@ for t in tests:
 # keep the script running and handle plotting from the main thread
 while True:
   try:
-    # process one frame for plotting if available
+    # process the newest frame for plotting if available.
+    # decode is bursty (some frames take longer than others), so frames can pile
+    # up faster than we render. Only render the newest; skip/drop any stale ones.
     try:
       rgb, ts = frame_queue.get(timeout=0.1)
+      # if a newer frame is already buffered, drop the stale one and take the newest
+      while True:
+        try:
+          rgb, ts = frame_queue.get_nowait()
+        except Empty:
+          break
+      if rgb is None:
+        time.sleep(0.01)
+        continue
+      pylog.log(f"Plotting frame with timestamp {ts} and shape {rgb.shape}")
       if _plt_fig is None:
         _plt_fig, _plt_ax = plt.subplots()
         _plt_img = _plt_ax.imshow(rgb)
