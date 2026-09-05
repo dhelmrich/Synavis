@@ -1,0 +1,130 @@
+// Copyright Synavis.
+//
+// LeafPROSPECTToSubstrate.ush
+//
+// Well-posed entry point that converts PROSPECT-class biological leaf
+// parameters into the physical inputs of an Unreal Substrate "Slab" BSDF.
+//
+// CONSUMER CONTRACT (how this is wired in a Material graph):
+//   * Add this file's virtual path to a Material Custom node's
+//     "Include File Paths" array:
+//         /Plugin/SynavisUE/Leaf/LeafPROSPECTToSubstrate.ush
+//   * Declare the Custom node Inputs (matching LeafProspectToSubstrate's
+//     parameters) and Additional Outputs (see below).
+//   * The Custom node's Code is a single call:
+//         return LeafProspectToSubstrate(Cab, Car, Cw, Cm, N, ThicknessMap,
+//                                         RoughnessMap, bIsGrassMode);
+//   * Wire the returned Substrate Slab inputs into a "Substrate Slab BSDF" node:
+//         DiffuseAlbedo      <- .DiffuseAlbedo   (float3)
+//         SSSMFP             <- .MFP_cm          (float3, centimeters)
+//         SSSMFPScale        <- .MFPScale        (float)
+//         SSSPhaseAnisotropy <- .PhaseAnisotropy (float)
+//         F0                 <- .F0              (float3)
+//         Roughness          <- .Roughness       (float)
+//   * Set the Slab's Sub-Surface Type to Simple Volume (Beer-Lambert fit) for
+//     most leaves, or Two-Sided Wrap for thin backlit grass blades.
+//
+// The output struct is the "well-posed" interface: it only exposes values that
+// map 1:1 to native Substrate slab inputs.
+//
+// References:
+//   Jacquemoud & Baret 1990 (PROSPECT plate model, N structure, IOR n ~ 1.45).
+//   Feret et al. 2008 (PROSPECT-5, Cab/Car separation, absorption spectra).
+//   Wang et al. 2005 (LEAFMOD slab BRDF/BTDF; thickness-independent rho_d;
+//     MFP from total extinction sigma_t = sigma_a + sigma_s).
+
+#pragma once
+
+#include "/Plugin/SynavisUE/Leaf/LeafPROSPECTCommon.ush"
+#include "/Plugin/SynavisUE/Leaf/LeafLEAFMODParameters.ush"
+
+// ----------------------------------------------------------------------------
+// Output: the Substrate slab parameterization produced from leaf biology.
+// Field names intentionally mirror the Substrate Slab BSDF pins so a Custom
+// node can be wired directly.
+// ----------------------------------------------------------------------------
+struct FLeafSubstrateSlab
+{
+    float3 DiffuseAlbedo;   // diffuse reflectance color (thickness-independent)
+    float3 MFP_cm;          // per-channel Mean Free Path, in centimeters
+    float  MFPScale;        // global MFP multiplier (usually 1)
+    float3 Transmittance;   // ballistic (unscattered) transmission T = exp(-sigma_t*d)
+    float  PhaseAnisotropy; // single-scattering anisotropy g in [-1, 1]
+    float3 F0;              // specular reflectance at normal incidence
+    float  Roughness;       // cuticle surface roughness [0, 1]
+    float  Thickness_cm;    // geometric slab thickness in centimeters
+};
+
+// ----------------------------------------------------------------------------
+// LeafProspectToSubstrate
+//
+// PROSPECT-class leaf radiative transfer -> Substrate slab inputs.
+//
+// Inputs (biological, FSPM/PROSPECT-driven):
+//   Cab           : chlorophyll a+b          [ug/cm^2]
+//   Car           : carotenoids              [ug/cm^2]      (PROSPECT-5)
+//   Cw            : equivalent water thickness [cm]
+//   Cm            : dry matter / LMA          [g/cm^2]
+//   N             : mesophyll structure, 1..3.5 (grass ~1.2, dicot ~1.5-2.5)
+//   ThicknessMap  : FSPM geometric thickness texture d = h*delta(x) [cm]
+//   RoughnessMap  : Wang et al. m(x) specular roughness map (cuticle)
+//   bIsGrassMode  : preset switch for matte vs glossy cuticle
+//
+// Returns FLeafSubstrateSlab (see struct above).
+// ----------------------------------------------------------------------------
+FLeafSubstrateSlab LeafProspectToSubstrate(
+    float  Cab,
+    float  Car,
+    float  Cw,
+    float  Cm,
+    float  N,
+    float  ThicknessMap,
+    float  RoughnessMap,
+    bool   bIsGrassMode)
+{
+    FLeafSubstrateSlab Out = (FLeafSubstrateSlab)0;
+
+    // ---- 1) Refractive index -> F0 (dielectric Fresnel at normal incidence) --
+    // PROSPECT n ~ 1.45 in VIS. Substrate exposes a dedicated IOR-To-F0 helper
+    // for the full polarization-correct Fresnel formula; this closed form is
+    // the unpolarized approximation.
+    float IORRatio = (LEAF_IOR - 1.0) / (LEAF_IOR + 1.0);
+    float F0Scalar = IORRatio * IORRatio;
+    Out.F0 = float3(F0Scalar, F0Scalar, F0Scalar);   // ~0.034 dielectric
+
+    // ---- 2) Absorption coefficients -> per-channel optical depth ------------
+    // k(lambda) = Sum_i K_i(lambda) * C_i, evaluated at RGB band centres.
+    float3 SigmaA_cm_inv = LeafBandAbsorption(Cab, Car, Cw, Cm); // 1/cm
+
+    // ---- 3) Scattering + total extinction (LEAFMOD, Wang et al. 2005) -------
+    // Leaf tissue scattering ratio ~3x absorption (isotropic interior).
+    // Wavelength-dependent: higher in green = green reflectance peak.
+    float3 SigmaS_cm_inv = SigmaA_cm_inv * LEAF_SCATTERING_RATIO;
+    float3 SigmaT_cm_inv = SigmaA_cm_inv + SigmaS_cm_inv;        // 1/cm
+
+    // ---- 4) Geometric thickness -> MFP (Beer-Lambert) -----------------------
+    //   tau_c = sigma_t * d,  T_c = exp(-tau_c),  MFP_c = 1 / sigma_t
+    // MFP uses TOTAL extinction (not just absorption) because the ballistic
+    // transmittance term is exp(-sigma_t * d).
+    float d = max(ThicknessMap, 1e-4);   // cm, guard against divide-by-zero
+    Out.MFP_cm        = LeafMFP(SigmaA_cm_inv, SigmaS_cm_inv);  // 1/sigma_t
+    Out.Transmittance = exp(-SigmaT_cm_inv * d);                // T = exp(-sigma_t*d)
+    Out.MFPScale      = 1.0;
+    Out.Thickness_cm  = d;
+
+    // ---- 5) Phase anisotropy (affixed isotropic default) --------------------
+    // Both PROSPECT and the LEAFMOD slab assume near-isotropic interior
+    // scattering, so g = 0.
+    Out.PhaseAnisotropy = 0.0;
+
+    // ---- 6) Diffuse albedo (thickness-INDEPENDENT, Wang et al. 2005) --------
+    Out.DiffuseAlbedo = LeafDiffuseAlbedo(Cab, Car, Cw, Cm, LEAF_SPECTRAL_WEIGHTS_RGB);
+
+    // ---- 7) Cuticle / grass specular roughness ------------------------------
+    Out.Roughness = LeafRoughness(RoughnessMap, N, bIsGrassMode);
+
+    // Keep F0 sensible for a dielectric cuticle: never below the 0.02 floor.
+    Out.F0 = max(Out.F0, 0.02);
+
+    return Out;
+}

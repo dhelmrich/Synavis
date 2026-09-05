@@ -2,11 +2,24 @@
 
 #include "SynavisUE.h"
 
+#include "Interfaces/IPluginManager.h"
+#include "Misc/Paths.h"
+#include "ShaderCore.h"
+
 #define LOCTEXT_NAMESPACE "FSynavisUEModule"
 
 void FSynavisUEModule::StartupModule()
 {
-	// This code will execute after your module is loaded into memory; the exact timing is specified in the .uplugin file per-module
+	// Map the plugin's physical Shaders/ folder to the virtual include path
+	// /Plugin/SynavisUE/ so Material Custom nodes can #include our Leaf*.ush
+	// files. Registered during PostConfigInit so the mapping exists before any
+	// material shader compilation.
+	const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("SynavisUE"));
+	if (Plugin.IsValid())
+	{
+		const FString ShaderDirectory = FPaths::Combine(Plugin->GetBaseDir(), TEXT("Shaders"));
+		AddShaderSourceDirectoryMapping(TEXT("/Plugin/SynavisUE"), ShaderDirectory);
+	}
 }
 
 void FSynavisUEModule::ShutdownModule()

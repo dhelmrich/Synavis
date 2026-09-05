@@ -1,0 +1,167 @@
+// Copyright Synavis.
+//
+// LeafPROSPECTCommon.ush
+//
+// Shared constants, PROSPECT absorption spectra (sampled at representative RGB
+// band centres), and pure helper functions for the PROSPECT-class leaf
+// radiative-transfer -> Unreal Substrate bridge.
+//
+// This file is meant to be #included by a Material Custom node (via the Custom
+// node's "Include File Paths" array) or by other Leaf*.ush files. It contains
+// only include-safe, side-effect-free code: no entry points and no globals that
+// would collide with the generated material HLSL.
+//
+// References:
+//   Jacquemoud & Baret 1990, Remote Sens. Environ., "PROSPECT: A Model of Leaf
+//     Optical Properties Spectra" (plate model, refractive index, N structure).
+//   Feret et al. 2008, Remote Sens. Environ., "PROSPECT-4 and 5" (chlorophyll
+//     Cab / carotenoid Car separation, refined absorption spectra).
+//   Wang et al. 2005, "Real-time rendering of plant leaves" (spatially-variant
+//     BRDF/BTDF slab, thickness-independent diffuse reflectance rho_d).
+
+#pragma once
+
+// Include LEAFMOD parameters (defines LEAF_SCATTERING_RATIO, LEAF_EPS)
+#include "LeafLEAFMODParameters.ush"
+
+// ----------------------------------------------------------------------------
+// Wavelength band centres used to fold the continuous PROSPECT spectra into the
+// three Substrate RGB channels. These are the classical pigment features:
+//   R  ~ 660 nm  (chlorophyll red absorption maximum / red-edge)
+//   G  ~ 550 nm  (green reflectance "gap")
+//   B  ~ 450 nm  (chlorophyll + carotenoid blue absorption)
+// The Substrate slab is RGB-only, so the continuous absorption spectra are
+// evaluated at these three representative points.
+// ----------------------------------------------------------------------------
+static const float LEAF_BAND_RED   = 660.0;   // nm
+static const float LEAF_BAND_GREEN = 550.0;   // nm
+static const float LEAF_BAND_BLUE  = 450.0;   // nm
+
+// Refractive index of the leaf mesophyll (~1.45 in VIS; 1.41-1.55), used to
+// derive F0 for the dielectric cuticle/surface interface (PROSPECT).
+static const float LEAF_IOR = 1.45;
+
+// Fraction of spectral irradiance captured by each Substrate RGB channel.
+// Defaults weight the PAR (photosynthetically active radiation, 400-700 nm)
+// response toward the visible. Tunable to match a target appearance.
+static const float3 LEAF_SPECTRAL_WEIGHTS_RGB = float3(1.0, 1.0, 1.0);
+
+// Mesophyll structure (N) bounds; N chiefly rescales internal scattering depth.
+#define LEAF_N_MIN 1.0
+#define LEAF_N_MAX 3.5
+
+// ----------------------------------------------------------------------------
+// PROSPECT-4/5 specific absorption coefficients K_i(lambda) at the three RGB
+// band centres. Units follow the PROSPECT convention:
+//   Kcab, Kcar : cm^2 / ug   (per pigment concentration)
+//   Kcw        : cm^-1       (per water thickness, cm)
+//   Kcm        : cm^2 / g    (per dry matter, g/cm^2)
+//
+// NOTE: These are representative magnitudes for a typical green leaf, sampled
+// from the PROSPECT-4/5 spectra. They are a starting calibration; replace with
+// a measured / tabulated LUT if exact PROSPECT spectra are required.
+// ----------------------------------------------------------------------------
+
+// Chlorophyll a+b absorption, cm^2/ug (calibrated to match observed RGB output)
+// Target: sigma_a = [0.13, 0.02, 0.20] for typical leaf (Cab=40, Car=10, Cw=0.01, Cm=0.005)
+static const float3 K_Cab_RGB = float3(
+    0.00307, // 660 nm red
+    0.00042, // 550 nm green
+    0.00476  // 450 nm blue
+);
+
+// Carotenoid absorption, cm^2/ug (~15% of Cab contribution)
+static const float3 K_Car_RGB = float3(
+    0.00046, // 660 nm red
+    0.00006, // 550 nm green
+    0.00071  // 450 nm blue
+);
+
+// Water absorption, cm^-1 (negligible in visible)
+static const float3 K_Cw_RGB = float3(
+    0.0001, // 660 nm
+    0.0001, // 550 nm
+    0.0001  // 450 nm
+);
+
+// Dry matter / LMA absorption, cm^2/g (PROSPECT literature: ~0.5, not 3.0)
+static const float3 K_Cm_RGB = float3(
+    0.5,  // 660 nm
+    0.5,  // 550 nm
+    0.5   // 450 nm
+);
+
+// ----------------------------------------------------------------------------
+// Band absorption: total volumetric absorption coefficient sigma_a per RGB
+// channel, from the PROSPECT linear-mixing rule:
+//     k(lambda) = Sum_i K_i(lambda) * C_i
+// Inputs are the biological concentrations (PROSPECT parameter set):
+//   Cab : chlorophyll a+b   [ug/cm^2]
+//   Car : carotenoids       [ug/cm^2]
+//   Cw  : equivalent water thickness [cm]
+//   Cm  : dry matter / LMA  [g/cm^2]
+// Returns the per-RGB absorption coefficient sigma_a in 1/cm.
+// ----------------------------------------------------------------------------
+float3 LeafBandAbsorption(float Cab, float Car, float Cw, float Cm)
+{
+    return K_Cab_RGB * Cab
+         + K_Car_RGB * Car
+         + K_Cw_RGB  * Cw
+         + K_Cm_RGB  * Cm;
+}
+
+// ----------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
+// Diffuse (Lambertian) albedo from pigment absorption using Eddington two-stream
+// approximation (Wang et al. 2005). This is the physically-correct formula:
+//   rho_d = 0.5 * A * omega
+// where omega = sigma_s / sigma_t (single-scattering albedo) and
+// A = 2 / (1 + sqrt(1 - omega)) (Eddington coefficient).
+// Inputs: Cab, Car, Cw, Cm (biological concentrations)
+// Returns: diffuse albedo RGB [0,1]
+// ----------------------------------------------------------------------------
+float3 LeafDiffuseAlbedo(float Cab, float Car, float Cw, float Cm, float3 SpectralWeights)
+{
+    float3 SigmaA = LeafBandAbsorption(Cab, Car, Cw, Cm);
+    
+    // Wavelength-dependent scattering ratio (green has more scattering = green gap)
+    float3 SigmaS = SigmaA * LEAF_SCATTERING_RATIO;
+    float3 SigmaT = SigmaA + SigmaS;
+    
+    // Single-scattering albedo omega = sigma_s / sigma_t
+    float3 Omega = SigmaS / max(SigmaT, LEAF_EPS);
+    
+    // Eddington coefficient A = 2 / (1 + sqrt(1 - omega))
+    float3 Sqrt1mOmega = sqrt(saturate(1.0 - Omega));
+    float3 A = 2.0 / (1.0 + Sqrt1mOmega);
+    
+    // Diffuse albedo rho_d = 0.5 * A * omega
+    float3 Albedo = 0.5 * A * Omega;
+    
+    return Albedo;
+}
+
+// ----------------------------------------------------------------------------
+// Leaf structure preset: maps the biologically-familiar mesophyll structure N to
+// a Substrate-useful scalar. N only weakly affects the result; it chiefly
+// rescales internal scattering depth.
+// ----------------------------------------------------------------------------
+float LeafStructureScale(float N)
+{
+    return saturate((N - LEAF_N_MIN) / (LEAF_N_MAX - LEAF_N_MIN));
+}
+
+// ----------------------------------------------------------------------------
+// Cuticle specular roughness from the PROSPECT mesophyll structure plus Wang et
+// al. 2005's m(x) roughness map. Grass (monocot, N ~ 1.0-1.5) is matte; dicot
+// (N ~ 1.5-2.5) is glossier.
+//   RoughnessMap : Wang et al. m(x) specular roughness map (cuticle), [0,1]
+//   N            : mesophyll structure
+// ----------------------------------------------------------------------------
+float LeafRoughness(float RoughnessMap, float N, bool bIsGrassMode)
+{
+    float Structure = LeafStructureScale(N);
+    float BaseMin = bIsGrassMode ? 0.45 : 0.15;
+    float BaseMax = bIsGrassMode ? 0.75 : 0.50;
+    return lerp(BaseMin, BaseMax, RoughnessMap);
+}

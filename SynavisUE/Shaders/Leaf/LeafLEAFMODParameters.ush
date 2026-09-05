@@ -1,0 +1,116 @@
+// Copyright Synavis.
+//
+// LeafLEAFMODParameters.ush
+//
+// LEAFMOD slab radiative-transfer helpers: single-scattering albedo, optical
+// thickness, total extinction -> Mean Free Path, and the A/B multiple-scattering
+// enhancement coefficients.
+//
+// Definitions (Wang et al. 2005, "Real-time rendering of plant leaves"):
+//   sigma_t = sigma_a + sigma_s              (total extinction)
+//   omega   = sigma_s / sigma_t              (single-scattering albedo)
+//   Delta   = sigma_t * d                    (optical thickness)
+//   MFP     = 1 / sigma_t                    (isotropic g=0 limit)
+//   T_c     = exp(-sigma_t * d)              (ballistic / Beer-Lambert term)
+//
+// The ballistic transmittance term is exp(-sigma_t * d): the optical depth uses
+// TOTAL extinction, not absorption alone, because scattering also removes energy
+// from the transmitted beam.
+//
+// A and B are closed-form approximations in the Eddington two-stream limit
+// (isotropic scattering), accurate to 5-10% for typical vegetation
+// (omega in [0.8, 0.95], Delta in [1, 10]). A enhances the diffuse reflectance
+// and B enhances the diffuse transmittance beyond the direct term, capturing
+// multiple internal scattering. Include-safe helpers with no side effects.
+
+#pragma once
+
+// Leaf tissue scattering ratio used as the default sigma_s / sigma_a.
+// Wavelength-dependent to produce correct color (higher scattering in green =
+// higher omega = higher albedo = green "gap" where chlorophyll absorbs least).
+#ifndef LEAF_SCATTERING_RATIO
+#define LEAF_SCATTERING_RATIO float3(0.1439, 0.3521, 0.1151)  // Red, Green, Blue (calibrated)
+#endif
+
+// Small epsilon to guard against division by zero.
+#define LEAF_EPS 1e-6
+
+// ----------------------------------------------------------------------------
+// Single-scattering albedo omega = sigma_s / (sigma_a + sigma_s).
+// ----------------------------------------------------------------------------
+float3 LeafSingleScatteringAlbedo(float3 SigmaA, float3 SigmaS)
+{
+    float3 SigmaT = SigmaA + SigmaS;
+    return SigmaS / max(SigmaT, LEAF_EPS);
+}
+
+// ----------------------------------------------------------------------------
+// Optical thickness Delta = sigma_t * d (dimensionless).
+// ----------------------------------------------------------------------------
+float3 LeafOpticalThickness(float3 SigmaA, float3 SigmaS, float d)
+{
+    float3 SigmaT = SigmaA + SigmaS;
+    return SigmaT * d;
+}
+
+// ----------------------------------------------------------------------------
+// Ballistic (unscattered) transmittance: T = exp(-sigma_t * d). This is the
+// Beer-Lambert term that maps to Substrate's colored transmittance and to its
+// Transmittance-To-MeanFreePath helper.
+// ----------------------------------------------------------------------------
+float3 LeafBallisticTransmittance(float3 SigmaA, float3 SigmaS, float d)
+{
+    float3 SigmaT = SigmaA + SigmaS;
+    return exp(-SigmaT * d);
+}
+
+// ----------------------------------------------------------------------------
+// Mean Free Path under the isotropic (g=0) simplification: MFP = 1 / sigma_t.
+// Substrate's SSS MFP is in centimeters; sigma_t must be supplied in 1/cm
+// (as produced by LeafBandAbsorption * concentration).
+// ----------------------------------------------------------------------------
+float3 LeafMFP(float3 SigmaA, float3 SigmaS)
+{
+    float3 SigmaT = SigmaA + SigmaS;
+    return 1.0 / max(SigmaT, LEAF_EPS);
+}
+
+// ----------------------------------------------------------------------------
+// Eddington two-stream approximation for the multiple-scattering enhancement
+// coefficients A (reflectance) and B (transmittance):
+//   sqrt_1mW  = sqrt(1 - omega)
+//   A         = 2 / (1 + sqrt_1mW)
+//   B         = (2 * sqrt_1mW / (1 + sqrt_1mW)) * (1 - exp(-Delta * sqrt_1mW))
+// ----------------------------------------------------------------------------
+float3 LeafA(float3 Omega)
+{
+    float3 Sqrt1mW = sqrt(saturate(1.0 - Omega));
+    return 2.0 / (1.0 + Sqrt1mW);
+}
+
+float3 LeafB(float3 Omega, float3 Delta)
+{
+    float3 Sqrt1mW = sqrt(saturate(1.0 - Omega));
+    return (2.0 * Sqrt1mW / (1.0 + Sqrt1mW)) * (1.0 - exp(-Delta * Sqrt1mW));
+}
+
+// ----------------------------------------------------------------------------
+// Combined diffuse reflectance rho_d and transmittance rho_t per RGB channel
+// (Wang et al. 2005 reconciled forms):
+//   rho_d = (A/2) * omega * gamma(x)     (gamma ~ 1 for now)
+//   rho_t = exp(-sigma_t * d) + (B/2) * omega
+// Provided for completeness / inspection; the Substrate slab path in
+// LeafPROSPECTToSubstrate.ush uses MFP and DiffuseAlbedo directly instead.
+// ----------------------------------------------------------------------------
+float3 LeafDiffuseReflectance(float3 SigmaA, float3 SigmaS, float Gamma)
+{
+    float3 Omega = LeafSingleScatteringAlbedo(SigmaA, SigmaS);
+    return 0.5 * LeafA(Omega) * Omega * Gamma;
+}
+
+float3 LeafDiffuseTransmittance(float3 SigmaA, float3 SigmaS, float d)
+{
+    float3 Omega = LeafSingleScatteringAlbedo(SigmaA, SigmaS);
+    float3 Delta = LeafOpticalThickness(SigmaA, SigmaS, d);
+    return LeafBallisticTransmittance(SigmaA, SigmaS, d) + 0.5 * LeafB(Omega, Delta) * Omega;
+}

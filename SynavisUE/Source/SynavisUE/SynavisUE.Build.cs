@@ -46,7 +46,9 @@ public class SynavisUE : ModuleRules
 				"CoreUObject",
 				"Engine",
 				"Slate",
-				"SlateCore","DynamicMesh"
+				"SlateCore","DynamicMesh",
+				"RenderCore",   // AddShaderSourceDirectoryMapping (ShaderCore.h)
+				"Projects"      // IPluginManager
                 // ... add private dependencies that you statically link with here ...	
 			}
 			);
