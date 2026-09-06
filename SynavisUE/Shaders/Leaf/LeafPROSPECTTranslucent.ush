@@ -10,16 +10,17 @@
 // translucent leaf rendering. Include this file in a Material Custom node and
 // call LeafPROSPECTToSubstrateTranslucent() to get all required parameters.
 //
-// REFERENCE: substrateplan.md for complete LEAFMOD->Substrate equations.
+// REFERENCE: substrateplan.md for the complete LEAFMOD->Substrate equations.
+// The full "how to build the material" graph guide lives in the plugin's
+// Shaders/README.md (Recommended material structure, How to build the material,
+// Transmission, Debug sequence, Recommended initial configuration). The
+// essential contract is repeated below for convenience.
 // ============================================================================
 //
-// MATERIAL CUSTOM NODE SETUP
+// MATERIAL CUSTOM NODE SETUP (summary)
 // ============================================================================
 //
-// 1. Create Custom Node in Material Editor
-//    - Name: "LeafPROSPECTTranslucent"
-//    - Include File Paths: Add path to this .ush file
-//    - Code: See "Custom Node Code" section below
+// 1. Create a Custom node; add this file's virtual path to Include File Paths.
 //
 // 2. Material Inputs (expose as parameters):
 //    Biological (scalar parameters):
@@ -28,27 +29,41 @@
 //      - Cw (water thickness)      : default 0.01 (grass: 0.008)
 //      - Cm (dry matter/LMA)       : default 0.005 (grass: 0.004)
 //      - N (mesophyll structure)   : default 1.5 (grass: 1.2)
-//      - SigmaS_Ratio              : default 3.0 (σs/σa ratio)
-//    
+//      - SigmaS_Ratio              : global σs/σa scattering multiplier
+//                                    (Scalar, default 1.0; the per-channel color
+//                                    comes from LEAF_SCATTERING_RATIO)
 //    Texture inputs (default to LinearColor white / 1.0):
 //      - ThicknessMap              : leaf thickness h·δ(x) in cm
 //      - RoughnessMap              : cuticle roughness m(x) [0,1]
 //      - Gamma                     : surface albedo factor γ(x), default (1,1,1)
-//    
 //    Switches:
 //      - bIsGrassMode              : true for monocot/grass, false for dicot
 //
 // 3. Custom Node Outputs (connect to Substrate-StandardSurface-Translucent):
-//      - DiffuseAlbedo (float3)     -> Substrate "base_color"
+//      - DiffuseAlbedo (float3)     -> Substrate "base_color" / DiffuseAlbedo
 //      - MFP (float3)               -> Substrate "subsurface_radius" (SSS MFP in cm)
 //      - F0 (float)                 -> Substrate "specular"
 //      - Roughness (float)          -> Substrate "specular_roughness"
-//      - TransmissionColor (float3) -> Substrate "transmission_color" (direct/ballistic)
-//      - TransmissionScatter (float3) -> Substrate "transmission_scatter" (diffuse)
-//      - TransmissionDepth (float)  -> Substrate "transmission_depth" (thickness in cm)
+//      - Transmittance (float3)     -> combined, clamped T; feed into
+//                                       Transmittance-To-MeanFreePath (preferred)
+//      - TransmissionColor (float3) -> direct/ballistic T_direct (alt. path only)
+//      - TransmissionScatter (float3)-> diffuse/scattered T_scatter (alt. path only)
+//      - TransmissionDepth (float)  -> physical thickness in cm
 //
 // IMPORTANT: Wire Gamma to float3(1,1,1) or your surface albedo factor.
-//            If Gamma is 0 or unconnected, DiffuseAlbedo will be black.
+//            If Gamma is 0 or unconnected, DiffuseAlbedo will be black (and the
+//            leaf will render as a transparent sheet).
+//
+// WARNING (transmission representation): feed the transmission outputs through
+// EXACTLY ONE Substrate path. Prefer Transmittance -> Transmittance-To-MeanFreePath
+// (with TransmissionDepth as thickness). Only if your build's Standard Surface
+// Translucent exposes working direct transmission inputs, use TransmissionColor /
+// TransmissionScatter / TransmissionDepth instead. Never use both paths at once —
+// it double-counts the transmittance and can exceed the energy budget.
+//
+// RECOMMENDED LAYOUT: build the leaf as layered Substrate slabs (surface/cuticle
+// slab -> mesophyll/body slab) connected through the root's Front Material input,
+// NOT as three independent translucent outputs. See README.md.
 //
 // ============================================================================
 // CUSTOM NODE CODE (paste into Custom node "Code" field)
@@ -60,80 +75,63 @@
 //     ThicknessMap.r,             // thickness in cm (use red channel or scalar)
 //     RoughnessMap.r,             // roughness [0,1] (use red channel or scalar)
 //     Gamma,                      // surface albedo factor (LinearColor)
-//     SigmaS_Ratio,               // scattering ratio (default 3.0)
+//     SigmaS_Ratio,               // global σs/σa multiplier (default 1.0)
 //     bIsGrassMode                // grass/dicot mode switch
 // );
 //
 // return S.DiffuseAlbedo;         // Main output (Base Color / DiffuseAlbedo)
 //
 // Additional Outputs (use Additional Output nodes):
-//   S.MFP           -> subsurface_radius (SSS Mean Free Path in cm)
-//   S.F0            -> specular (Fresnel F0, ~0.034 for n=1.45)
-//   S.Roughness     -> specular_roughness
-//   S.Transmittance -> transmission_color (or feed to Transmittance-To-MFP)
+//   S.MFP              -> subsurface_radius (SSS Mean Free Path in cm)
+//   S.F0               -> specular (Fresnel F0, ~0.034 for n=1.45)
+//   S.Roughness        -> specular_roughness
+//   S.Transmittance    -> Transmittance-To-MeanFreePath (preferred transmission path)
+//   S.TransmissionDepth -> thickness for the MFP helper
+//   S.TransmissionColor / S.TransmissionScatter -> only for direct transmission inputs
 //
 // ============================================================================
-// SUBSTRATE-StandardSurface-Translucent WIRING
+// SUBSTRATE-StandardSurface-Translucent WIRING (summary)
 // ============================================================================
-//
-// After the Custom node, connect to Substrate-StandardSurface-Translucent:
 //
 //   Base:
 //     base_color          <- S.DiffuseAlbedo (from Custom node main output)
-//     diffuse_roughness   <- S.Roughness (or separate control)
 //     metalness           <- 0.0 (leaves are dielectric)
 //
 //   Specular:
 //     specular            <- S.F0 (from Additional Output)
 //     specular_roughness  <- S.Roughness (from Additional Output)
-//     specular_IOR        <- 1.45 (or leave default, F0 already computed)
 //
 //   Transmission:
-//     transmission        <- 1.0 (enable transmission for translucent leaves)
-//     transmission_color  <- S.Transmittance (from Additional Output)
-//     transmission_depth  <- ThicknessMap.r (same thickness as input)
-//     OR use Transmittance-To-MFP helper node with S.Transmittance + Thickness
+//     transmission        <- 0.2-0.6 (do NOT force 1.0 — that hides the surface)
+//     Preferred: Transmittance-To-MFP(S.Transmittance, S.TransmissionDepth)
+//                -> slab SSS MFP / transmission medium.
+//     OR (direct inputs, only if they work in your UE 5.7 build):
+//       transmission_color  <- S.TransmissionColor (T_direct)
+//       transmission_scatter <- S.TransmissionScatter (T_scatter)
+//       transmission_depth  <- S.TransmissionDepth (same thickness as input)
+//     Use ONE of these two paths, never both.
 //
 //   Subsurface:
-//     subsurface          <- 1.0 (enable subsurface scattering)
+//     subsurface          <- 0.3-0.8 (do NOT force 1.0 initially)
 //     subsurface_radius   <- S.MFP (from Additional Output, in cm)
 //     subsurface_color    <- S.DiffuseAlbedo (same as base_color)
 //     subsurface_scale    <- 1.0 (default)
 //     Subsurface Type     -> "Simple Volume" (Beer-Lambert) or "Diffusion"
 //
-//   Geometry:
+//   Geometry / Root:
 //     opacity             <- 1.0 (or use Alpha from ThicknessMap if needed)
 //     normal              <- NormalMap (if using surface micro-topography)
-//
-//   Thin-Surface (Root Node):
-//     Thickness           <- ThicknessMap.r (connect thickness texture/scalar)
+//     Thickness           <- ThicknessMap.r (thickness texture/scalar)
 //
 // ============================================================================
-// EXAMPLE: Minimal Material Graph Setup
+// LAYERING (instead of three translucent outputs)
 // ============================================================================
 //
-// [Material Inputs]
-//   Cab, Car, Cw, Cm, N, SigmaS_Ratio (Scalar Parameters)
-//   ThicknessMap, RoughnessMap, Gamma (Texture Parameters, default white/1.0)
-//   bIsGrassMode (Static Switch)
-//
-// [Custom Node: LeafPROSPECTTranslucent]
-//   Include: LeafPROSPECTTranslucent.ush
-//   Code: See "Custom Node Code" above
-//   Inputs: Wire all material inputs
-//   Outputs: 
-//     Main (RGB) -> Base Color
-//     Additional Outputs (create 4 Additional Output nodes):
-//       "MFP" -> float3
-//       "F0" -> float
-//       "Roughness" -> float
-//       "Transmittance" -> float3
-//
-// [Substrate-StandardSurface-Translucent Function]
-//   Wire Custom node outputs to Substrate inputs as shown above
-//
-// [Material Output]
-//   Connect Substrate function output to Material Result
+// Build the leaf as layered Substrate slabs (surface/cuticle -> mesophyll/body),
+// each a Substrate Slab BSDF, connected through Front Material / Vertical Layer
+// to the Material Result -> Front Material. Feed MFP/transmittance to the
+// mesophyll slab medium; keep the surface slab's albedo small but nonzero. See
+// README.md for the full build and debug sequence.
 //
 // ============================================================================
 // SUBSTRATE STRUCT (returned by LeafPROSPECTToSubstrateTranslucent)
@@ -149,11 +147,18 @@ struct FLeafSubstrateTranslucent
     float F0;                  // Fresnel at normal incidence (~0.034)
     float Roughness;           // Cuticle specular roughness [0,1]
     
-    // Transmission outputs (separated per Substrate requirements)
-    float3 TransmissionColor;  // Direct (ballistic) transmittance T_direct
-    float3 TransmissionScatter; // Diffuse/scattered transmission component
-    float TransmissionDepth;   // Physical thickness in cm
-    float Thickness_cm;        // Alias for TransmissionDepth (convenience)
+    // Transmission outputs (separated per Substrate requirements).
+    // NOTE: T_direct + T_scatter are NOT independent compositable colors. They are
+    // kept separate only so you can pick ONE Substrate conversion path. Prefer
+    // feeding the combined, clamped `Transmittance` into a
+    // Transmittance-To-MeanFreePath helper (with `TransmissionDepth` as thickness);
+    // the raw T_direct / T_scatter components are only for a node that exposes
+    // direct transmission inputs. Never use both paths at once. See file header.
+    float3 TransmissionColor;   // Direct (ballistic) transmittance T_direct
+    float3 TransmissionScatter; // Diffuse/scattered transmission T_scatter
+    float3 Transmittance;       // Combined, energy-clamped transmittance saturate(T_direct + T_scatter)
+    float TransmissionDepth;    // Physical thickness in cm (use as MFP-helper thickness)
+    float Thickness_cm;         // Alias for TransmissionDepth (convenience)
 };
 
 #pragma once
@@ -164,12 +169,20 @@ struct FLeafSubstrateTranslucent
 // ----------------------------------------------------------------------------
 // Scattering coefficient σs from absorption σa with custom ratio.
 //   SigmaA : absorption coefficient from LeafBandAbsorption() [1/cm]
-//   SigmaS_Ratio : σs/σa ratio (default 3.0, tunable per calibration)
+//   SigmaS_Ratio : global σs/σa scattering multiplier (default 1.0,
+//                  tunable per calibration). This scalar scales ALL channels
+//                  uniformly; the per-channel spectral shape comes from
+//                  LEAF_SCATTERING_RATIO.
 // Returns: scattering coefficient σs [1/cm]
+//
+// ACHROMATIC PITFALL: do NOT write `SigmaA * SigmaS_Ratio` alone. A single
+// scalar makes the single-scattering albedo omega = r/(1+r) identical in R, G
+// and B, so DiffuseAlbedo comes out neutral gray (then saturates to white in
+// the preview). Always combine the scalar with the RGB LEAF_SCATTERING_RATIO.
 // ----------------------------------------------------------------------------
 float3 LeafScatteringCoefficient(float3 SigmaA, float SigmaS_Ratio)
 {
-    return SigmaA * SigmaS_Ratio;
+    return SigmaA * LEAF_SCATTERING_RATIO * max(SigmaS_Ratio, 0.0);
 }
 
 // Use LeafLEAFParameters.ush version if you need the default wavelength-dependent ratio
@@ -251,6 +264,9 @@ float3 LeafDiffuseReflectance(float3 A, float3 SigmaS, float3 SigmaT, float3 Gam
 //   Thickness : physical thickness d = h·δ(x) [cm]
 // Returns: diffuse transmittance per RGB channel
 // Note: Feed this into Substrate Transmittance-To-MFP helper with Thickness.
+// The result is the combined (ballistic + scattered) transmittance and is
+// clamped so the leaf does not exceed a physically plausible energy budget when
+// the slab also performs its own internal scattering.
 // ----------------------------------------------------------------------------
 float3 LeafTransmittance(float3 B, float3 SigmaS, float3 SigmaT, float Thickness)
 {
@@ -262,7 +278,8 @@ float3 LeafTransmittance(float3 B, float3 SigmaS, float3 SigmaT, float Thickness
     // Scattered term: (B/2) · (σs/σt)
     float3 Scattered = (B / 2.0) * (SigmaS / SigmaT_Clamped);
     
-    return Ballistic + Scattered;
+    // Combined, energy-clamped transmittance (see header "Transmission" notes).
+    return saturate(Ballistic + Scattered);
 }
 
 // ----------------------------------------------------------------------------
@@ -276,7 +293,7 @@ float3 LeafTransmittance(float3 B, float3 SigmaS, float3 SigmaT, float Thickness
 //   Thickness : leaf thickness h·δ(x) [cm]
 //   RoughnessMap : cuticle roughness texture m(x) [0,1]
 //   Gamma : surface albedo factor γ(x) [default 1.0]
-//   SigmaS_Ratio : σs/σa ratio (default 3.0)
+//   SigmaS_Ratio : global σs/σa scattering multiplier (default 1.0)
 //   bIsGrassMode : true for monocot/grass, false for dicot
 //
 // Outputs (Substrate-StandardSurface-Translucent inputs):
@@ -284,7 +301,7 @@ float3 LeafTransmittance(float3 B, float3 SigmaS, float3 SigmaT, float Thickness
 //   OutMFP : mean free path per RGB channel [cm]
 //   OutF0 : Fresnel at normal incidence (from LEAF_IOR)
 //   OutRoughness : cuticle specular roughness
-//   OutTransmittance : ρt (ballistic + scattered)
+//   OutTransmittance : ρt (combined, energy-clamped ballistic + scattered)
 // ----------------------------------------------------------------------------
 FLeafSubstrateTranslucent LeafPROSPECTToSubstrateTranslucent(
     float Cab, float Car, float Cw, float Cm,
@@ -325,10 +342,17 @@ FLeafSubstrateTranslucent LeafPROSPECTToSubstrateTranslucent(
     float3 T_direct = exp(-SigmaT * ThicknessMap);
     
     // Diffuse/scattered transmission: T_scatter = (B/2) * (σs/σt)
+    // T_scatter inherits thickness through B (via Delta), so treat T_direct and
+    // T_scatter as ONE combined transmittance, not two independent colors.
     float3 T_scatter = (B / 2.0) * (SigmaS / SigmaT);
+    
+    // Clamp the combined transmittance to keep the result within a physically
+    // plausible energy budget when the slab also performs its own scattering.
+    float3 T = saturate(T_direct + T_scatter);
     
     Result.TransmissionColor = T_direct;
     Result.TransmissionScatter = T_scatter;
+    Result.Transmittance = T;                    // combined, clamped (preferred for MFP helper)
     Result.TransmissionDepth = ThicknessMap;
     Result.Thickness_cm = ThicknessMap;
     

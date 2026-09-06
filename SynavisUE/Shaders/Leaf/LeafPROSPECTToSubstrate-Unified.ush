@@ -1,0 +1,273 @@
+// Copyright Synavis.
+//
+// LeafPROSPECTToSubstrate-Unified.ush
+//
+// ============================================================================
+// PURPOSE
+// ============================================================================
+//
+// Unified, well-posed entry point that converts PROSPECT-class biological leaf
+// parameters into the physical inputs of an Unreal Substrate "Slab" BSDF.
+//
+// This file replaces LeafPROSPECTToSubstrate-3.ush and
+// LeafPROSPECTTranslucent-4.ush with a single consistent interface:
+// - One struct: FLeafSubstrateSlab
+// - One function: LeafProspectToSubstrate
+// - Consistent macro and constant names via LeafPROSPECTCommon.ush
+// - Supports SigmaS_Ratio and Gamma for artistic/biological tuning
+// - No venation or thickness compositing in code; those are Texture2D inputs
+//   handled in the Material Graph.
+//
+// Material Graph wiring
+// ============================================================================
+//
+// 1. Add this file's virtual path to a Material Custom node's
+//    "Include File Paths" array:
+//    /Plugin/SynavisUE/Leaf/LeafPROSPECTToSubstrate-Unified.ush
+//
+// 2. Declare the Custom node Inputs matching LeafProspectToSubstrate's
+//    parameters:
+//    - Cab          : chlorophyll a+b [ug/cm^2] (Scalar)
+//    - Car          : carotenoids [ug/cm^2] (Scalar)
+//    - Cw           : equivalent water thickness [cm] (Scalar)
+//    - Cm           : dry matter / LMA [g/cm^2] (Scalar)
+//    - N            : mesophyll structure [1.0–3.5] (Scalar)
+//    - SigmaS_Ratio : global σs/σa scattering multiplier (Scalar)
+//                     Default: 1.0 (global multiplier; per-channel shape from
+//                     LEAF_SCATTERING_RATIO). Range 0.01-10.0, dimensionless.
+//                     Higher values = more scattering = brighter leaf. A single
+//                     scalar alone would make the albedo achromatic; the RGB
+//                     color always comes from LEAF_SCATTERING_RATIO.
+//    - Gamma        : surface albedo factor γ(x) (float3, default (1,1,1))
+//    - Thickness    : geometric slab thickness d [cm] (Scalar or Texture sample)
+//    - RoughnessMap : cuticle roughness m(x) [0,1] (Scalar or Texture sample)
+//    - bIsGrassMode : preset switch for matte vs glossy cuticle (Static Switch)
+//
+//    Venation and thickness variation across the leaf surface are driven by
+//    Texture2D inputs in the Material Graph, not in this HLSL. Sample your
+//    venation and thickness textures in the graph and feed the result into
+//    the Thickness input (or use them to modulate other slab inputs such as
+//    DiffuseAlbedo, MFP, or Roughness via Additional Outputs).
+//
+// 3. Custom node Code (single call):
+//    return LeafProspectToSubstrate(
+//        Cab, Car, Cw, Cm,
+//        N,
+//        SigmaS_Ratio,
+//        Gamma,
+//        Thickness,
+//        RoughnessMap,
+//        bIsGrassMode
+//    );
+//
+// 4. Wire the returned FLeafSubstrateSlab fields into a "Substrate Slab BSDF"
+//    node:
+//    - DiffuseAlbedo      <- Out.DiffuseAlbedo (float3)
+//    - SSS MFP            <- Out.MFP_cm (float3, centimeters)
+//    - SSS MFP Scale      <- Out.MFPScale (float, usually 1.0)
+//    - SSS Phase Anisotropy <- Out.PhaseAnisotropy (float, default 0.0)
+//    - Specular F0        <- Out.F0 (float3)
+//    - Roughness          <- Out.Roughness (float)
+//    - (Optional) Transmission / Thickness can be driven via Additional
+//      Outputs if your Substrate function exposes them directly.
+//
+// 5. Set the Slab's Sub-Surface Type:
+//    - "Simple Volume" (Beer-Lambert) for most dicot leaves.
+//    - "Two-Sided Wrap" for very thin, backlit grass blades if needed.
+//
+// The output struct is the well-posed interface: it only exposes values that
+// map 1:1 to native Substrate slab inputs. Venation and spatial thickness
+// variation are composed in the Material Graph using Texture2D inputs.
+//
+// References
+// ============================================================================
+// - Jacquemoud & Baret 1990 (PROSPECT plate model, N structure, IOR n ~ 1.45).
+// - Feret et al. 2008 (PROSPECT-5, Cab/Car separation, absorption spectra).
+// - Wang et al. 2005 (LEAFMOD slab BRDF/BTDF; thickness-independent rho_d;
+//   MFP from total extinction sigma_t = sigma_a + sigma_s).
+
+#pragma once
+
+#include "/Plugin/SynavisUE/Leaf/LeafPROSPECTCommon.ush"
+#include "/Plugin/SynavisUE/Leaf/LeafLEAFMODParameters.ush"
+
+// ============================================================================
+// OUTPUT STRUCT
+// ============================================================================
+//
+// Field names intentionally mirror the Substrate Slab BSDF pins so a Custom
+// node can be wired directly.
+
+struct FLeafSubstrateSlab
+{
+    // Diffuse reflectance color (thickness-independent, Gamma-scaled)
+    float3 DiffuseAlbedo;
+
+    // Per-channel Mean Free Path, in centimeters
+    float3 MFP_cm;
+
+    // Global MFP multiplier (usually 1.0; can be tuned in the graph)
+    float MFPScale;
+
+    // Ballistic (unscattered) transmission T = exp(-sigma_t * d)
+    // Provided for convenience if you want to drive transmission in the graph.
+    float3 Transmittance;
+
+    // Single-scattering anisotropy g in [-1, 1]. Default 0 (isotropic).
+    float PhaseAnisotropy;
+
+    // Specular reflectance at normal incidence (dielectric cuticle)
+    float3 F0;
+
+    // Cuticle surface roughness [0, 1]
+    float Roughness;
+
+    // Geometric slab thickness in centimeters (for reference / graph use)
+    float Thickness_cm;
+};
+
+// ============================================================================
+// ENTRY POINT
+// ============================================================================
+//
+// LeafProspectToSubstrate
+//
+// PROSPECT-class leaf radiative transfer -> Substrate slab inputs.
+//
+// Inputs (biological, FSPM/PROSPECT-driven):
+// - Cab          : chlorophyll a+b [ug/cm^2]
+// - Car          : carotenoids [ug/cm^2] (PROSPECT-5)
+// - Cw           : equivalent water thickness [cm]
+// - Cm           : dry matter / LMA [g/cm^2]
+// - N            : mesophyll structure, 1.0–3.5
+//                  (grass ~1.2, dicot ~1.5–2.5)
+// - SigmaS_Ratio : global σs/σa scattering multiplier (default 1.0)
+//                  The per-channel spectral shape comes from
+//                  LEAF_SCATTERING_RATIO; this scalar scales all channels
+//                  uniformly for calibration. Do NOT use it alone to set color.
+// - Gamma        : surface albedo factor γ(x) [default (1,1,1)]
+//                  Scales diffuse reflectance; use for artistic tuning or
+//                  spatially-varying surface albedo.
+// - Thickness    : geometric slab thickness d = h * delta(x) [cm]
+//                  In the Material Graph, drive this with:
+//                  - A base scalar leaf thickness, and
+//                  - A ThicknessMap Texture2D for venation / local variation.
+// - RoughnessMap : cuticle roughness m(x) [0,1]
+//                  Can be a scalar or sampled from a Texture2D.
+// - bIsGrassMode : preset switch for matte vs glossy cuticle
+//
+// Returns: FLeafSubstrateSlab (see struct above).
+
+FLeafSubstrateSlab LeafProspectToSubstrate(
+    float Cab,
+    float Car,
+    float Cw,
+    float Cm,
+    float N,
+    float SigmaS_Ratio,
+    float3 Gamma,
+    float Thickness,
+    float RoughnessMap,
+    bool bIsGrassMode
+)
+{
+    FLeafSubstrateSlab Out = (FLeafSubstrateSlab)0;
+
+    // ---- 1) Refractive index -> F0 (dielectric Fresnel at normal incidence)
+    // PROSPECT n ~ 1.45 in VIS. Substrate exposes a dedicated IOR-To-F0 helper
+    // for the full polarization-correct Fresnel formula; this closed form is
+    // the unpolarized approximation.
+    float IORRatio = (LEAF_IOR - 1.0) / (LEAF_IOR + 1.0);
+    float F0Scalar = IORRatio * IORRatio;
+    Out.F0 = float3(F0Scalar, F0Scalar, F0Scalar); // ~0.034 dielectric
+
+    // ---- 2) Absorption coefficients -> per-channel optical depth
+    // k(lambda) = Sum_i K_i(lambda) * C_i, evaluated at RGB band centres.
+    float3 SigmaA_cm_inv = LeafBandAbsorption(Cab, Car, Cw, Cm); // 1/cm
+
+    // ---- 3) Scattering + total extinction (LEAFMOD, Wang et al. 2005)
+    // The per-channel shape comes from the calibrated LEAF_SCATTERING_RATIO
+    // (wavelength-dependent: higher in green = green reflectance peak).
+    // SigmaS_Ratio is now a GLOBAL calibration multiplier applied uniformly to
+    // every channel. Using a single scalar here (as before) would make the
+    // single-scattering albedo achromatic (omega = r/(1+r) identical in R, G, B),
+    // so the diffuse albedo would come out neutral gray.
+    float3 SigmaS_cm_inv =
+        SigmaA_cm_inv *
+        LEAF_SCATTERING_RATIO *
+        max(SigmaS_Ratio, 0.0); // clamp: a negative ratio would invert the color
+    float3 SigmaT_cm_inv = SigmaA_cm_inv + SigmaS_cm_inv; // 1/cm
+
+    // ---- 4) Geometric thickness -> MFP (Beer-Lambert)
+    // tau_c = sigma_t * d, T_c = exp(-tau_c), MFP_c = 1 / sigma_t
+    // MFP uses TOTAL extinction (not just absorption) because the ballistic
+    // transmittance term is exp(-sigma_t * d).
+    float d = max(Thickness, 1e-4); // cm, guard against divide-by-zero
+
+    Out.MFP_cm = LeafMFP(SigmaA_cm_inv, SigmaS_cm_inv); // 1/sigma_t
+    Out.Transmittance = exp(-SigmaT_cm_inv * d); // T = exp(-sigma_t * d)
+    Out.MFPScale = 1.0;
+    Out.Thickness_cm = d;
+
+    // ---- 5) Phase anisotropy (affixed isotropic default)
+    // Both PROSPECT and the LEAFMOD slab assume near-isotropic interior
+    // scattering, so g = 0.
+    Out.PhaseAnisotropy = 0.0;
+
+    // ---- 6) Diffuse albedo (thickness-INDEPENDENT, Wang et al. 2005)
+    // Compute base diffuse albedo from PROSPECT parameters
+    float3 SigmaA = SigmaA_cm_inv;
+    float3 SigmaS = SigmaS_cm_inv;
+    float3 SigmaT = SigmaT_cm_inv;
+
+    // Single-scattering albedo omega = sigma_s / sigma_t
+    float3 Omega = SigmaS / max(SigmaT, LEAF_EPS);
+
+    // Eddington coefficient A = 2 / (1 + sqrt(1 - omega))
+    float3 Sqrt1mOmega = sqrt(saturate(1.0 - Omega));
+    float3 A = 2.0 / (1.0 + Sqrt1mOmega);
+
+    // Diffuse albedo rho_d = 0.5 * A * omega * Gamma
+    // Gamma scales the surface albedo (default 1.0). Clamp the final physical
+    // output only: this keeps RGB distinction from LEAF_SCATTERING_RATIO while
+    // guaranteeing a valid albedo in [0,1] and a non-negative Gamma.
+    Out.DiffuseAlbedo = saturate(0.5 * A * Omega * max(Gamma, 0.0));
+
+    // ---- 7) Cuticle / grass specular roughness
+    Out.Roughness = LeafRoughness(RoughnessMap, N, bIsGrassMode);
+
+    // Keep F0 sensible for a dielectric cuticle: never below the 0.02 floor.
+    Out.F0 = max(Out.F0, 0.02);
+
+    return Out;
+}
+
+// ============================================================================
+// USAGE NOTES FOR MATERIAL GRAPH (Venation / Thickness)
+// ============================================================================
+//
+// In the Material Graph:
+//
+// - Create Texture2D inputs:
+//   - ThicknessMap (R channel in cm, or normalized and scaled)
+//   - VenationMap (R or RGB, depending on how you encode vein color/thickness)
+//   - GammaMap (optional, RGB) for spatially-varying surface albedo
+//
+// - Compute final thickness per pixel:
+//   float Thickness = BaseThickness * ThicknessMap.r;
+//   or
+//   float Thickness = lerp(LeafThickness, VeinThickness, VenationMask);
+//
+// - Compute Gamma (surface albedo factor):
+//   float3 Gamma = GammaMap.rgb; // or default (1,1,1) if not using GammaMap
+//
+// - Wire Thickness and Gamma into the Custom node's respective inputs.
+//
+// - Optionally use VenationMap to modulate:
+//   - DiffuseAlbedo (e.g., slightly different vein color)
+//   - MFP_cm (veins often scatter/absorb differently)
+//   - Roughness (veins can be smoother or rougher than lamina)
+//
+// Do not implement venation logic in this .ush file; keep it purely
+// biological -> physical parameter conversion. All spatial compositing belongs
+// in the Material Graph using textures and material expressions.
